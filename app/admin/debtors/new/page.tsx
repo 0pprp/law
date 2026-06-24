@@ -53,11 +53,12 @@ export default function NewDebtorPage() {
     notes: '',
   })
 
-  // Load task definitions from DB
+  // Load task definitions for current branch
   useEffect(() => {
-    createClient().from('task_definitions').select('id, label, fee_amount')
-      .eq('is_active', true).order('sort_order').order('label')
-      .then(({ data }) => setTaskDefs(data ?? []))
+    const branchId = typeof window !== 'undefined' ? localStorage.getItem('selected_branch_id') : null
+    let q = createClient().from('task_definitions').select('id, label, fee_amount').eq('is_active', true)
+    if (branchId) q = (q as any).eq('branch_id', branchId)
+    q.order('sort_order').order('label').then(({ data }) => setTaskDefs(data ?? []))
   }, [])
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }

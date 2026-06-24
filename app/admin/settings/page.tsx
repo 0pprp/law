@@ -408,13 +408,15 @@ interface ReqField {
 
 interface DynField { field_label: string; field_type: string; is_required: boolean }
 
+interface EditForm { label: string; fee: string; isActive: boolean; dynFields: DynField[] }
+
 function TaskDefsTab() {
   const branchId = useBranchId()
   const [defs, setDefs] = useState<TaskDef[]>([])
   const [reqFields, setReqFields] = useState<ReqField[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<TaskDef | null>(null)
-  const [editForm, setEditForm] = useState({ label: '', fee: '', fields: new Set<RequiredField>() })
+  const [editForm, setEditForm] = useState<EditForm>({ label: '', fee: '', isActive: true, dynFields: [] })
   const [adding, setAdding] = useState(false)
   const [addForm, setAddForm] = useState({ label: '', fee: '0', dynFields: [] as DynField[] })
   const [saving, setSaving] = useState(false)
@@ -439,41 +441,56 @@ function TaskDefsTab() {
   function openEdit(def: TaskDef) {
     const existing = (reqFields as ReqField[]).filter(f => f.task_definition_id === def.id)
     setEditing(def)
-    setEditForm({ label: def.label, fee: String(def.fee_amount), fields: new Set(existing.map(f => f.field_type) as RequiredField[]) })
+    setEditForm({
+      label: def.label,
+      fee: String(def.fee_amount),
+      isActive: def.is_active,
+      dynFields: existing.map(f => ({
+        field_label: f.field_label || f.field_key,
+        field_type: f.field_type,
+        is_required: f.is_required,
+      })),
+    })
     setErr('')
   }
 
-  function toggleField(f: RequiredField) {
-    setEditForm(prev => {
-      const next = new Set(prev.fields)
-      if (next.has(f)) next.delete(f); else next.add(f)
-      return { ...prev, fields: next }
-    })
+  function addEditField() {
+    setEditForm(f => ({ ...f, dynFields: [...f.dynFields, { field_label: '', field_type: 'text', is_required: true }] }))
+  }
+  function removeEditField(i: number) {
+    setEditForm(f => ({ ...f, dynFields: f.dynFields.filter((_, idx) => idx !== i) }))
+  }
+  function setEditDynField(i: number, key: keyof DynField, val: string | boolean) {
+    setEditForm(f => ({ ...f, dynFields: f.dynFields.map((d, idx) => idx === i ? { ...d, [key]: val } : d) }))
   }
 
   async function saveEdit() {
     if (!editing) return
     if (!editForm.label.trim()) { setErr('الاسم مطلوب'); return }
+    const badField = editForm.dynFields.find(f => !f.field_label.trim())
+    if (badField !== undefined) { setErr('تحقق من أسماء الحقول'); return }
     setSaving(true); setErr('')
     const sb = createClient()
 
     const { error: e1 } = await (sb as any).from('task_definitions')
-      .update({ label: editForm.label.trim(), fee_amount: Number(editForm.fee) || 0 })
+      .update({ label: editForm.label.trim(), fee_amount: Number(editForm.fee) || 0, is_active: editForm.isActive })
       .eq('id', editing.id)
     if (e1) { setErr(e1.message); setSaving(false); return }
 
-    const existing = (reqFields as ReqField[]).filter(f => f.task_definition_id === editing.id)
-    const toDelete = existing.filter(f => !editForm.fields.has(f.field_type as RequiredField)).map(f => f.id)
-    if (toDelete.length > 0) await (sb as any).from('task_required_fields').delete().in('id', toDelete)
+    await (sb as any).from('task_required_fields').delete().eq('task_definition_id', editing.id)
 
-    const existingTypes = new Set(existing.map(f => f.field_type))
-    const toInsert = ALL_FIELDS
-      .filter(f => editForm.fields.has(f) && !existingTypes.has(f))
-      .map((f, i) => ({
-        task_definition_id: editing.id, field_key: f, field_type: f,
-        field_label: REQUIRED_FIELD_LABELS[f] ?? f, sort_order: existing.length + i,
-      }))
-    if (toInsert.length > 0) await (sb as any).from('task_required_fields').insert(toInsert)
+    if (editForm.dynFields.length > 0) {
+      await (sb as any).from('task_required_fields').insert(
+        editForm.dynFields.map((f, i) => ({
+          task_definition_id: editing.id,
+          field_key: `field_${i}_${f.field_type}`,
+          field_type: f.field_type,
+          field_label: f.field_label.trim(),
+          is_required: f.is_required,
+          sort_order: i,
+        }))
+      )
+    }
 
     setEditing(null); load(); setSaving(false)
   }
@@ -508,6 +525,7 @@ function TaskDefsTab() {
       fee_amount: Number(addForm.fee) || 0,
       is_active: true,
       sort_order: maxOrder,
+      branch_id: branchId,
     }).select('id').single()
 
     if (error || !newDef) { setErr(error?.message ?? 'فشل الإنشاء'); setSaving(false); return }
@@ -551,7 +569,7 @@ function TaskDefsTab() {
               <tr>
                 <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">نوع المهمة</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-[#767676]">الأتعاب (د.ع)</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">الحقول الإلزامية</th>
+                <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحقول</th>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحالة</th>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">إجراء</th>
               </tr>
@@ -563,16 +581,14 @@ function TaskDefsTab() {
                   <td className="px-4 py-3 text-[#2C8780] font-black tabular-nums text-left" dir="ltr">
                     {Number(def.fee_amount).toLocaleString('en-US')}
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {defFields(def).length === 0 ? (
-                        <span className="text-[11px] text-[#767676] italic">لا يوجد</span>
-                      ) : defFields(def).map(f => (
-                        <span key={f.id} className="text-[10px] bg-[#2C8780]/8 text-[#2C8780] px-2 py-0.5 rounded-full font-semibold">
-                          {fieldDisplay(f)}
-                        </span>
-                      ))}
-                    </div>
+                  <td className="px-4 py-3 text-center">
+                    {defFields(def).length === 0 ? (
+                      <span className="text-[11px] text-[#767676] italic">—</span>
+                    ) : (
+                      <span className="text-[11px] font-bold bg-[#2C8780]/10 text-[#2C8780] px-2.5 py-1 rounded-full">
+                        {defFields(def).length} حقل
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${def.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
@@ -599,29 +615,71 @@ function TaskDefsTab() {
         <Modal title={`تعديل: ${editing.label}`} onClose={() => setEditing(null)}
           footer={<><CancelBtn onClick={() => setEditing(null)} /><SaveBtn saving={saving} onClick={saveEdit} /></>}>
           <div>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">اسم المهمة</label>
+            <label className="block text-xs font-bold text-[#231F20] mb-1.5">اسم المهمة <span className="text-red-500">*</span></label>
             <input value={editForm.label} onChange={e => setEditForm(f => ({ ...f, label: e.target.value }))} className={INP} />
           </div>
           <div>
             <label className="block text-xs font-bold text-[#231F20] mb-1.5">الأتعاب (د.ع)</label>
             <input type="number" value={editForm.fee} onChange={e => setEditForm(f => ({ ...f, fee: e.target.value }))} className={INP} dir="ltr" min="0" />
           </div>
-          <div>
-            <label className="block text-xs font-bold text-[#231F20] mb-2">
-              الحقول الإلزامية
-              <span className="text-[#767676] font-normal mr-2">({editForm.fields.size} محدد)</span>
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {ALL_FIELDS.map(f => {
-                const active = editForm.fields.has(f)
-                return (
-                  <label key={f} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border cursor-pointer transition-all ${active ? 'bg-[#2C8780]/8 border-[#2C8780]/40 text-[#2C8780]' : 'border-[rgba(118,118,118,0.2)] text-[#767676] hover:bg-[#F3F1F2]'}`}>
-                    <input type="checkbox" checked={active} onChange={() => toggleField(f)} className="accent-[#2C8780] w-3.5 h-3.5" />
-                    <span className="text-xs font-semibold">{REQUIRED_FIELD_LABELS[f]}</span>
-                  </label>
-                )
-              })}
+          <div className="flex items-center justify-between py-2.5 border-t border-b border-[rgba(118,118,118,0.08)]">
+            <span className="text-xs font-bold text-[#231F20]">الحالة</span>
+            <div
+              className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer ${editForm.isActive ? 'bg-[#2C8780]' : 'bg-[rgba(118,118,118,0.3)]'}`}
+              onClick={() => setEditForm(f => ({ ...f, isActive: !f.isActive }))}
+            >
+              <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${editForm.isActive ? 'right-0.5' : 'left-0.5'}`} />
             </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-bold text-[#231F20]">الحقول الإلزامية</label>
+              <button type="button" onClick={addEditField}
+                className="text-[11px] px-2.5 py-1 rounded-lg border border-[#2C8780]/40 text-[#2C8780] hover:bg-[#2C8780]/8 transition-colors font-semibold">
+                + إضافة حقل
+              </button>
+            </div>
+            {editForm.dynFields.length === 0 ? (
+              <p className="text-xs text-[#767676] italic py-2">لا توجد حقول — الملاحظات العامة تظهر دائماً للمحامي</p>
+            ) : (
+              <div className="space-y-2.5">
+                {editForm.dynFields.map((f, i) => (
+                  <div key={i} className="bg-[#F8F7F8] rounded-xl p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={f.field_label}
+                        onChange={e => setEditDynField(i, 'field_label', e.target.value)}
+                        className={`${INP} flex-1`}
+                        placeholder="اسم الحقل (بالعربية)"
+                      />
+                      <button type="button" onClick={() => removeEditField(i)}
+                        className="w-7 h-7 rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 flex items-center justify-center text-lg leading-none shrink-0">
+                        ×
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={f.field_type}
+                        onChange={e => setEditDynField(i, 'field_type', e.target.value)}
+                        className={`${SEL} flex-1`}
+                      >
+                        {FIELD_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                      <label className="flex items-center gap-1.5 text-xs font-semibold text-[#231F20] cursor-pointer shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={f.is_required}
+                          onChange={e => setEditDynField(i, 'is_required', e.target.checked)}
+                          className="accent-[#2C8780] w-3.5 h-3.5"
+                        />
+                        إلزامي
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <ErrMsg msg={err} />
         </Modal>

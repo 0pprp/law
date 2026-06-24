@@ -5,6 +5,7 @@ import { TASK_TYPE_LABELS, RECEIPT_TYPE_LABELS } from '@/lib/types'
 import type { TaskType, ReceiptType } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader } from '@/components/ui/card'
+import { StatCard } from '@/components/ui/stat-card'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import DebtorTasksPanel from '@/components/DebtorTasksPanel'
 import DebtorNotesPanel from '@/components/DebtorNotesPanel'
@@ -64,25 +65,23 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
 
       {/* Financial KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] p-4 shadow-sm">
-          <p className="text-[10px] text-[#767676] mb-1.5">المبلغ المطلوب</p>
-          <p className="text-xl font-black text-[#2C8780] tabular-nums" dir="ltr">{fmtMoney(debtor.required_amount)}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-emerald-200 p-4 shadow-sm">
-          <p className="text-[10px] text-[#767676] mb-1.5">إجمالي التسديدات</p>
-          <p className="text-xl font-black text-emerald-700 tabular-nums" dir="ltr">{fmtMoney(totalPaymentsSum)}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-red-200 p-4 shadow-sm">
-          <p className="text-[10px] text-[#767676] mb-1.5">المتبقي</p>
-          <p className={`text-xl font-black tabular-nums ${Number(debtor.remaining_amount) > 0 ? 'text-red-600' : 'text-emerald-600'}`} dir="ltr">{fmtMoney(debtor.remaining_amount)}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] p-4 shadow-sm">
-          <p className="text-[10px] text-[#767676] mb-1.5">نسبة التحصيل</p>
-          <p className="text-xl font-black text-[#231F20] tabular-nums">{collectionRate}%</p>
-          <div className="mt-1.5 h-1 bg-[rgba(118,118,118,0.1)] rounded-full overflow-hidden">
-            <div className="h-1 bg-emerald-500 rounded-full" style={{ width: `${Math.min(collectionRate, 100)}%` }} />
-          </div>
-        </div>
+        <StatCard label="المبلغ المطلوب" value={fmtMoney(debtor.required_amount)} accent="teal" valueColor="text-[#2C8780]" />
+        <StatCard label="إجمالي التسديدات" value={fmtMoney(totalPaymentsSum)} accent="green" valueColor="text-emerald-700" />
+        <StatCard
+          label="المتبقي"
+          value={fmtMoney(debtor.remaining_amount)}
+          accent={Number(debtor.remaining_amount) > 0 ? 'red' : 'green'}
+          valueColor={Number(debtor.remaining_amount) > 0 ? 'text-red-600' : 'text-emerald-600'}
+        />
+        <StatCard
+          label="نسبة التحصيل"
+          value={`${collectionRate}%`}
+          footer={
+            <div className="h-1.5 bg-[rgba(118,118,118,0.1)] rounded-full overflow-hidden">
+              <div className="h-1.5 bg-emerald-500 rounded-full transition-all" style={{ width: `${Math.min(collectionRate, 100)}%` }} />
+            </div>
+          }
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">

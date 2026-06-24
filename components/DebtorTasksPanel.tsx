@@ -284,7 +284,12 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
         .select('*, lawyer:profiles!tasks_assigned_to_fkey(full_name), courts(name), execution_departments(name)')
         .eq('debtor_id', debtorId)
         .order('created_at', { ascending: false }),
-      (supabase as any).from('task_definitions').select('*').eq('is_active', true).order('sort_order'),
+      (() => {
+        const branchId = typeof window !== 'undefined' ? localStorage.getItem('selected_branch_id') : null
+        let q = (supabase as any).from('task_definitions').select('*').eq('is_active', true).order('sort_order')
+        if (branchId) q = q.eq('branch_id', branchId)
+        return q
+      })(),
       (supabase as any).from('courts').select('*').eq('is_active', true).order('name'),
       (supabase as any).from('execution_departments').select('*').eq('is_active', true).order('name'),
     ])
