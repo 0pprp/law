@@ -57,6 +57,7 @@ export type TaskType =
   | 'arrest_warrant' | 'arrest_warrant_broadcast' | 'imprisonment_in_absentia'
   | 'imprisonment_broadcast' | 'department_correspondence' | 'newspaper_publication'
   | 'salary_seizure' | 'first_registration' | 'file_closure'
+  | 'find_address' | 'find_missing_address' | 'settlement' | 'negotiations' | 'last_payment'
 export type ReceiptType = 'check' | 'bill_of_exchange' | 'trust' | 'contract' | 'other'
 
 export interface Profile {
@@ -244,23 +245,28 @@ export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
 }
 
 export const TASK_TYPE_LABELS: Record<TaskType, string> = {
-  file_lawsuit: 'إقامة الدعوى',
+  file_lawsuit: 'إقامة دعوى',
   notification: 'تبليغ',
-  pleading: 'مرافعة',
+  pleading: 'مرافعات',
   decision_ratification: 'تصديق قرار',
-  open_file: 'فتح إضبارة',
+  open_file: 'فتح اضبارة',
   summons: 'تكليف بالحضور',
-  inspection: 'إجراء كشف',
-  forced_appearance: 'إحضار جبري',
-  arrest_warrant: 'أمر قبض',
-  arrest_warrant_broadcast: 'تعميم أمر القبض',
+  inspection: 'اجراء كشف',
+  forced_appearance: 'احضار جبري',
+  arrest_warrant: 'امر قبض',
+  arrest_warrant_broadcast: 'تعميم امر القبض',
   imprisonment_in_absentia: 'حبس غيابي',
   imprisonment_broadcast: 'تعميم الحبس',
-  department_correspondence: 'مفاتحة الدوائر',
-  newspaper_publication: 'نشر جريدة',
+  department_correspondence: 'مفاتحة دوائر',
+  newspaper_publication: 'نشر جريده',
   salary_seizure: 'حجز راتب',
   first_registration: 'التسجيل أول من الأصالة',
   file_closure: 'ختم الإضبارة',
+  find_address: 'إيجاد عنوان المدين والإنذار',
+  find_missing_address: 'إيجاد عنوان المفقود والإنذار',
+  settlement: 'التسوية',
+  negotiations: 'المفاوضات',
+  last_payment: 'اخر تسديد',
 }
 
 export const RECEIPT_TYPE_LABELS: Record<ReceiptType, string> = {

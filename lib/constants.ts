@@ -18,4 +18,9 @@ export const TASK_FEE_MAP: Record<TaskType, number> = {
   salary_seizure: 40000,
   first_registration: 50000,
   file_closure: 20000,
+  find_address: 10000,
+  find_missing_address: 15000,
+  settlement: 5000,
+  negotiations: 25000,
+  last_payment: 25000,
 }

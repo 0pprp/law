@@ -46,7 +46,7 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
   const [{ data: rawTaskAtts }, { data: rawDebtorAtts }, { data: expenses }] = await Promise.all([
     supabase.from('task_attachments').select('*').eq('task_id', id).order('created_at', { ascending: false }),
     supabase.from('debtor_attachments').select('*').eq('debtor_id', task.debtor_id).order('created_at', { ascending: false }),
-    supabase.from('expenses').select('id, amount, expense_type, description, expense_date, created_at').eq('task_id', id).order('created_at', { ascending: false }),
+    supabase.from('expenses').select('id, amount, expense_type, description, expense_date, created_at, status, rejection_reason').eq('task_id', id).order('created_at', { ascending: false }),
   ])
 
   const taskAttachments = await Promise.all(

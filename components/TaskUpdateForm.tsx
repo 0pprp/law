@@ -43,6 +43,7 @@ function CompletionModal({ task, reqFields, fee, onClose, onSubmitted }: {
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [generalNotes, setGeneralNotes] = useState('')
 
   function set(key: string, val: string) {
     setValues(prev => ({ ...prev, [key]: val }))
@@ -100,6 +101,7 @@ function CompletionModal({ task, reqFields, fee, onClose, onSubmitted }: {
     for (const [key, file] of Object.entries(files)) {
       completionData[key] = file.name
     }
+    if (generalNotes.trim()) completionData['general_notes'] = generalNotes.trim()
 
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
@@ -301,9 +303,18 @@ function CompletionModal({ task, reqFields, fee, onClose, onSubmitted }: {
 
         {/* Fields */}
         <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+          {/* Always-visible general notes */}
+          <div>
+            <label className="block text-xs font-bold text-[#231F20] mb-1.5">
+              ملاحظات عامة <span className="text-[#767676] font-normal text-[11px]">(اختياري)</span>
+            </label>
+            <textarea rows={2} value={generalNotes} onChange={e => setGeneralNotes(e.target.value)}
+              className={INP + ' resize-none'} placeholder="أضف أي ملاحظات إضافية..." />
+          </div>
+
           {sortedFields.length > 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-800 font-semibold">
-              يجب تعبئة الحقول التالية قبل الإرسال:
+              الحقول الإلزامية قبل الإرسال:
               {' '}{sortedFields.filter(f => f.is_required).map(f => f.field_label ?? REQUIRED_FIELD_LABELS[f.field_type as RequiredField]).join(' — ')}
             </div>
           )}
