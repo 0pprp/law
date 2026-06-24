@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { fmtDate } from '@/lib/utils'
+import { useBranchId } from '@/context/branch'
 
 function formatSize(bytes: number | null) {
   if (!bytes) return ''
@@ -47,6 +48,7 @@ export default function EditTaskPage() {
   const router = useRouter()
   const params = useParams()
   const id = params.id as string
+  const branchId = useBranchId()
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -64,9 +66,11 @@ export default function EditTaskPage() {
 
   useEffect(() => {
     const supabase = createClient()
+    let lq = supabase.from('profiles').select('id, full_name, phone, governorate').eq('role', 'lawyer').eq('is_active', true).order('full_name')
+    if (branchId) lq = (lq as any).eq('branch_id', branchId)
     Promise.all([
       supabase.from('tasks').select('*, debtors(full_name, phone, governorate, receipt_type, receipt_number, remaining_amount, required_amount, has_contract)').eq('id', id).single(),
-      supabase.from('profiles').select('id, full_name, phone, governorate').eq('role', 'lawyer').eq('is_active', true).order('full_name'),
+      lq,
       supabase.from('task_attachments').select('*').eq('task_id', id).order('created_at', { ascending: false }),
     ]).then(([{ data: t }, { data: l }, { data: a }]) => {
       if (t) {
@@ -76,7 +80,7 @@ export default function EditTaskPage() {
       setLawyers(l ?? []); setAttachments(a ?? [])
       setLoading(false)
     })
-  }, [id])
+  }, [id, branchId])
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
 

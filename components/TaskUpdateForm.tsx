@@ -106,13 +106,28 @@ function CompletionModal({ task, reqFields, fee, onClose, onSubmitted }: {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
-    const { error: updateErr } = await supabase.from('tasks').update({
-      task_status: 'submitted',
+    const submitPayloads = [
+      { task_status: 'submitted' as const },
+      { task_status: 'pending_review' as const },
+    ]
+    let updateErr: { message?: string } | null = null
+    const baseUpdate = {
       lawyer_notes: values['note'] || task.lawyer_notes || null,
       legal_result: values['legal_result'] || null,
       completion_data: completionData,
       completed_at: new Date().toISOString(),
-    } as any).eq('id', task.id)
+    }
+    for (const statusPart of submitPayloads) {
+      const { error } = await supabase.from('tasks').update({
+        ...baseUpdate,
+        ...statusPart,
+      } as any).eq('id', task.id)
+      if (!error) {
+        updateErr = null
+        break
+      }
+      updateErr = error
+    }
 
     if (updateErr) { setError(updateErr.message); setSaving(false); return }
 
@@ -358,10 +373,10 @@ export default function TaskUpdateForm({ task, taskAttachments }: Props) {
   const [reqFields, setReqFields] = useState<ReqField[]>([])
   const [fee, setFee] = useState(0)
 
-  const canSubmit = ['assigned', 'in_progress', 'new', 'rejected'].includes(task.task_status)
-  const isSubmitted = task.task_status === 'submitted'
+  const canSubmit = ['assigned', 'in_progress', 'new', 'rejected', 'needs_info', 'needs_revision'].includes(task.task_status)
+  const isSubmitted = task.task_status === 'submitted' || task.task_status === 'pending_review'
   const isApproved = ['approved', 'completed'].includes(task.task_status)
-  const isRejected = task.task_status === 'rejected'
+  const isRejected = ['rejected', 'needs_info', 'needs_revision'].includes(task.task_status)
 
   useEffect(() => {
     const supabase = createClient()

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import { getBranchContext } from '@/lib/branch-context'
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
@@ -15,8 +16,13 @@ export async function POST(request: NextRequest) {
   const {
     email, temporary_password, full_name, phone, is_active,
     governorate, identity_type, identity_number, identity_category,
-    username,
+    username, branch_id: bodyBranchId,
   } = await request.json()
+
+  const { branchId: cookieBranchId } = await getBranchContext()
+  const branchId = bodyBranchId ?? cookieBranchId
+  if (!branchId)
+    return NextResponse.json({ error: 'يجب اختيار فرع قبل إضافة مستخدم' }, { status: 400 })
 
   if (!email || !full_name || !temporary_password)
     return NextResponse.json({ error: 'الحقول المطلوبة غير مكتملة' }, { status: 400 })
@@ -64,6 +70,7 @@ export async function POST(request: NextRequest) {
     identity_type: identity_type || null,
     identity_number: identity_number || null,
     identity_category: identity_category || null,
+    branch_id: branchId,
   }
 
   const { error: profileError } = await admin.from('profiles').update(profileUpdate).eq('id', authData.user.id)

@@ -6,11 +6,13 @@ import { TASK_TYPE_LABELS } from '@/lib/types'
 import type { TaskType } from '@/lib/types'
 import { fmtDate, fmtMoney } from '@/lib/utils'
 import { logActivity } from '@/lib/activity-log'
+import { extractGpsFromCompletion, releaseLawyerFee } from '@/lib/task-approval'
+import { fetchPendingReviewTasks, fetchBranchLawyers } from '@/lib/task-assignment'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/ui/page-header'
 import { useBranchId } from '@/context/branch'
 
-interface TaskDef { id: string; label: string; sort_order: number }
+interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number }
 
 function parseGps(val: string): { lat: number; lng: number } | null {
   if (!val) return null
@@ -96,63 +98,102 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
   task: any; taskDefs: TaskDef[]; onClose: () => void; onDone: () => void
 }) {
   const supabase = createClient()
-  const [selected, setSelected] = useState('')
+  const [nextTaskId, setNextTaskId] = useState('')
+  const [updateGps, setUpdateGps] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   const taskLabel = task.task_definitions?.label ?? (TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type)
+  const gpsKeys = (task._gpsKeys ?? []) as string[]
+  const debtor = task.debtors as any
+  const newGps = extractGpsFromCompletion(task.completion_data as Record<string, string>, gpsKeys)
+  const hasExistingGps = debtor?.latitude != null && debtor?.longitude != null
+  const showGpsUpdate = hasExistingGps && newGps != null
 
-  async function confirm() {
-    if (!selected) { setError('يجب اختيار المرحلة التالية أو إغلاق القضية'); return }
+  async function approveAndProceed(action: 'next' | 'close') {
+    if (action === 'next' && !nextTaskId) {
+      setError('يجب اختيار المهمة اللاحقة')
+      return
+    }
     setSaving(true); setError('')
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setError('يجب تسجيل الدخول'); setSaving(false); return }
 
     const { error: approveErr } = await supabase
       .from('tasks')
-      .update({ task_status: 'approved' } as any)
+      .update({ task_status: 'approved', completed_at: task.completed_at ?? new Date().toISOString() } as any)
       .eq('id', task.id)
     if (approveErr) { setError(approveErr.message); setSaving(false); return }
 
-    // GPS auto-save
-    const gpsKeys = (task._gpsKeys ?? []) as string[]
-    const debtor = task.debtors as any
-    if (!debtor?.latitude && task.completion_data && gpsKeys.length > 0) {
-      for (const key of gpsKeys) {
-        const val = (task.completion_data as Record<string, string>)[key]
-        if (val) {
-          const parsed = parseGps(val)
-          if (parsed) {
-            await supabase.from('debtors').update({
-              latitude: parsed.lat, longitude: parsed.lng,
-              location_captured_at: new Date().toISOString(),
-            }).eq('id', task.debtor_id)
-            break
-          }
-        }
-      }
+    const feeResult = await releaseLawyerFee(supabase, task.id, user.id)
+    if (!feeResult.ok) {
+      setError(feeResult.error ?? 'فشل صرف أتعاب المحامي')
+      setSaving(false)
+      return
     }
 
-    const branchId = typeof window !== 'undefined' ? localStorage.getItem('selected_branch_id') : null
+    const branchId = task.branch_id ?? debtor?.branch_id ?? null
 
-    if (selected === '__close__') {
+    if (newGps && (!hasExistingGps || updateGps)) {
       await supabase.from('debtors').update({
-        case_status: 'closed', closed_at: new Date().toISOString(), current_task_id: null,
-      } as any).eq('id', task.debtor_id)
+        latitude: newGps.lat,
+        longitude: newGps.lng,
+        location_captured_at: new Date().toISOString(),
+      }).eq('id', task.debtor_id)
+    }
+
+    if (action === 'close') {
+      const closedAt = new Date().toISOString()
+      const closePayloads: Record<string, unknown>[] = [
+        { case_status: 'closed', closed_at: closedAt, current_task_id: null, last_task_id: task.id },
+        { case_status: 'closed', closed_at: closedAt, current_task_id: null },
+        { status: 'closed', closed_at: closedAt, current_task_id: null, last_task_id: task.id },
+        { status: 'closed', closed_at: closedAt, current_task_id: null },
+      ]
+      let closeErr: { message?: string } | null = null
+      for (const payload of closePayloads) {
+        const { error: err } = await supabase.from('debtors').update(payload as any).eq('id', task.debtor_id)
+        if (!err) { closeErr = null; break }
+        closeErr = err
+      }
+      if (closeErr) {
+        setError(closeErr.message)
+        setSaving(false)
+        return
+      }
       await logActivity({
         action: 'close_case', entity_type: 'debtor', entity_id: task.debtor_id,
         description: `إغلاق قضية ${debtor?.full_name ?? '—'} — آخر مهمة: ${taskLabel}`,
       }, supabase)
     } else {
+      const nextDef = taskDefs.find(d => d.id === nextTaskId)
       const { data: newTask, error: taskErr } = await supabase.from('tasks').insert({
         debtor_id: task.debtor_id,
-        task_definition_id: selected,
+        task_definition_id: nextTaskId,
         task_status: 'waiting_assignment',
+        assigned_to: null,
+        reward_amount: nextDef?.fee_amount ?? 0,
         branch_id: branchId,
+        created_by: user.id,
       } as any).select('id').single()
-      if (taskErr) { setError(taskErr.message); setSaving(false); return }
+      if (taskErr) {
+        await supabase.from('tasks').update({ task_status: 'submitted' } as any).eq('id', task.id)
+        setError(taskErr.message)
+        setSaving(false)
+        return
+      }
 
-      await supabase.from('debtors').update({ current_task_id: newTask.id } as any).eq('id', task.debtor_id)
+      const { error: linkErr } = await supabase
+        .from('debtors')
+        .update({ current_task_id: newTask.id, case_status: 'active' } as any)
+        .eq('id', task.debtor_id)
+      if (linkErr) {
+        setError(linkErr.message)
+        setSaving(false)
+        return
+      }
 
-      const nextDef = taskDefs.find(d => d.id === selected)
       await logActivity({
         action: 'approve_task_transition', entity_type: 'task', entity_id: task.id,
         description: `اعتماد "${taskLabel}" للمدين ${debtor?.full_name ?? '—'} والانتقال إلى "${nextDef?.label}"`,
@@ -167,48 +208,75 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
       style={{ background: 'rgba(35,31,32,0.7)', backdropFilter: 'blur(3px)' }}>
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh]" dir="rtl">
         <div className="px-5 py-4 border-b border-[rgba(118,118,118,0.1)]">
-          <h2 className="font-black text-[#231F20] text-base">تحديد المرحلة التالية</h2>
+          <h2 className="font-black text-[#231F20] text-base">الإجراء اللاحق للقضية</h2>
           <p className="text-xs text-[#767676] mt-0.5">
-            المهمة الحالية: <span className="font-bold text-[#2C8780]">{taskLabel}</span>
+            المهمة المعتمدة: <span className="font-bold text-[#2C8780]">{taskLabel}</span>
+            {' · '}{debtor?.full_name ?? '—'}
           </p>
         </div>
 
-        <div className="overflow-y-auto flex-1 p-4 space-y-2">
-          {taskDefs.map(def => (
-            <label key={def.id}
-              className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${selected === def.id ? 'border-[#2C8780] bg-[#2C8780]/5' : 'border-[rgba(118,118,118,0.15)] hover:border-[#2C8780]/40'}`}>
-              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${selected === def.id ? 'border-[#2C8780]' : 'border-[rgba(118,118,118,0.3)]'}`}>
-                {selected === def.id && <div className="w-2 h-2 rounded-full bg-[#2C8780]" />}
-              </div>
-              <input type="radio" name="nextTask" value={def.id} className="sr-only"
-                checked={selected === def.id} onChange={() => setSelected(def.id)} />
-              <span className="text-sm font-semibold text-[#231F20]">{def.label}</span>
-            </label>
-          ))}
+        <div className="overflow-y-auto flex-1 p-4 space-y-4">
+          {/* Option A: next task */}
+          <div className="space-y-2">
+            <p className="text-xs font-bold text-[#767676]">أ) اختيار مهمة لاحقة</p>
+            <select
+              value={nextTaskId}
+              onChange={e => { setNextTaskId(e.target.value); setError('') }}
+              className="w-full border border-[rgba(118,118,118,0.2)] rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780]"
+            >
+              <option value="">— اختر المهمة التالية —</option>
+              {taskDefs.map(def => (
+                <option key={def.id} value={def.id}>{def.label}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => approveAndProceed('next')}
+              disabled={saving || !nextTaskId}
+              className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50"
+              style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+            >
+              {saving ? 'جارٍ الحفظ...' : 'تأكيد المهمة اللاحقة'}
+            </button>
+          </div>
 
-          <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${selected === '__close__' ? 'border-red-500 bg-red-50' : 'border-[rgba(118,118,118,0.15)] hover:border-red-300'}`}>
-            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${selected === '__close__' ? 'border-red-500' : 'border-[rgba(118,118,118,0.3)]'}`}>
-              {selected === '__close__' && <div className="w-2 h-2 rounded-full bg-red-500" />}
-            </div>
-            <input type="radio" name="nextTask" value="__close__" className="sr-only"
-              checked={selected === '__close__'} onChange={() => setSelected('__close__')} />
-            <div>
-              <span className="text-sm font-bold text-red-600">القضية محسومة — إغلاق الملف</span>
-              <p className="text-[10px] text-red-400 mt-0.5">يُنقل المدين لأرشيف القضايا المحسومة</p>
-            </div>
-          </label>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-[rgba(118,118,118,0.15)]" />
+            <span className="text-[10px] text-[#767676] font-bold">أو</span>
+            <div className="flex-1 h-px bg-[rgba(118,118,118,0.15)]" />
+          </div>
+
+          {/* Option B: close case */}
+          <div className="space-y-2">
+            <p className="text-xs font-bold text-[#767676]">ب) نقل إلى القضايا المحسومة</p>
+            <button
+              onClick={() => approveAndProceed('close')}
+              disabled={saving}
+              className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
+            >
+              {saving ? 'جارٍ الحفظ...' : 'القضية محسومة'}
+            </button>
+            <p className="text-[10px] text-[#767676] text-center">يُعتمد الإنجاز ويُنقل المدين إلى أرشيف القضايا المحسومة</p>
+          </div>
+
+          {showGpsUpdate && (
+            <label className="flex items-start gap-3 p-3 rounded-xl border border-[#2C8780]/30 bg-[#2C8780]/5 cursor-pointer">
+              <input type="checkbox" checked={updateGps} onChange={e => setUpdateGps(e.target.checked)}
+                className="w-4 h-4 mt-0.5 accent-[#2C8780] shrink-0" />
+              <div>
+                <span className="text-sm font-bold text-[#231F20]">تحديث موقع المدين</span>
+                <p className="text-[10px] text-[#767676] mt-0.5">
+                  الموقع الجديد: <span dir="ltr" className="font-mono">{newGps!.lat.toFixed(6)}, {newGps!.lng.toFixed(6)}</span>
+                </p>
+              </div>
+            </label>
+          )}
         </div>
 
         {error && <p className="px-5 pb-2 text-xs text-red-500">{error}</p>}
 
-        <div className="px-5 py-4 border-t border-[rgba(118,118,118,0.08)] flex gap-3">
-          <button onClick={confirm} disabled={saving || !selected}
-            className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50"
-            style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-            {saving ? 'جارٍ الحفظ...' : 'تأكيد الاعتماد'}
-          </button>
+        <div className="px-5 py-4 border-t border-[rgba(118,118,118,0.08)]">
           <button onClick={onClose} disabled={saving}
-            className="px-4 py-2.5 rounded-xl text-sm font-semibold text-[#767676] border border-[rgba(118,118,118,0.2)] hover:bg-slate-50">
+            className="w-full py-2.5 rounded-xl text-sm font-semibold text-[#767676] border border-[rgba(118,118,118,0.2)] hover:bg-slate-50">
             إلغاء
           </button>
         </div>
@@ -235,16 +303,24 @@ function ReviewModal({ task, taskDefs, onClose, onDone }: {
     if (!rejectReason.trim()) { setError('يجب إدخال سبب الرفض'); return }
     setSaving(true)
     const supabase = createClient()
-    const { error: err } = await supabase.from('tasks').update({
-      task_status: 'needs_info',
-      admin_notes: rejectReason.trim(),
-    } as any).eq('id', task.id)
-    if (err) { setError(err.message); setSaving(false); return }
-    await logActivity({
-      action: 'reject_task', entity_type: 'task', entity_id: task.id,
-      description: `رفض إنجاز مهمة: ${taskLabel} — السبب: ${rejectReason}`,
-    }, supabase)
-    setSaving(false); onDone(); onClose()
+    const payloads = [
+      { task_status: 'needs_revision', admin_notes: rejectReason.trim() },
+      { task_status: 'rejected', admin_notes: rejectReason.trim() },
+    ]
+    let lastErr: { message?: string } | null = null
+    for (const payload of payloads) {
+      const { error: err } = await supabase.from('tasks').update(payload as any).eq('id', task.id)
+      if (!err) {
+        await logActivity({
+          action: 'reject_task', entity_type: 'task', entity_id: task.id,
+          description: `رفض إنجاز مهمة: ${taskLabel} — السبب: ${rejectReason}`,
+        }, supabase)
+        setSaving(false); onDone(); onClose()
+        return
+      }
+      lastErr = err
+    }
+    setError(lastErr?.message ?? 'فشل رفض المهمة'); setSaving(false)
   }
 
   return (
@@ -306,7 +382,7 @@ function ReviewModal({ task, taskDefs, onClose, onDone }: {
                 <button onClick={() => setShowNextTask(true)}
                   className="flex-1 py-3 rounded-xl text-sm font-bold text-white hover:opacity-90"
                   style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-                  ✓ اعتماد الإنجاز وتحديد المرحلة
+                  ✓ اعتماد
                 </button>
                 <button onClick={() => setStage('reject')}
                   className="flex-1 py-3 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700">
@@ -362,46 +438,36 @@ export default function TaskReviewPage() {
     setLoading(true)
     const supabase = createClient()
 
-    let q = supabase.from('tasks')
-      .select(`
-        *,
-        debtors(id, full_name, phone, governorate, latitude, longitude),
-        lawyer:profiles!tasks_assigned_to_fkey(id, full_name),
-        task_definitions(id, label),
-        courts(name),
-        execution_departments(name)
-      `)
-      .eq('task_status', 'submitted')
-      .order('completed_at', { ascending: true })
-    if (branchId) q = (q as any).eq('branch_id', branchId)
+    if (!branchId) {
+      setTasks([])
+      setLawyers([])
+      setLoading(false)
+      return
+    }
 
-    const [{ data: t }, { data: l }] = await Promise.all([
-      q,
-      supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name'),
+    const [rawTasks, l] = await Promise.all([
+      fetchPendingReviewTasks(supabase, branchId),
+      fetchBranchLawyers(supabase, branchId),
     ])
 
-    // Fetch GPS field keys for all task_definitions
-    const defIds = [...new Set((t ?? []).map((x: any) => x.task_definition_id).filter(Boolean))]
-    let gpsMap: Record<string, string[]> = {}
+    const defIds = [...new Set(rawTasks.map(x => x.task_definition_id).filter(Boolean))]
+    const gpsMap: Record<string, string[]> = {}
     if (defIds.length > 0) {
       const { data: rfs } = await supabase
         .from('task_required_fields')
         .select('task_definition_id, field_key')
         .in('task_definition_id', defIds as string[])
         .eq('field_type', 'gps')
-      ;(rfs ?? []).forEach((f: any) => {
+      ;(rfs ?? []).forEach((f: { task_definition_id: string; field_key: string }) => {
         if (!gpsMap[f.task_definition_id]) gpsMap[f.task_definition_id] = []
         gpsMap[f.task_definition_id].push(f.field_key)
       })
     }
 
-    // Attach GPS keys to each task
-    const enriched = (t ?? []).map((task: any) => ({
+    setTasks(rawTasks.map(task => ({
       ...task,
-      _gpsKeys: gpsMap[task.task_definition_id] ?? [],
-    }))
-
-    setTasks(enriched)
+      _gpsKeys: gpsMap[task.task_definition_id ?? ''] ?? [],
+    })))
     setLawyers(l ?? [])
     setLoading(false)
   }, [branchId])
@@ -411,7 +477,7 @@ export default function TaskReviewPage() {
     // Load task defs for next-task selection
     const loadDefs = async () => {
       const supabase = createClient()
-      let q = supabase.from('task_definitions').select('id, label, sort_order').eq('is_active', true).order('sort_order')
+      let q = supabase.from('task_definitions').select('id, label, sort_order, fee_amount').eq('is_active', true).order('sort_order')
       if (branchId) q = (q as any).eq('branch_id', branchId)
       const { data } = await q
       setTaskDefs((data ?? []) as TaskDef[])
@@ -480,6 +546,8 @@ export default function TaskReviewPage() {
 
                 <div className="px-4 py-3 flex-1 space-y-2">
                   <InfoRow label="المحامي" value={task.lawyer?.full_name} />
+                  <InfoRow label="تاريخ التكليف" value={task.assigned_at ? fmtDate(task.assigned_at.split('T')[0]) : undefined} />
+                  <InfoRow label="تاريخ الاستحقاق" value={task.due_date ? fmtDate(task.due_date) : undefined} />
                   <InfoRow label="المحكمة" value={courtName} />
                   <InfoRow label="المحافظة" value={task.debtors?.governorate} />
                   <InfoRow label="أُنجز في" value={task.completed_at ? fmtDate(task.completed_at.split('T')[0]) : undefined} />

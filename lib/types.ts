@@ -5,6 +5,7 @@ export type WalletTransactionType = 'accountant_transfer' | 'approved_task_payme
 export type TaskStatus =
   | 'draft' | 'assigned' | 'in_progress' | 'submitted' | 'approved' | 'rejected' | 'completed'
   | 'new' | 'failed' | 'postponed' | 'needs_info' | 'closed' | 'waiting_assignment'
+  | 'pending_assignment' | 'assignment_pending_acceptance' | 'pending_review' | 'needs_revision'
 
 export type RequiredField =
   | 'note' | 'image' | 'pdf' | 'decision_number' | 'case_number'
@@ -150,6 +151,8 @@ export interface Task {
   given_up_at: string | null
   give_up_reason: string | null
   accepted_at: string | null
+  assignment_expires_at?: string | null
+  acceptance_method?: string | null
   created_by: string
   created_at: string
   updated_at: string
@@ -215,11 +218,15 @@ export interface Expense {
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   draft: 'بانتظار التكليف',
   waiting_assignment: 'بانتظار التكليف',
+  pending_assignment: 'بانتظار التكليف',
+  assignment_pending_acceptance: 'بانتظار قبول المحامي',
   assigned: 'مكلفة',
   in_progress: 'قيد التنفيذ',
   submitted: 'بانتظار الاعتماد',
+  pending_review: 'بانتظار المراجعة',
   approved: 'معتمدة',
   rejected: 'مرفوضة',
+  needs_revision: 'تحتاج تصحيح',
   completed: 'منجزة نهائياً',
   new: 'جديدة',
   failed: 'تعذر الإنجاز',
@@ -231,11 +238,15 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
 export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
   draft: 'bg-gray-100 text-gray-600',
   waiting_assignment: 'bg-yellow-100 text-yellow-800',
+  pending_assignment: 'bg-yellow-100 text-yellow-800',
+  assignment_pending_acceptance: 'bg-amber-100 text-amber-800',
   assigned: 'bg-blue-100 text-blue-800',
   in_progress: 'bg-yellow-100 text-yellow-800',
   submitted: 'bg-purple-100 text-purple-800',
+  pending_review: 'bg-purple-100 text-purple-800',
   approved: 'bg-teal-100 text-teal-800',
   rejected: 'bg-red-100 text-red-800',
+  needs_revision: 'bg-orange-100 text-orange-800',
   completed: 'bg-green-100 text-green-800',
   new: 'bg-blue-100 text-blue-800',
   failed: 'bg-red-100 text-red-800',

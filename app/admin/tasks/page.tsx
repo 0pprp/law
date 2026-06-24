@@ -2,177 +2,243 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
-import { TASK_STATUS_LABELS, TASK_TYPE_LABELS, TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '@/lib/types'
-import type { TaskStatus, TaskType, TaskPriority } from '@/lib/types'
+import { useBranchId, useBranch } from '@/context/branch'
+import { TASK_STATUS_LABELS } from '@/lib/types'
+import type { TaskStatus } from '@/lib/types'
 import { logActivity } from '@/lib/activity-log'
+import {
+  fetchUnassignedCurrentTasks,
+  assignTasksToLawyer,
+  autoAcceptExpiredAssignments,
+  type CurrentBranchTaskRow,
+} from '@/lib/task-assignment'
+import { fetchBranchProfiles, filterLawyerProfiles } from '@/lib/branch-profiles'
+import { formatErrorMessage } from '@/lib/format-error'
+import { backfillDebtorCurrentTask } from '@/lib/debtor-current-task'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtDate } from '@/lib/utils'
+import Link from 'next/link'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
+  waiting_assignment: 'warning',
+  pending_assignment: 'warning',
   draft: 'gray',
-  assigned: 'info',
-  in_progress: 'warning',
-  submitted: 'purple',
-  approved: 'success',
-  rejected: 'danger',
-  completed: 'success',
   new: 'info',
-  failed: 'danger',
-  postponed: 'gray',
-  needs_info: 'purple',
-  closed: 'gray',
 }
 
-const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white text-[#231F20] transition-all'
-const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
-
-function AssignModal({ taskId, taskLabel, lawyers, onClose, onDone }: {
-  taskId: string
-  taskLabel: string
-  lawyers: any[]
-  onClose: () => void
-  onDone: () => void
-}) {
-  const [lawyerId, setLawyerId] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  async function assign() {
-    if (!lawyerId) { setError('اختر محامياً'); return }
-    setSaving(true)
-    const supabase = createClient()
-    const { error: err } = await supabase.from('tasks').update({ assigned_to: lawyerId, task_status: 'assigned' }).eq('id', taskId)
-    if (err) { setError(err.message); setSaving(false); return }
-    await logActivity({ action: 'assign_task', entity_type: 'task', entity_id: taskId, description: `تكليف مهمة: ${taskLabel}` }, supabase)
-    onDone()
-    onClose()
-  }
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(35,31,32,0.5)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div style={{ background: 'white', borderRadius: 16, width: '100%', maxWidth: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-        <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid rgba(118,118,118,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={{ fontWeight: 700, fontSize: 15, color: '#231F20' }}>تكليف: {taskLabel}</h2>
-          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: 'none', background: '#F3F1F2', cursor: 'pointer', fontSize: 18, color: '#767676' }}>×</button>
-        </div>
-        <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">اختر المحامي <span className="text-red-500">*</span></label>
-            <select value={lawyerId} onChange={e => setLawyerId(e.target.value)} className={INP}>
-              <option value="">— اختر محامياً —</option>
-              {lawyers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-            </select>
-          </div>
-          {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
-        </div>
-        <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid rgba(118,118,118,0.12)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} className="text-sm px-4 py-2 rounded-lg border border-[rgba(118,118,118,0.2)] text-[#767676] hover:bg-[#F3F1F2] transition-colors">إلغاء</button>
-          <button onClick={assign} disabled={saving || !lawyerId} className="text-sm px-5 py-2 rounded-lg text-white font-semibold disabled:opacity-60 transition-colors" style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-            {saving ? 'جارٍ التكليف...' : 'تكليف المحامي'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
+const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white text-[#231F20] transition-all w-full'
 
 export default function TasksPage() {
   const branchId = useBranchId()
-  const [tasks, setTasks] = useState<any[]>([])
-  const [lawyers, setLawyers] = useState<any[]>([])
+  const { branchName } = useBranch()
+  const [tasks, setTasks] = useState<CurrentBranchTaskRow[]>([])
+  const [taskDefs, setTaskDefs] = useState<{ id: string; label: string }[]>([])
+  const [lawyers, setLawyers] = useState<{ id: string; full_name: string }[]>([])
   const [loading, setLoading] = useState(true)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [assigning, setAssigning] = useState(false)
+  const [error, setError] = useState('')
+
   const [search, setSearch] = useState('')
-  const [filterLawyer, setFilterLawyer] = useState('')
-  const [filterStatus, setFilterStatus] = useState('')
-  const [filterType, setFilterType] = useState('')
-  const [assigning, setAssigning] = useState<{ id: string; label: string } | null>(null)
+  const [filterDef, setFilterDef] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkLawyerId, setBulkLawyerId] = useState('')
+  const [bulkDueDate, setBulkDueDate] = useState('')
+  const [singleAssignId, setSingleAssignId] = useState<string | null>(null)
+  const [singleLawyerId, setSingleLawyerId] = useState('')
 
   const load = useCallback(async () => {
+    setLoading(true)
+    setSelected(new Set())
+    setError('')
     const supabase = createClient()
-    let tq = supabase.from('tasks').select('*, debtors(full_name, governorate), profiles!tasks_assigned_to_fkey(id, full_name)').order('created_at', { ascending: false })
-    let lq = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
-    if (branchId) {
-      tq = (tq as any).eq('branch_id', branchId)
-      lq = (lq as any).eq('branch_id', branchId)
+
+    if (!branchId) {
+      setTasks([])
+      setLawyers([])
+      setTaskDefs([])
+      setLoading(false)
+      return
     }
-    const [{ data: t }, { data: l }] = await Promise.all([tq, lq])
-    setTasks(t ?? [])
-    setLawyers(l ?? [])
+
+    try {
+      let staleQ = supabase
+        .from('debtors')
+        .select('id')
+        .not('case_status', 'eq', 'closed')
+        .is('current_task_id', null)
+        .limit(50)
+      if (branchId) staleQ = (staleQ as any).eq('branch_id', branchId)
+      const { data: staleDebtors } = await staleQ
+      await Promise.all((staleDebtors ?? []).map(d => backfillDebtorCurrentTask(supabase, d.id)))
+      await autoAcceptExpiredAssignments(supabase, { branchId })
+
+      const [{ data: defs }, raw, profilesResult] = await Promise.all([
+        supabase.from('task_definitions').select('id, label').eq('is_active', true).order('sort_order'),
+        fetchUnassignedCurrentTasks(supabase, branchId),
+        fetchBranchProfiles(supabase, branchId),
+      ])
+
+      const branchProfiles = profilesResult.profiles
+      const lawyerList = filterLawyerProfiles(branchProfiles).map(({ id, full_name }) => ({ id, full_name }))
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[admin/tasks] currentBranchId:', branchId)
+        console.log('[admin/tasks] profiles in branch:', branchProfiles.length)
+        console.log('[admin/tasks] lawyers after filter:', lawyerList.length)
+        console.log('[admin/tasks] sample profiles:', branchProfiles.slice(0, 3).map(p => ({
+          id: p.id,
+          full_name: p.full_name,
+          role: p.role,
+          branch_id: p.branch_id,
+          is_active: p.is_active,
+        })))
+      }
+
+      if (profilesResult.error) {
+        console.error('[admin/tasks] profiles query error:', profilesResult.error)
+        setError(formatErrorMessage(profilesResult.error))
+      }
+
+      setTasks(raw)
+      setLawyers(lawyerList)
+      setTaskDefs(defs ?? [])
+    } catch (e: unknown) {
+      console.error('[admin/tasks] load error:', e)
+      setError(formatErrorMessage(e) || 'فشل تحميل المهام')
+      setTasks([])
+      setLawyers([])
+    }
     setLoading(false)
   }, [branchId])
 
   useEffect(() => { load() }, [load])
 
-  async function deleteTask(id: string, name: string) {
-    if (!confirm(`هل أنت متأكد من حذف هذه المهمة الخاصة بـ "${name}"؟`)) return
-    setDeletingId(id)
-    const supabase = createClient()
-    const { error } = await supabase.from('tasks').delete().eq('id', id)
-    if (error) { alert(`فشل الحذف: ${error.message}`); setDeletingId(null); return }
-    await logActivity({ action: 'delete_task', entity_type: 'task', entity_id: id, description: `حذف مهمة: ${name}` }, supabase)
-    setDeletingId(null)
-    load()
+  const filtered = useMemo(() => tasks.filter(t => {
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      if (!t.debtorName.toLowerCase().includes(q) && !(t.debtorPhone ?? '').includes(q)) return false
+    }
+    if (filterDef && t.task_definition_id !== filterDef) return false
+    if (dateFrom && t.created_at.split('T')[0] < dateFrom) return false
+    if (dateTo && t.created_at.split('T')[0] > dateTo) return false
+    return true
+  }), [tasks, search, filterDef, dateFrom, dateTo])
+
+  const allSelected = filtered.length > 0 && filtered.every(t => selected.has(t.id))
+
+  function toggle(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
   }
 
-  const filtered = useMemo(() => tasks.filter(t => {
-    if (search && !t.debtors?.full_name?.includes(search)) return false
-    if (filterLawyer === '__unassigned__' && t.assigned_to) return false
-    if (filterLawyer && filterLawyer !== '__unassigned__' && t.assigned_to !== filterLawyer) return false
-    if (filterStatus && t.task_status !== filterStatus) return false
-    if (filterType && t.task_type !== filterType) return false
-    return true
-  }), [tasks, search, filterLawyer, filterStatus, filterType])
+  function toggleAll() {
+    if (allSelected) setSelected(new Set())
+    else setSelected(new Set(filtered.map(t => t.id)))
+  }
 
-  const hasFilters = search || filterLawyer || filterStatus || filterType
-  function clearFilters() { setSearch(''); setFilterLawyer(''); setFilterStatus(''); setFilterType('') }
+  async function assignTaskIds(ids: string[], lawyerId: string, dueDate?: string) {
+    if (!lawyerId) { setError('اختر محامياً'); return }
+    if (ids.length === 0) { setError('حدد مهمة واحدة على الأقل'); return }
+    setAssigning(true); setError('')
+    const supabase = createClient()
+    const result = await assignTasksToLawyer(supabase, ids, lawyerId, dueDate)
+    if (!result.ok) {
+      setError(result.error ?? 'فشل تكليف المهمة')
+      setAssigning(false)
+      return
+    }
 
-  const statusOptions: [TaskStatus, string][] = [
-    ['draft', 'بانتظار التكليف'],
-    ['assigned', 'مكلفة'],
-    ['in_progress', 'قيد التنفيذ'],
-    ['submitted', 'بانتظار الاعتماد'],
-    ['approved', 'معتمدة'],
-    ['rejected', 'مرفوضة'],
-    ['completed', 'منجزة نهائياً'],
-    ['failed', 'تعذر الإنجاز'],
-    ['postponed', 'مؤجلة'],
-    ['closed', 'مغلقة'],
-  ]
+    const lawyerName = lawyers.find(l => l.id === lawyerId)?.full_name ?? '—'
+    await logActivity({
+      action: 'bulk_assign_tasks',
+      entity_type: 'task',
+      entity_id: ids[0],
+      description: `تكليف ${ids.length} مهمة للمحامي ${lawyerName}`,
+    }, supabase)
+
+    setAssigning(false)
+    setBulkLawyerId('')
+    setBulkDueDate('')
+    setSingleAssignId(null)
+    setSingleLawyerId('')
+    setSelected(new Set())
+    await load()
+  }
+
+  const hasFilters = search || filterDef || dateFrom || dateTo
+  function clearFilters() {
+    setSearch(''); setFilterDef('')
+    setDateFrom(''); setDateTo('')
+  }
 
   return (
     <div className="space-y-5">
-      <PageHeader title="تكليف المهام" subtitle={`${filtered.length} مهمة`} />
+      <PageHeader
+        title="تكليف المهام"
+        subtitle={`${filtered.length} مهمة غير مكلفة${branchName ? ` · ${branchName}` : ''}`}
+      />
 
-      <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <input type="text" placeholder="بحث باسم المدين..." value={search} onChange={e => setSearch(e.target.value)} className={SEL + ' col-span-2 md:col-span-1'} />
-          <select value={filterLawyer} onChange={e => setFilterLawyer(e.target.value)} className={SEL}>
-            <option value="">كل المحامين</option>
-            <option value="__unassigned__">غير مكلفة</option>
-            {lawyers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-          </select>
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className={SEL}>
-            <option value="">كل الحالات</option>
-            {statusOptions.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-          <select value={filterType} onChange={e => setFilterType(e.target.value)} className={SEL}>
-            <option value="">كل الأنواع</option>
-            {(Object.entries(TASK_TYPE_LABELS) as [TaskType, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
+      {!branchId && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
+          اختر فرعاً من القائمة العلوية لعرض المهام والمحامين.
         </div>
+      )}
+
+      <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4 space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          <input type="text" placeholder="بحث باسم المدين..." value={search}
+            onChange={e => setSearch(e.target.value)} className={SEL + ' col-span-2 lg:col-span-1'} />
+          <select value={filterDef} onChange={e => setFilterDef(e.target.value)} className={SEL}>
+            <option value="">كل أنواع المهام</option>
+            {taskDefs.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+          </select>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className={SEL} dir="ltr" title="من تاريخ" />
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className={SEL} dir="ltr" title="إلى تاريخ" />
+        </div>
+
         {hasFilters && (
-          <div className="mt-3 flex items-center justify-between">
-            <p className="text-xs text-[#767676]">تصفية نشطة — {filtered.length} من {tasks.length}</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-[#767676]">{filtered.length} من {tasks.length} مهمة</p>
             <button onClick={clearFilters} className="text-xs text-[#2C8780] hover:underline">إلغاء التصفية</button>
           </div>
         )}
+
+        <div className="border-t border-[rgba(118,118,118,0.1)] pt-4 flex flex-col sm:flex-row gap-2">
+          <select value={bulkLawyerId} onChange={e => { setBulkLawyerId(e.target.value); setError('') }}
+            className={SEL + ' flex-1'} disabled={!branchId}>
+            <option value="">— اختر محامياً من هذا الفرع —</option>
+            {lawyers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
+          </select>
+          <input type="date" value={bulkDueDate} onChange={e => setBulkDueDate(e.target.value)}
+            className={SEL + ' sm:w-44'} dir="ltr" title="تاريخ نهاية التكليف" required />
+          <button onClick={() => assignTaskIds(Array.from(selected), bulkLawyerId, bulkDueDate || undefined)}
+            disabled={assigning || selected.size === 0 || !bulkLawyerId || !bulkDueDate || !branchId}
+            className="shrink-0 px-5 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-50"
+            style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
+            {assigning ? 'جارٍ التكليف...' : `تكليف المحددين${selected.size > 0 ? ` (${selected.size})` : ''}`}
+          </button>
+        </div>
+        {branchId && lawyers.length === 0 && (
+          <p className="text-[11px] text-orange-600 bg-orange-50 px-3 py-1.5 rounded-lg">
+            لا يوجد محامون نشطون مرتبطون بهذا الفرع.{' '}
+            <Link href="/admin/lawyers/new" className="font-bold underline">أضف محامياً</Link>
+            {' '}من صفحة المستخدمين.
+          </p>
+        )}
       </div>
+
+      {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
 
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
         {loading ? (
@@ -185,138 +251,85 @@ export default function TasksPage() {
           </div>
         ) : !filtered.length ? (
           <EmptyState
-            title={hasFilters ? 'لا نتائج للتصفية' : 'لا توجد مهام بعد'}
-            description={hasFilters ? 'جرّب تغيير معايير التصفية' : 'أضف مهاماً من ملف المدين'}
-            action={hasFilters ? <button onClick={clearFilters} className="text-xs text-[#2C8780] hover:underline font-semibold">إلغاء التصفية</button> : undefined}
+            title={hasFilters ? 'لا نتائج للتصفية' : 'لا توجد مهام بانتظار التكليف'}
+            description={hasFilters ? 'جرّب تغيير معايير التصفية' : 'جميع المهام الحالية مكلّفة في هذا الفرع'}
+            action={hasFilters
+              ? <button onClick={clearFilters} className="text-xs text-[#2C8780] hover:underline font-semibold">إلغاء التصفية</button>
+              : <Link href="/admin/dashboard" className="text-xs text-[#2C8780] hover:underline font-semibold">العودة للوحة التحكم</Link>}
           />
         ) : (
-          <>
-            <div className="hidden md:block">
-              <Table>
-                <THead>
-                  <tr>
-                    <TH>المدين</TH>
-                    <TH>نوع المهمة</TH>
-                    <TH>الحالة</TH>
-                    <TH>الأولوية</TH>
-                    <TH>المحامي</TH>
-                    <TH>الاستحقاق</TH>
-                    <TH className="text-center">الإجراءات</TH>
-                  </tr>
-                </THead>
-                <TBody>
-                  {filtered.map((task: any) => {
-                    const isDraft = task.task_status === 'draft'
-                    const isOverdue = task.due_date && !['completed', 'closed', 'failed', 'approved'].includes(task.task_status) && new Date(task.due_date) < new Date()
-                    const label = TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type
-                    return (
-                      <TR key={task.id}>
-                        <TD className="font-semibold text-[#231F20]">{task.debtors?.full_name ?? '—'}</TD>
-                        <TD className="text-xs text-[#767676]">{label}</TD>
-                        <TD>
-                          <Badge variant={STATUS_BADGE[task.task_status as TaskStatus] ?? 'default'}>
-                            {TASK_STATUS_LABELS[task.task_status as TaskStatus] ?? task.task_status}
-                          </Badge>
-                        </TD>
-                        <TD>
-                          {task.priority && task.priority !== 'normal' ? (
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${TASK_PRIORITY_COLORS[task.priority as TaskPriority]}`}>
-                              {TASK_PRIORITY_LABELS[task.priority as TaskPriority]}
-                            </span>
-                          ) : <span className="text-[#767676] text-xs">—</span>}
-                        </TD>
-                        <TD>
-                          {task.profiles?.full_name
-                            ? <span className="text-[#231F20] text-sm">{task.profiles.full_name}</span>
-                            : <span className="text-[#767676] text-xs italic">غير مكلف</span>}
-                        </TD>
-                        <TD>
-                          <div className="space-y-0.5">
-                            <span className={`text-xs font-mono block ${isOverdue ? 'text-red-600 font-semibold' : 'text-[#767676]'}`} dir="ltr">
-                              {fmtDate(task.due_date)}
-                            </span>
-                            {task.completion_deadline && (
-                              <span className="text-[10px] text-[#767676] block" dir="ltr">
-                                إنجاز: {fmtDate(task.completion_deadline)}
-                              </span>
-                            )}
-                          </div>
-                        </TD>
-                        <TD>
-                          <div className="flex items-center justify-center gap-2">
-                            {isDraft && (
-                              <button onClick={() => setAssigning({ id: task.id, label })}
-                                className="text-xs font-semibold text-white px-2.5 py-1.5 rounded-lg transition-colors"
-                                style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-                                تكليف
-                              </button>
-                            )}
-                            <button onClick={() => deleteTask(task.id, task.debtors?.full_name ?? '')} disabled={deletingId === task.id}
-                              className="text-xs text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50">
-                              {deletingId === task.id ? '...' : 'حذف'}
-                            </button>
-                          </div>
-                        </TD>
-                      </TR>
-                    )
-                  })}
-                </TBody>
-              </Table>
-            </div>
-
-            <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
-              {filtered.map((task: any) => {
-                const isDraft = task.task_status === 'draft'
-                const label = TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type
-                return (
-                  <div key={task.id} className="p-4 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-semibold text-[#231F20] text-sm">{task.debtors?.full_name ?? '—'}</p>
-                        <p className="text-xs text-[#767676]">{label}</p>
-                      </div>
-                      <Badge variant={STATUS_BADGE[task.task_status as TaskStatus] ?? 'default'}>
-                        {TASK_STATUS_LABELS[task.task_status as TaskStatus] ?? task.task_status}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <p className="text-xs text-[#767676]">{task.profiles?.full_name ?? 'غير مكلف'}</p>
-                      {task.priority && task.priority !== 'normal' && (
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${TASK_PRIORITY_COLORS[task.priority as TaskPriority]}`}>
-                          {TASK_PRIORITY_LABELS[task.priority as TaskPriority]}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 pt-1">
-                      {isDraft && (
-                        <button onClick={() => setAssigning({ id: task.id, label })}
-                          className="flex-1 text-center text-xs text-white font-semibold py-1.5 rounded-lg"
-                          style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-                          تكليف
+          <Table>
+            <THead>
+              <tr>
+                <TH className="w-10">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll}
+                    className="w-4 h-4 accent-[#2C8780]" />
+                </TH>
+                <TH>المدين</TH>
+                <TH>الهاتف</TH>
+                <TH>نوع المهمة</TH>
+                <TH>تاريخ إنشاء المهمة</TH>
+                <TH>تاريخ نهاية التكليف</TH>
+                <TH>الحالة</TH>
+                <TH className="text-center">تكليف</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {filtered.map(t => (
+                <TR key={t.id}>
+                  <TD>
+                    <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggle(t.id)}
+                      className="w-4 h-4 accent-[#2C8780]" />
+                  </TD>
+                  <TD>
+                    <Link href={`/admin/debtors/${t.debtor_id}/account`}
+                      className="font-semibold text-[#231F20] hover:text-[#2C8780] text-sm">
+                      {t.debtorName}
+                    </Link>
+                  </TD>
+                  <TD><span className="text-xs font-mono text-[#767676]" dir="ltr">{t.debtorPhone ?? '—'}</span></TD>
+                  <TD><span className="text-xs text-[#231F20]">{t.taskLabel}</span></TD>
+                  <TD><span className="text-xs font-mono text-[#767676]" dir="ltr">{fmtDate(t.created_at.split('T')[0])}</span></TD>
+                  <TD>
+                    <span className="text-xs font-mono text-[#767676]" dir="ltr">
+                      {t.due_date ? fmtDate(t.due_date) : '—'}
+                    </span>
+                  </TD>
+                  <TD>
+                    <Badge variant={STATUS_BADGE[t.task_status as TaskStatus] ?? 'warning'}>
+                      {TASK_STATUS_LABELS[t.task_status as TaskStatus] ?? t.task_status}
+                    </Badge>
+                  </TD>
+                  <TD>
+                    {singleAssignId === t.id ? (
+                      <div className="flex items-center gap-1 min-w-[180px]">
+                        <select value={singleLawyerId} onChange={e => setSingleLawyerId(e.target.value)}
+                          className="text-[10px] border rounded px-1 py-1 flex-1">
+                          <option value="">محامي</option>
+                          {lawyers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
+                        </select>
+                        <button onClick={() => assignTaskIds([t.id], singleLawyerId, bulkDueDate || undefined)}
+                          disabled={assigning || !singleLawyerId}
+                          className="text-[10px] font-bold text-white px-2 py-1 rounded bg-[#2C8780] disabled:opacity-50">
+                          ✓
                         </button>
-                      )}
-                      <button onClick={() => deleteTask(task.id, task.debtors?.full_name ?? '')} disabled={deletingId === task.id}
-                        className="text-xs text-red-600 border border-red-200 bg-red-50 px-3 py-1.5 rounded-lg disabled:opacity-50">
-                        {deletingId === task.id ? '...' : 'حذف'}
+                        <button onClick={() => { setSingleAssignId(null); setSingleLawyerId('') }}
+                          className="text-[10px] text-[#767676] px-1">×</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => { setSingleAssignId(t.id); setSingleLawyerId(bulkLawyerId) }}
+                        className="text-[11px] font-bold text-white px-2.5 py-1 rounded-lg"
+                        style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
+                        تكليف
                       </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </>
+                    )}
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
         )}
       </div>
-
-      {assigning && (
-        <AssignModal
-          taskId={assigning.id}
-          taskLabel={assigning.label}
-          lawyers={lawyers}
-          onClose={() => setAssigning(null)}
-          onDone={load}
-        />
-      )}
     </div>
   )
 }

@@ -4,12 +4,15 @@ import { TASK_STATUS_LABELS, TASK_TYPE_LABELS, RECEIPT_TYPE_LABELS } from '@/lib
 import type { TaskStatus, TaskType } from '@/lib/types'
 import TaskUpdateForm from '@/components/TaskUpdateForm'
 import TaskExpenseForm from '@/components/TaskExpenseForm'
+import TaskAcceptanceActions from '@/components/TaskAcceptanceActions'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
+  assignment_pending_acceptance: 'warning',
+  assigned: 'info',
   new: 'info', in_progress: 'warning', completed: 'success', failed: 'danger', postponed: 'gray', needs_info: 'purple', closed: 'gray',
 }
 
@@ -36,12 +39,20 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
 
   const { data: task } = await supabase
     .from('tasks')
-    .select('*, task_definition_id, debtors(full_name, phone, governorate, notes, receipt_type, receipt_number, receipt_amount, remaining_amount, required_amount)')
+    .select('*, task_definition_id')
     .eq('id', id)
     .eq('assigned_to', user.id)
     .single()
 
   if (!task) notFound()
+
+  const { data: debtor } = await supabase
+    .from('debtors')
+    .select('full_name, phone, governorate, notes, receipt_type, receipt_number, receipt_amount, remaining_amount, required_amount')
+    .eq('id', task.debtor_id)
+    .single()
+
+  const taskWithDebtor = { ...task, debtors: debtor }
 
   const [{ data: rawTaskAtts }, { data: rawDebtorAtts }, { data: expenses }] = await Promise.all([
     supabase.from('task_attachments').select('*').eq('task_id', id).order('created_at', { ascending: false }),
@@ -63,9 +74,10 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     })
   )
 
-  const d = task.debtors as any
-  const status = task.task_status as TaskStatus
-  const isOverdue = task.due_date && task.due_date < new Date().toISOString().split('T')[0] && !['completed', 'closed', 'failed'].includes(status)
+  const d = taskWithDebtor.debtors as any
+  const status = taskWithDebtor.task_status as TaskStatus
+  const isOverdue = taskWithDebtor.due_date && taskWithDebtor.due_date < new Date().toISOString().split('T')[0] && !['completed', 'closed', 'failed'].includes(status)
+  const awaitingAcceptance = status === 'assignment_pending_acceptance'
 
   return (
     <div className="max-w-lg mx-auto px-4 pt-4 pb-24 space-y-3">
@@ -83,7 +95,7 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-0.5">
               <h1 className="font-bold text-slate-800 text-base leading-tight">
-                {TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type}
+                {TASK_TYPE_LABELS[taskWithDebtor.task_type as TaskType] ?? taskWithDebtor.task_type}
               </h1>
               <Badge variant={STATUS_BADGE[status] ?? 'default'}>{TASK_STATUS_LABELS[status]}</Badge>
             </div>
@@ -93,22 +105,29 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
         </div>
       </div>
 
+      {awaitingAcceptance && (
+        <TaskAcceptanceActions
+          taskId={id}
+          expiresAt={(taskWithDebtor as any).assignment_expires_at}
+        />
+      )}
+
       {/* Task details */}
       <Card>
         <div className="px-4 py-3 bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.1)]">
           <h2 className="font-bold text-slate-700 text-sm">بيانات المهمة</h2>
         </div>
         <div className="px-4 py-0.5">
-          <InfoRow label="نوع المهمة" value={TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type} />
+          <InfoRow label="نوع المهمة" value={TASK_TYPE_LABELS[taskWithDebtor.task_type as TaskType] ?? taskWithDebtor.task_type} />
           <InfoRow label="الحالة" value={TASK_STATUS_LABELS[status]} />
-          <InfoRow label="المحافظة" value={task.governorate} />
-          <InfoRow label="المحكمة" value={task.court_name} />
-          {task.due_date && <InfoRow label="تاريخ الاستحقاق" value={fmtDate(task.due_date)} dir="ltr" />}
+          <InfoRow label="المحافظة" value={taskWithDebtor.governorate} />
+          <InfoRow label="المحكمة" value={taskWithDebtor.court_name} />
+          {taskWithDebtor.due_date && <InfoRow label="تاريخ الاستحقاق" value={fmtDate(taskWithDebtor.due_date)} dir="ltr" />}
         </div>
       </Card>
 
       {/* Admin notes */}
-      {task.admin_notes && (
+      {taskWithDebtor.admin_notes && (
         <div className="bg-[#2C8780]/5 border border-[#2C8780]/20 rounded-2xl px-4 py-3.5">
           <p className="text-xs font-bold text-[#2C8780] mb-1.5 flex items-center gap-1.5">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -116,23 +135,23 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
             </svg>
             ملاحظات الإدارة
           </p>
-          <p className="text-sm text-slate-800 leading-relaxed">{task.admin_notes}</p>
+          <p className="text-sm text-slate-800 leading-relaxed">{taskWithDebtor.admin_notes}</p>
         </div>
       )}
 
       {/* Previous lawyer notes */}
-      {(task.lawyer_notes || task.legal_result) && (
+      {(taskWithDebtor.lawyer_notes || taskWithDebtor.legal_result) && (
         <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3.5 space-y-2.5">
-          {task.lawyer_notes && (
+          {taskWithDebtor.lawyer_notes && (
             <div>
               <p className="text-xs font-bold text-blue-700 mb-1">ملاحظاتك المسجلة</p>
-              <p className="text-sm text-slate-800 leading-relaxed">{task.lawyer_notes}</p>
+              <p className="text-sm text-slate-800 leading-relaxed">{taskWithDebtor.lawyer_notes}</p>
             </div>
           )}
-          {task.legal_result && (
+          {taskWithDebtor.legal_result && (
             <div>
               <p className="text-xs font-bold text-blue-700 mb-1">نتيجة الإجراء القانوني</p>
-              <p className="text-sm text-slate-800 leading-relaxed">{task.legal_result}</p>
+              <p className="text-sm text-slate-800 leading-relaxed">{taskWithDebtor.legal_result}</p>
             </div>
           )}
         </div>
@@ -182,10 +201,13 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
       )}
 
       {/* Task update form + completion file uploads */}
-      <TaskUpdateForm task={task} taskAttachments={taskAttachments} />
+      {!awaitingAcceptance && (
+        <TaskUpdateForm task={taskWithDebtor} taskAttachments={taskAttachments} />
+      )}
 
-      {/* Expenses */}
-      <TaskExpenseForm taskId={id} debtorId={task.debtor_id} caseId={task.case_id ?? null} expenses={expenses ?? []} />
+      {!awaitingAcceptance && (
+        <TaskExpenseForm taskId={id} debtorId={taskWithDebtor.debtor_id} caseId={taskWithDebtor.case_id ?? null} expenses={expenses ?? []} />
+      )}
     </div>
   )
 }

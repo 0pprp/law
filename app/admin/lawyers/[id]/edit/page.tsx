@@ -11,6 +11,7 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { fmtDate } from '@/lib/utils'
+import { useBranchId } from '@/context/branch'
 
 const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer']
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
@@ -39,6 +40,7 @@ interface Attachment { id: string; file_name: string; file_path: string; file_si
 export default function EditLawyerPage() {
   const router = useRouter()
   const params = useParams()
+  const branchId = useBranchId()
   const id = params.id as string
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -56,6 +58,7 @@ export default function EditLawyerPage() {
     identity_type: '', identity_number: '', identity_category: '',
     role: 'lawyer' as UserRole, is_active: true,
   })
+  const [profileBranchId, setProfileBranchId] = useState<string | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -65,6 +68,7 @@ export default function EditLawyerPage() {
         supabase.from('lawyer_attachments').select('*').eq('lawyer_id', id).order('created_at', { ascending: false }),
       ])
       if (data) {
+        setProfileBranchId(data.branch_id ?? null)
         setForm({ username: data.username ?? '', full_name: data.full_name ?? '', phone: data.phone ?? '', governorate: data.governorate ?? '', identity_type: data.identity_type ?? '', identity_number: data.identity_number ?? '', identity_category: data.identity_category ?? '', role: data.role ?? 'lawyer', is_active: data.is_active ?? true })
       }
       setAttachments(files ?? [])
@@ -84,12 +88,15 @@ export default function EditLawyerPage() {
       setSaving(false); return
     }
     const supabase = createClient()
-    const { error: dbError } = await supabase.from('profiles').update({
+    const updatePayload: Record<string, unknown> = {
       username: cleanUsername || null, full_name: form.full_name, phone: form.phone || null,
       governorate: form.governorate || null, identity_type: form.identity_type || null,
       identity_number: form.identity_number || null, identity_category: form.identity_category || null,
       role: form.role, is_active: form.is_active,
-    }).eq('id', id)
+    }
+    if (!profileBranchId && branchId) updatePayload.branch_id = branchId
+
+    const { error: dbError } = await supabase.from('profiles').update(updatePayload).eq('id', id)
     if (dbError) {
       setError(dbError.code === '23505' ? 'اسم المستخدم مستخدم مسبقاً — يرجى اختيار اسم آخر' : dbError.message)
       setSaving(false); return

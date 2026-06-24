@@ -9,6 +9,7 @@ import Link from 'next/link'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
+import { useBranchId } from '@/context/branch'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
 
@@ -29,6 +30,7 @@ interface TaskDef { id: string; label: string; fee_amount: number }
 
 export default function NewDebtorPage() {
   const router = useRouter()
+  const branchId = useBranchId()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [pdfFile, setPdfFile] = useState<File | null>(null)
@@ -55,11 +57,10 @@ export default function NewDebtorPage() {
 
   // Load task definitions for current branch
   useEffect(() => {
-    const branchId = typeof window !== 'undefined' ? localStorage.getItem('selected_branch_id') : null
     let q = createClient().from('task_definitions').select('id, label, fee_amount').eq('is_active', true)
     if (branchId) q = (q as any).eq('branch_id', branchId)
     q.order('sort_order').order('label').then(({ data }) => setTaskDefs(data ?? []))
-  }, [])
+  }, [branchId])
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
 
@@ -79,13 +80,18 @@ export default function NewDebtorPage() {
     e.preventDefault()
     setSaving(true)
     setError('')
+
+    if (!selectedTaskDefId) {
+      setError('يجب اختيار المهمة الأولية للمدين — لا يمكن إضافة مدين بدون مهمة')
+      setSaving(false)
+      return
+    }
+
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    const branchId = typeof window !== 'undefined'
-      ? localStorage.getItem('selected_branch_id') ?? null
-      : null
+    const taskDef = taskDefs.find(t => t.id === selectedTaskDefId)
 
     const { data: newDebtor, error: dbError } = await supabase.from('debtors').insert({
       full_name: form.full_name,
@@ -94,7 +100,7 @@ export default function NewDebtorPage() {
       address: form.address || null,
       employer: form.employer || null,
       id_number: form.id_number || null,
-      export_date: form.export_date || null,
+      export_date: form.export_date || new Date().toISOString().split('T')[0],
       receipt_type: form.receipt_type,
       receipt_number: form.receipt_number || null,
       receipt_amount: parseFloat(form.receipt_amount) || 0,
@@ -112,17 +118,29 @@ export default function NewDebtorPage() {
       return
     }
 
-    // Create initial task if a task definition was selected
-    if (selectedTaskDefId) {
-      const taskDef = taskDefs.find(t => t.id === selectedTaskDefId)
-      await supabase.from('tasks').insert({
-        debtor_id: newDebtor.id,
-        task_definition_id: selectedTaskDefId,
-        task_status: 'waiting_assignment',
-        reward_amount: taskDef?.fee_amount ?? 0,
-        created_by: user.id,
-        branch_id: branchId,
-      })
+    const { data: newTask, error: taskErr } = await supabase.from('tasks').insert({
+      debtor_id: newDebtor.id,
+      task_definition_id: selectedTaskDefId,
+      task_status: 'waiting_assignment',
+      reward_amount: taskDef?.fee_amount ?? 0,
+      created_by: user.id,
+      branch_id: branchId,
+    }).select('id').single()
+
+    if (taskErr) {
+      await supabase.from('debtors').delete().eq('id', newDebtor.id)
+      setError(`فشل إنشاء المهمة الأولية: ${taskErr.message}`)
+      setSaving(false)
+      return
+    }
+
+    const { error: linkErr } = await supabase.from('debtors').update({ current_task_id: newTask.id }).eq('id', newDebtor.id)
+    if (linkErr) {
+      await supabase.from('tasks').delete().eq('id', newTask.id)
+      await supabase.from('debtors').delete().eq('id', newDebtor.id)
+      setError(`فشل ربط المهمة بالمدين: ${linkErr.message}`)
+      setSaving(false)
+      return
     }
 
     if (pdfFile) {
@@ -163,13 +181,14 @@ export default function NewDebtorPage() {
         <Card>
           <CardHeader title="المهمة الأولية المطلوبة" />
           <div className="p-5">
-            <Field label="المهمة القانونية لهذا المدين">
+            <Field label="المهمة القانونية لهذا المدين" required>
               <select
                 value={selectedTaskDefId}
                 onChange={e => setSelectedTaskDefId(e.target.value)}
                 className={INP}
+                required
               >
-                <option value="">— بدون مهمة أولية —</option>
+                <option value="">— اختر المهمة الأولية —</option>
                 {taskDefs.map(t => (
                   <option key={t.id} value={t.id}>
                     {t.label}{t.fee_amount > 0 ? ` — ${Number(t.fee_amount).toLocaleString('en-US')} د.ع` : ''}
@@ -273,7 +292,7 @@ export default function NewDebtorPage() {
 
         <div className="flex gap-3 pb-6">
           <Button type="submit" variant="primary" loading={saving}>
-            حفظ المدين{selectedTaskDefId ? ' وإنشاء المهمة' : ''}
+            حفظ المدين وإنشاء المهمة
           </Button>
           <Link href="/admin/debtors">
             <Button type="button" variant="outline">إلغاء</Button>

@@ -10,6 +10,7 @@ import { StatCard } from '@/components/ui/stat-card'
 import { Button } from '@/components/ui/button'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtMoney, fmtNum, fmtDate } from '@/lib/utils'
+import { STALLED_STATUSES } from '@/lib/stage-config'
 
 interface Filters { dateFrom: string; dateTo: string; debtorId: string; lawyerId: string }
 const EMPTY: Filters = { dateFrom: '', dateTo: '', debtorId: '', lawyerId: '' }
@@ -27,6 +28,9 @@ export default function ReportsPage() {
   const [lawyers, setLawyers] = useState<any[]>([])
   const [debtors, setDebtors] = useState<any[]>([])
   const [tasks, setTasks] = useState<any[]>([])
+  const [taskDefs, setTaskDefs] = useState<any[]>([])
+  const [activeDebtors, setActiveDebtors] = useState<any[]>([])
+  const [closedCount, setClosedCount] = useState(0)
   const [expenses, setExpenses] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -37,19 +41,32 @@ export default function ReportsPage() {
     const supabase = createClient()
     let lq = supabase.from('profiles').select('id, full_name, governorate').eq('role', 'lawyer').eq('is_active', true).order('full_name')
     let dq = supabase.from('debtors').select('id, full_name, required_amount').order('full_name')
-    let tq = supabase.from('tasks').select('id, task_type, task_status, assigned_to, debtor_id, completed_at, due_date, created_at')
+    let tq = supabase.from('tasks').select('id, task_type, task_status, assigned_to, debtor_id, completed_at, due_date, created_at, task_definition_id, task_definitions(label)')
+    let tdq = supabase.from('task_definitions').select('id, label, sort_order').eq('is_active', true).order('sort_order')
+    let adq = supabase.from('debtors').select(`
+      id, case_status, current_task_id,
+      current_task:tasks!current_task_id(id, task_status, task_definition_id)
+    `).or('case_status.is.null,case_status.neq.closed')
+    let ccq = supabase.from('debtors').select('id', { count: 'exact', head: true }).eq('case_status', 'closed')
     let eq = supabase.from('expenses').select('id, debtor_id, amount, expense_date')
     let pq = supabase.from('debtor_payments').select('id, debtor_id, lawyer_id, amount, payment_date').order('payment_date', { ascending: false })
     if (branchId) {
       lq = (lq as any).eq('branch_id', branchId)
       dq = (dq as any).eq('branch_id', branchId)
       tq = (tq as any).eq('branch_id', branchId)
+      tdq = (tdq as any).eq('branch_id', branchId)
+      adq = (adq as any).eq('branch_id', branchId)
+      ccq = (ccq as any).eq('branch_id', branchId)
       eq = (eq as any).eq('branch_id', branchId)
       pq = (pq as any).eq('branch_id', branchId)
     }
-    Promise.all([lq, dq, tq, eq, pq]).then(([{ data: l }, { data: d }, { data: t }, { data: e }, { data: p }]) => {
+    Promise.all([lq, dq, tq, eq, pq, tdq, adq, ccq]).then(([
+      { data: l }, { data: d }, { data: t }, { data: e }, { data: p },
+      { data: td }, { data: ad }, { count: cc },
+    ]) => {
       setLawyers(l ?? []); setDebtors(d ?? []); setTasks(t ?? [])
       setExpenses(e ?? []); setPayments(p ?? [])
+      setTaskDefs(td ?? []); setActiveDebtors(ad ?? []); setClosedCount(cc ?? 0)
       setLoading(false)
     })
   }, [branchId])
@@ -101,6 +118,62 @@ export default function ReportsPage() {
       return { ...lawyer, completedCount: lt.length, feeBalance, collections, lastPayment, lastDone }
     }).sort((a, b) => b.completedCount - a.completedCount)
   }, [applied, lawyers, tasks, payments])
+
+  const stageReports = useMemo(() => {
+    const stageCounts = new Map<string, { id: string; label: string; active: number; stalled: number }>()
+    for (const def of taskDefs) {
+      stageCounts.set(def.id, { id: def.id, label: def.label, active: 0, stalled: 0 })
+    }
+    for (const d of activeDebtors) {
+      const task = d.current_task
+      if (!task?.task_definition_id) continue
+      const entry = stageCounts.get(task.task_definition_id)
+      if (!entry) continue
+      entry.active++
+      if (STALLED_STATUSES.includes(task.task_status)) entry.stalled++
+    }
+
+    const approvedTasks = tasks.filter(t => t.task_status === 'approved' && t.completed_at)
+    const taskExecCount = new Map<string, { label: string; count: number }>()
+    for (const t of approvedTasks) {
+      const defId = t.task_definition_id ?? t.task_type
+      const label = t.task_definitions?.label ?? t.task_type ?? '—'
+      const cur = taskExecCount.get(defId) ?? { label, count: 0 }
+      cur.count++
+      taskExecCount.set(defId, cur)
+    }
+    const topTasks = Array.from(taskExecCount.values()).sort((a, b) => b.count - a.count).slice(0, 8)
+
+    // Average transition time: gap between consecutive approved tasks per debtor
+    const byDebtor = new Map<string, any[]>()
+    for (const t of approvedTasks) {
+      if (!byDebtor.has(t.debtor_id)) byDebtor.set(t.debtor_id, [])
+      byDebtor.get(t.debtor_id)!.push(t)
+    }
+    const gaps: number[] = []
+    for (const list of byDebtor.values()) {
+      list.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      for (let i = 1; i < list.length; i++) {
+        const days = (new Date(list[i].created_at).getTime() - new Date(list[i - 1].completed_at).getTime()) / 86400000
+        if (days >= 0 && days < 365) gaps.push(days)
+      }
+    }
+    const avgTransitionDays = gaps.length > 0 ? Math.round(gaps.reduce((s, d) => s + d, 0) / gaps.length) : null
+
+    const lawyerTaskStats = lawyers.map(lawyer => {
+      const approved = tasks.filter(t => t.assigned_to === lawyer.id && t.task_status === 'approved')
+      return { id: lawyer.id, name: lawyer.full_name, approvedCount: approved.length }
+    }).filter(l => l.approvedCount > 0).sort((a, b) => b.approvedCount - a.approvedCount)
+
+    return {
+      stageCounts: Array.from(stageCounts.values()),
+      closedCount,
+      avgTransitionDays,
+      topTasks,
+      lawyerTaskStats,
+      totalActive: activeDebtors.filter(d => d.current_task_id).length,
+    }
+  }, [taskDefs, activeDebtors, tasks, lawyers, closedCount])
 
   function d(k: keyof Filters, v: string) { setDraft(prev => ({ ...prev, [k]: v })) }
   const hasApplied = Object.values(applied).some(Boolean)
@@ -168,6 +241,86 @@ export default function ReportsPage() {
             <p className={`text-3xl font-black tabular-nums ${summary.totalPayments - summary.totalExpenses >= 0 ? 'text-emerald-700' : 'text-red-600'}`} dir="ltr">
               {fmtMoney(summary.totalPayments - summary.totalExpenses)}
             </p>
+          </div>
+
+          {/* Stage reports */}
+          <div>
+            <p className="text-xs font-bold text-[#767676] uppercase tracking-wider mb-3">تقارير مراحل القضايا</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <StatCard label="قضايا نشطة" value={fmtNum(stageReports.totalActive)} accent="teal" />
+              <StatCard label="قضايا محسومة" value={fmtNum(stageReports.closedCount)} accent="navy" />
+              <StatCard
+                label="متوسط زمن الانتقال"
+                value={stageReports.avgTransitionDays != null ? `${stageReports.avgTransitionDays} يوم` : '—'}
+                sub="بين المراحل المتتالية"
+                accent="blue"
+              />
+              <StatCard
+                label="أكثر مهمة تنفيذاً"
+                value={stageReports.topTasks[0]?.count ?? 0}
+                sub={stageReports.topTasks[0]?.label ?? '—'}
+                accent="orange"
+              />
+            </div>
+
+            {stageReports.stageCounts.length > 0 && (
+              <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden mb-4">
+                <Table>
+                  <THead>
+                    <tr>
+                      <TH>المرحلة</TH>
+                      <TH>قضايا نشطة</TH>
+                      <TH>متوقفة</TH>
+                      <TH>النسبة</TH>
+                    </tr>
+                  </THead>
+                  <TBody>
+                    {stageReports.stageCounts.map(s => {
+                      const pct = stageReports.totalActive > 0 ? Math.round((s.active / stageReports.totalActive) * 100) : 0
+                      return (
+                        <TR key={s.id}>
+                          <TD className="font-semibold text-[#231F20]">{s.label}</TD>
+                          <TD><span className="font-bold tabular-nums">{fmtNum(s.active)}</span></TD>
+                          <TD><span className={`font-bold tabular-nums ${s.stalled > 0 ? 'text-red-600' : 'text-[#767676]'}`}>{fmtNum(s.stalled)}</span></TD>
+                          <TD>
+                            <div className="flex items-center gap-2">
+                              <div className="w-20 h-1.5 bg-[rgba(118,118,118,0.1)] rounded-full overflow-hidden">
+                                <div className="h-full bg-[#2C8780] rounded-full" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="text-xs font-bold text-[#767676]">{pct}%</span>
+                            </div>
+                          </TD>
+                        </TR>
+                      )
+                    })}
+                  </TBody>
+                </Table>
+              </div>
+            )}
+
+            {stageReports.lawyerTaskStats.length > 0 && (
+              <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
+                <p className="text-xs font-bold text-[#767676] uppercase tracking-wider px-5 pt-4 pb-2">أداء المحامين حسب المهام المعتمدة</p>
+                <Table>
+                  <THead>
+                    <tr>
+                      <TH>#</TH>
+                      <TH>المحامي</TH>
+                      <TH>مهام معتمدة</TH>
+                    </tr>
+                  </THead>
+                  <TBody>
+                    {stageReports.lawyerTaskStats.map((l, i) => (
+                      <TR key={l.id}>
+                        <TD className="text-[#767676] font-mono text-xs w-8">{i + 1}</TD>
+                        <TD className="font-semibold text-[#231F20]">{l.name}</TD>
+                        <TD><span className="font-bold tabular-nums">{fmtNum(l.approvedCount)}</span></TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              </div>
+            )}
           </div>
 
           {/* Lawyer performance table */}

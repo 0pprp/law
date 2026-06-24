@@ -8,6 +8,7 @@ import { logActivity } from '@/lib/activity-log'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
+import { useBranchId, useBranch } from '@/context/branch'
 
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
@@ -33,6 +34,8 @@ function formatSize(bytes: number) {
 
 export default function NewLawyerPage() {
   const router = useRouter()
+  const branchId = useBranchId()
+  const { branchName } = useBranch()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -56,6 +59,10 @@ export default function NewLawyerPage() {
 
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
+    if (!branchId) {
+      setError('يجب اختيار فرع من القائمة العلوية قبل إضافة مستخدم')
+      return
+    }
     setSaving(true); setError('')
     const res = await fetch('/api/admin/lawyers', {
       method: 'POST',
@@ -68,6 +75,7 @@ export default function NewLawyerPage() {
         phone: form.phone, is_active: form.is_active,
         governorate: form.governorate, identity_type: form.identity_type,
         identity_number: form.identity_number, identity_category: form.identity_category,
+        branch_id: branchId,
       }),
     })
     const data = await res.json()
@@ -96,6 +104,15 @@ export default function NewLawyerPage() {
       />
 
       <form onSubmit={handleSubmit} className="space-y-5">
+        {branchId ? (
+          <p className="text-xs text-[#767676] bg-[#F3F1F2] rounded-lg px-3 py-2">
+            الفرع الحالي: <span className="font-bold text-[#231F20]">{branchName ?? branchId}</span>
+          </p>
+        ) : (
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
+            اختر فرعاً من القائمة العلوية قبل إضافة مستخدم.
+          </div>
+        )}
         <Card>
           <CardHeader title="بيانات الحساب" />
           <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">

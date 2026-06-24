@@ -3,9 +3,8 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { TASK_FEE_MAP } from '@/lib/constants'
-import type { TaskType } from '@/lib/types'
 import { fmtMoney } from '@/lib/utils'
+import { fetchLawyerWalletBalance } from '@/lib/task-approval'
 
 function InfoRow({ label, value, dir }: { label: string; value?: string | null; dir?: 'ltr' }) {
   if (!value) return null
@@ -33,20 +32,21 @@ export default function LawyerAccountPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/login'); return }
 
-      const [{ data: p }, { count }, { data: tasks }, { data: payments }] = await Promise.all([
+      const [{ data: p }, { count }, { data: tasks }, { data: payments }, walletBalance] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('lawyer_attachments').select('*', { count: 'exact', head: true }).eq('lawyer_id', user.id),
         supabase.from('tasks').select('task_type, task_status').eq('assigned_to', user.id),
         supabase.from('debtor_payments').select('amount').eq('lawyer_id', user.id),
+        fetchLawyerWalletBalance(supabase, user.id),
       ])
 
       setProfile(p)
       setAttachmentCount(count ?? 0)
 
       const allTasks = tasks ?? []
-      const completed = allTasks.filter(t => t.task_status === 'completed')
+      const completed = allTasks.filter(t => t.task_status === 'approved' || t.task_status === 'completed')
       setCompletedCount(completed.length)
-      setFeeBalance(completed.reduce((s, t) => s + (TASK_FEE_MAP[t.task_type as TaskType] ?? 0), 0))
+      setFeeBalance(walletBalance)
       setTotalCollections((payments ?? []).reduce((s, pay) => s + Number(pay.amount), 0))
       setLoading(false)
     }

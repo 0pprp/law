@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { TASK_TYPE_LABELS, TASK_STATUS_LABELS } from '@/lib/types'
+import { fetchLawyerAssignedTasks } from '@/lib/task-assignment'
+import { fetchLawyerWalletBalance } from '@/lib/task-approval'
 import type { TaskStatus, TaskType } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { fmtMoney, fmtDate } from '@/lib/utils'
@@ -12,6 +14,7 @@ import { fmtMoney, fmtDate } from '@/lib/utils'
 // Statuses visible to lawyer (draft is excluded — lawyer never sees unassigned tasks)
 const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
   { key: 'all', label: 'الكل' },
+  { key: 'assignment_pending_acceptance', label: 'طلبات تكليف' },
   { key: 'assigned', label: 'مكلفة' },
   { key: 'in_progress', label: 'قيد التنفيذ' },
   { key: 'submitted', label: 'بانتظار الاعتماد' },
@@ -21,6 +24,7 @@ const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
 ]
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
+  assignment_pending_acceptance: 'warning',
   assigned: 'info',
   in_progress: 'warning',
   submitted: 'purple',
@@ -34,15 +38,12 @@ const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 
   closed: 'gray',
 }
 
-// Statuses where fee is considered earned
-const FEE_EARNED_STATUSES: TaskStatus[] = ['submitted', 'approved', 'completed']
-
 export default function LawyerTasksPage() {
   const searchParams = useSearchParams()
   const initialFilter = searchParams.get('f') as TaskStatus | 'all' | null
 
   const [tasks, setTasks] = useState<any[]>([])
-  const [taskDefs, setTaskDefs] = useState<Record<string, number>>({})
+  const [walletBalance, setWalletBalance] = useState(0)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<TaskStatus | 'all'>(
     FILTERS.some(f => f.key === initialFilter) ? (initialFilter as TaskStatus | 'all') : 'all'
@@ -53,20 +54,12 @@ export default function LawyerTasksPage() {
     const supabase = createClient()
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
-      const [{ data: t }, { data: defs }] = await Promise.all([
-        supabase
-          .from('tasks')
-          .select('*, debtors(full_name, governorate, remaining_amount)')
-          .eq('assigned_to', user.id)
-          .not('task_status', 'eq', 'draft')
-          .order('created_at', { ascending: false }),
-        (supabase as any).from('task_definitions').select('task_type, fee_amount'),
+      const [{ tasks: t }, balance] = await Promise.all([
+        fetchLawyerAssignedTasks(supabase, user.id),
+        fetchLawyerWalletBalance(supabase, user.id),
       ])
-      setTasks(t ?? [])
-      // Build fee map from DB definitions
-      const feeMap: Record<string, number> = {}
-      ;(defs ?? []).forEach((d: any) => { feeMap[d.task_type] = Number(d.fee_amount) })
-      setTaskDefs(feeMap)
+      setTasks(t)
+      setWalletBalance(balance)
       setLoading(false)
     })
   }, [])
@@ -89,11 +82,7 @@ export default function LawyerTasksPage() {
     return list
   }, [tasks, filter, search])
 
-  const feeBalance = useMemo(() =>
-    tasks
-      .filter(t => FEE_EARNED_STATUSES.includes(t.task_status as TaskStatus))
-      .reduce((s, t) => s + (taskDefs[t.task_type] ?? 0), 0),
-    [tasks, taskDefs])
+  const feeBalance = walletBalance
 
   return (
     <div className="max-w-2xl mx-auto pb-20">
@@ -166,7 +155,7 @@ export default function LawyerTasksPage() {
             {filtered.map((task: any) => {
               const remaining = Number(task.debtors?.remaining_amount ?? 0)
               const isOverdue = task.due_date && task.due_date < today && !['completed', 'closed', 'failed', 'approved'].includes(task.task_status)
-              const fee = taskDefs[task.task_type] ?? 0
+              const fee = Number(task.reward_amount ?? 0)
               return (
                 <Link key={task.id} href={`/lawyer/tasks/${task.id}`} className="block">
                   <div className={`bg-white rounded-2xl border shadow-sm active:scale-[0.99] transition-all p-4 h-full flex flex-col ${isOverdue ? 'border-red-200' : 'border-slate-200'}`}>

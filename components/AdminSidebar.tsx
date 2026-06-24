@@ -32,6 +32,7 @@ const navSections = [
     items: [
       { href: '/admin/dashboard', label: 'لوحة التحكم', icon: 'dashboard' },
       { href: '/admin/debtors', label: 'المدينون', icon: 'debtors' },
+      { href: '/admin/closed-cases', label: 'القضايا المحسومة', icon: 'review' },
       { href: '/admin/tasks', label: 'تكليف المهام', icon: 'tasks' },
       { href: '/admin/tasks/review', label: 'مراجعة الإنجازات', icon: 'review' },
       { href: '/admin/task-files', label: 'ملفات المهام', icon: 'files' },

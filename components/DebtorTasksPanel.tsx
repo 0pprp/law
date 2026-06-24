@@ -7,6 +7,9 @@ import type { TaskStatus, TaskType, Court, ExecutionDepartment } from '@/lib/typ
 import { Badge } from '@/components/ui/badge'
 import { fmtDate } from '@/lib/utils'
 import { logActivity } from '@/lib/activity-log'
+import { useBranchId } from '@/context/branch'
+import { buildAssignPayload } from '@/lib/task-assignment'
+import { ACTIVE_CASE_BLOCK_MSG, hasActiveCurrentTask } from '@/lib/debtor-current-task'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   draft: 'gray',
@@ -44,6 +47,7 @@ function CreateTaskModal({ debtorId, defs, courts, execDepts, onClose, onCreated
   onClose: () => void
   onCreated: () => void
 }) {
+  const branchId = useBranchId()
   const [taskType, setTaskType] = useState<TaskType | ''>('')
   const [dueDate, setDueDate] = useState('')
   const [courtId, setCourtId] = useState('')
@@ -64,7 +68,20 @@ function CreateTaskModal({ debtorId, defs, courts, execDepts, onClose, onCreated
     setSaving(true)
     setError('')
     const supabase = createClient()
-    const { error: err } = await supabase.from('tasks').insert({
+
+    const { data: debtor } = await supabase
+      .from('debtors')
+      .select('case_status, current_task_id')
+      .eq('id', debtorId)
+      .single()
+
+    if (hasActiveCurrentTask(debtor ?? {})) {
+      setError(ACTIVE_CASE_BLOCK_MSG)
+      setSaving(false)
+      return
+    }
+
+    const { data: newTask, error: err } = await supabase.from('tasks').insert({
       debtor_id: debtorId,
       task_type: taskType,
       task_status: 'draft',
@@ -73,8 +90,11 @@ function CreateTaskModal({ debtorId, defs, courts, execDepts, onClose, onCreated
       court_name: selectedCourt?.name || null,
       execution_dept_id: execDeptId || null,
       admin_notes: adminNotes || null,
-    } as any)
-    if (err) { setError(err.message); setSaving(false); return }
+      branch_id: branchId,
+    } as any).select('id').single()
+    if (err || !newTask) { setError(err?.message ?? 'فشل إنشاء المهمة'); setSaving(false); return }
+
+    await supabase.from('debtors').update({ current_task_id: newTask.id }).eq('id', debtorId)
     await logActivity({
       action: 'create_task',
       entity_type: 'task',
@@ -185,6 +205,7 @@ function AssignModal({ taskId, taskLabel, onClose, onAssigned }: {
   onClose: () => void
   onAssigned: () => void
 }) {
+  const branchId = useBranchId()
   const [lawyers, setLawyers] = useState<any[]>([])
   const [lawyerId, setLawyerId] = useState('')
   const [saving, setSaving] = useState(false)
@@ -192,20 +213,20 @@ function AssignModal({ taskId, taskLabel, onClose, onAssigned }: {
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.from('profiles').select('id, full_name, governorate')
+    let q = supabase.from('profiles').select('id, full_name, governorate')
       .eq('role', 'lawyer').eq('is_active', true).order('full_name')
-      .then(({ data }) => setLawyers(data ?? []))
-  }, [])
+    if (branchId) q = (q as any).eq('branch_id', branchId)
+    q.then(({ data }) => setLawyers(data ?? []))
+  }, [branchId])
 
   async function assign() {
     if (!lawyerId) { setError('اختر محامياً'); return }
     setSaving(true)
     setError('')
     const supabase = createClient()
-    const { error: err } = await supabase.from('tasks').update({
-      assigned_to: lawyerId,
-      task_status: 'assigned',
-    } as any).eq('id', taskId)
+    const { error: err } = await supabase.from('tasks').update(
+      buildAssignPayload(lawyerId) as any
+    ).eq('id', taskId)
     if (err) { setError(err.message); setSaving(false); return }
     await logActivity({
       action: 'assign_task',
@@ -264,7 +285,9 @@ function AssignModal({ taskId, taskLabel, onClose, onAssigned }: {
 
 // ─── Main Panel ────────────────────────────────────────────────────────────────
 export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
+  const branchId = useBranchId()
   const [tasks, setTasks] = useState<any[]>([])
+  const [debtorMeta, setDebtorMeta] = useState<{ current_task_id: string | null; case_status: string | null } | null>(null)
   const [defs, setDefs] = useState<TaskDef[]>([])
   const [courts, setCourts] = useState<Court[]>([])
   const [execDepts, setExecDepts] = useState<ExecutionDepartment[]>([])
@@ -276,16 +299,17 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
     const supabase = createClient()
     const [
       { data: t },
+      { data: debtor },
       { data: d },
       { data: c },
       { data: e },
     ] = await Promise.all([
       supabase.from('tasks')
-        .select('*, lawyer:profiles!tasks_assigned_to_fkey(full_name), courts(name), execution_departments(name)')
+        .select('*, lawyer:profiles!tasks_assigned_to_fkey(full_name), courts(name), execution_departments(name), task_definitions(label)')
         .eq('debtor_id', debtorId)
         .order('created_at', { ascending: false }),
+      supabase.from('debtors').select('current_task_id, case_status').eq('id', debtorId).single(),
       (() => {
-        const branchId = typeof window !== 'undefined' ? localStorage.getItem('selected_branch_id') : null
         let q = (supabase as any).from('task_definitions').select('*').eq('is_active', true).order('sort_order')
         if (branchId) q = q.eq('branch_id', branchId)
         return q
@@ -294,13 +318,22 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
       (supabase as any).from('execution_departments').select('*').eq('is_active', true).order('name'),
     ])
     setTasks(t ?? [])
+    setDebtorMeta(debtor ?? null)
     setDefs(d ?? [])
     setCourts(c ?? [])
     setExecDepts(e ?? [])
     setLoading(false)
-  }, [debtorId])
+  }, [debtorId, branchId])
 
   useEffect(() => { load() }, [load])
+
+  const canAddTask = !hasActiveCurrentTask(debtorMeta ?? {})
+  const currentTaskId = debtorMeta?.current_task_id ?? null
+  const sortedTasks = [...tasks].sort((a, b) => {
+    if (a.id === currentTaskId) return -1
+    if (b.id === currentTaskId) return 1
+    return 0
+  })
 
   if (loading) return (
     <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-8 flex items-center justify-center gap-3">
@@ -318,29 +351,43 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
         {/* Header */}
         <div className="px-5 py-3.5 flex items-center justify-between border-b border-[rgba(118,118,118,0.08)] bg-[#F3F1F2]">
           <h3 className="font-bold text-[#231F20] text-sm">المهام ({tasks.length})</h3>
-          <button onClick={() => setShowCreate(true)}
-            className="text-xs font-bold text-white px-3 py-1.5 rounded-lg transition-colors"
-            style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-            + إضافة مهمة
-          </button>
+          {canAddTask ? (
+            <button onClick={() => setShowCreate(true)}
+              className="text-xs font-bold text-white px-3 py-1.5 rounded-lg transition-colors"
+              style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
+              + إضافة مهمة
+            </button>
+          ) : (
+            <span className="text-[10px] text-[#767676] max-w-[200px] text-left leading-tight">
+              {ACTIVE_CASE_BLOCK_MSG}
+            </span>
+          )}
         </div>
 
         {/* Tasks list */}
-        {tasks.length === 0 ? (
+        {sortedTasks.length === 0 ? (
           <div className="py-10 text-center text-[#767676] text-sm">لا توجد مهام لهذا المدين</div>
         ) : (
           <div className="divide-y divide-[rgba(118,118,118,0.08)]">
-            {tasks.map(t => {
-              const label = TASK_TYPE_LABELS[t.task_type as TaskType] ?? t.task_type
+            {sortedTasks.map(t => {
+              const label = t.task_definitions?.label ?? TASK_TYPE_LABELS[t.task_type as TaskType] ?? t.task_type
+              const isCurrent = t.id === currentTaskId
               const isDraft = t.task_status === 'draft'
               const isOverdue = t.due_date
                 && t.due_date < new Date().toISOString().split('T')[0]
                 && !['completed', 'closed', 'failed', 'approved'].includes(t.task_status)
               const courtName = (t.courts as any)?.name ?? t.court_name
               return (
-                <div key={t.id} className="px-5 py-3.5 flex items-start justify-between gap-3">
+                <div key={t.id} className={`px-5 py-3.5 flex items-start justify-between gap-3 ${isCurrent ? 'bg-[#2C8780]/5' : ''}`}>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold text-[#231F20]">{label}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-bold text-[#231F20]">{label}</p>
+                      {isCurrent ? (
+                        <span className="text-[9px] font-bold text-white bg-[#2C8780] rounded px-1.5 py-0.5">المهمة الحالية</span>
+                      ) : (
+                        <span className="text-[9px] font-bold text-[#767676] bg-slate-100 rounded px-1.5 py-0.5">مهمة سابقة</span>
+                      )}
+                    </div>
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
                       <p className="text-xs text-[#767676]">
                         {isDraft ? 'لم يُكلَّف بعد' : (t.lawyer?.full_name ?? '—')}

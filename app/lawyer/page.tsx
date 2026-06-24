@@ -1,13 +1,16 @@
 import { createClient } from '@/lib/supabase/server'
-import { TASK_FEE_MAP } from '@/lib/constants'
-import { TASK_STATUS_LABELS, TASK_TYPE_LABELS } from '@/lib/types'
 import type { TaskStatus, TaskType } from '@/lib/types'
+import { TASK_STATUS_LABELS, TASK_TYPE_LABELS } from '@/lib/types'
+import { fetchLawyerAssignedTasks } from '@/lib/task-assignment'
+import { fetchLawyerWalletBalance } from '@/lib/task-approval'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
+  assignment_pending_acceptance: 'warning',
+  assigned: 'info',
   new: 'info',
   in_progress: 'warning',
   completed: 'success',
@@ -22,21 +25,20 @@ export default async function LawyerDashboardPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const [{ data: profile }, { data: tasks }, { data: payments }] = await Promise.all([
+  const [{ data: profile }, lawyerTasksRes, { data: payments }, walletBalance] = await Promise.all([
     supabase.from('profiles').select('full_name, governorate, is_active, phone').eq('id', user.id).single(),
-    supabase.from('tasks')
-      .select('id, task_type, task_status, due_date, court_name, governorate, created_at, debtors(full_name)')
-      .eq('assigned_to', user.id)
-      .order('created_at', { ascending: false }),
+    fetchLawyerAssignedTasks(supabase, user.id),
     supabase.from('debtor_payments').select('amount').eq('lawyer_id', user.id),
+    fetchLawyerWalletBalance(supabase, user.id),
   ])
 
-  const allTasks = tasks ?? []
-  const feeBalance = allTasks.filter(t => t.task_status === 'completed').reduce((s, t) => s + (TASK_FEE_MAP[t.task_type as TaskType] ?? 0), 0)
+  const allTasks = lawyerTasksRes.tasks
+  const feeBalance = walletBalance
   const totalCollections = (payments ?? []).reduce((s, p) => s + Number(p.amount), 0)
 
   const counts = {
-    new: allTasks.filter(t => t.task_status === 'new').length,
+    pending_acceptance: allTasks.filter(t => t.task_status === 'assignment_pending_acceptance').length,
+    new: allTasks.filter(t => t.task_status === 'new' || t.task_status === 'assigned').length,
     in_progress: allTasks.filter(t => t.task_status === 'in_progress').length,
     completed: allTasks.filter(t => t.task_status === 'completed').length,
   }
@@ -100,6 +102,20 @@ export default async function LawyerDashboardPage() {
           </div>
         </div>
 
+        {/* Pending assignment alert */}
+        {counts.pending_acceptance > 0 && (
+          <Link href="/lawyer/tasks?f=assignment_pending_acceptance">
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 flex items-center gap-3 active:bg-amber-100 transition-colors">
+              <div className="w-10 h-10 bg-amber-200 rounded-xl flex items-center justify-center shrink-0 text-lg">📋</div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-black text-amber-900">طلبات تكليف بانتظار ردك</p>
+                <p className="text-xs text-amber-800">{counts.pending_acceptance} مهمة — اقبل أو ارفض خلال 24 ساعة</p>
+              </div>
+              <span className="text-amber-900 font-black text-xl tabular-nums">{counts.pending_acceptance}</span>
+            </div>
+          </Link>
+        )}
+
         {/* Task count chips */}
         <div className="grid grid-cols-3 gap-2">
           <Link href="/lawyer/tasks?f=new">
@@ -145,7 +161,7 @@ export default async function LawyerDashboardPage() {
                     <div className={`bg-white rounded-2xl border shadow-sm p-4 active:bg-[rgba(44,135,128,0.03)] transition-colors ${isOverdue ? 'border-red-200' : 'border-[rgba(118,118,118,0.15)]'}`}>
                       <div className="flex items-start gap-2 mb-2">
                         <div className="flex-1 min-w-0">
-                          <p className="font-bold text-[#231F20] text-sm truncate">{(task.debtors as any)?.full_name ?? '—'}</p>
+                          <p className="font-bold text-[#231F20] text-sm truncate">{task.debtors?.full_name ?? '—'}</p>
                           <p className="text-xs text-[#767676] mt-0.5">{TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type}</p>
                         </div>
                         <Badge variant={STATUS_BADGE[task.task_status as TaskStatus] ?? 'default'}>

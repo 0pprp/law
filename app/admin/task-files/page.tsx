@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtDate } from '@/lib/utils'
+import { useBranchId } from '@/context/branch'
 
 function formatSize(bytes: number | null) {
   if (!bytes) return '—'
@@ -34,6 +35,7 @@ const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
 export default function TaskFilesPage() {
+  const branchId = useBranchId()
   const [files, setFiles] = useState<any[]>([])
   const [lawyers, setLawyers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -49,13 +51,18 @@ export default function TaskFilesPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient()
+    let lq = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
+    if (branchId) lq = (lq as any).eq('branch_id', branchId)
     const [{ data: f }, { data: l }] = await Promise.all([
-      supabase.from('task_attachments').select(`*, task:tasks!task_attachments_task_id_fkey(task_type, task_status, governorate, assigned_to, debtor:debtors!tasks_debtor_id_fkey(full_name, governorate), lawyer:profiles!tasks_assigned_to_fkey(id, full_name))`).order('created_at', { ascending: false }),
-      supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name'),
+      supabase.from('task_attachments').select(`*, task:tasks!task_attachments_task_id_fkey(task_type, task_status, governorate, branch_id, assigned_to, debtor:debtors!tasks_debtor_id_fkey(full_name, governorate), lawyer:profiles!tasks_assigned_to_fkey(id, full_name))`).order('created_at', { ascending: false }),
+      lq,
     ])
-    setFiles(f ?? []); setLawyers(l ?? [])
+    const fileRows = branchId
+      ? (f ?? []).filter((row: any) => row.task?.branch_id === branchId)
+      : (f ?? [])
+    setFiles(fileRows); setLawyers(l ?? [])
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { load() }, [load])
 

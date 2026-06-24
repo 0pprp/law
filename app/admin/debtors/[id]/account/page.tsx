@@ -7,8 +7,9 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader } from '@/components/ui/card'
 import { StatCard } from '@/components/ui/stat-card'
 import { fmtMoney, fmtDate } from '@/lib/utils'
-import DebtorTasksPanel from '@/components/DebtorTasksPanel'
+import DebtorTasksHistory from '@/components/DebtorTasksHistory'
 import DebtorNotesPanel from '@/components/DebtorNotesPanel'
+import DebtorGPSCard from '@/components/DebtorGPSCard'
 
 function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
@@ -156,8 +157,16 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
             )}
           </Card>
 
-          {/* Tasks — managed by client component */}
-          <DebtorTasksPanel debtorId={id} />
+          {/* GPS location */}
+          <DebtorGPSCard
+            debtorId={id}
+            latitude={debtor.latitude ?? null}
+            longitude={debtor.longitude ?? null}
+            locationCapturedAt={debtor.location_captured_at ?? null}
+          />
+
+          {/* Tasks — read-only history */}
+          <DebtorTasksHistory debtorId={id} />
 
           {/* Notes */}
           <DebtorNotesPanel debtorId={id} />

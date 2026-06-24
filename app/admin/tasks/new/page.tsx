@@ -11,6 +11,8 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { fmtMoney } from '@/lib/utils'
+import { useBranchId } from '@/context/branch'
+import { ACTIVE_CASE_BLOCK_MSG, hasActiveCurrentTask } from '@/lib/debtor-current-task'
 
 const ALL_TASK_TYPES: TaskType[] = [
   'file_lawsuit', 'notification', 'pleading', 'decision_ratification',
@@ -36,6 +38,7 @@ function Field({ label, required: req, children }: { label: string; required?: b
 
 export default function NewTaskPage() {
   const router = useRouter()
+  const branchId = useBranchId()
   const [debtors, setDebtors] = useState<any[]>([])
   const [lawyers, setLawyers] = useState<any[]>([])
   const [selectedDebtor, setSelectedDebtor] = useState<any>(null)
@@ -56,11 +59,14 @@ export default function NewTaskPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    Promise.all([
-      supabase.from('debtors').select('id, full_name, phone, governorate, receipt_type, receipt_number, remaining_amount, required_amount, has_contract').order('full_name'),
-      supabase.from('profiles').select('id, full_name, phone, governorate').eq('role', 'lawyer').eq('is_active', true).order('full_name'),
-    ]).then(([{ data: d }, { data: l }]) => { setDebtors(d ?? []); setLawyers(l ?? []) })
-  }, [])
+    let dq = supabase.from('debtors').select('id, full_name, phone, governorate, receipt_type, receipt_number, remaining_amount, required_amount, has_contract, case_status, current_task_id').order('full_name')
+    let lq = supabase.from('profiles').select('id, full_name, phone, governorate').eq('role', 'lawyer').eq('is_active', true).order('full_name')
+    if (branchId) {
+      dq = (dq as any).eq('branch_id', branchId)
+      lq = (lq as any).eq('branch_id', branchId)
+    }
+    Promise.all([dq, lq]).then(([{ data: d }, { data: l }]) => { setDebtors(d ?? []); setLawyers(l ?? []) })
+  }, [branchId])
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
 
@@ -80,6 +86,13 @@ export default function NewTaskPage() {
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (!form.debtor_id || !form.task_type) { setError('يرجى اختيار المدين ونوع المهمة'); return }
+
+    const debtor = debtors.find(d => d.id === form.debtor_id)
+    if (debtor && hasActiveCurrentTask(debtor)) {
+      setError(ACTIVE_CASE_BLOCK_MSG)
+      return
+    }
+
     setSaving(true); setError('')
     const supabase = createClient()
     const { data: newTask, error: dbError } = await supabase.from('tasks').insert({
@@ -92,8 +105,10 @@ export default function NewTaskPage() {
       due_date: form.due_date || null,
       admin_notes: form.admin_notes || null,
       case_id: null,
+      branch_id: branchId,
     }).select('id').single()
-    if (dbError) { setError(dbError.message); setSaving(false); return }
+    if (dbError || !newTask) { setError(dbError?.message ?? 'فشل إنشاء المهمة'); setSaving(false); return }
+    await supabase.from('debtors').update({ current_task_id: newTask.id }).eq('id', form.debtor_id)
     await logActivity({ action: 'assign_task', entity_type: 'task', entity_id: newTask?.id, description: `تكليف مهمة: ${TASK_TYPE_LABELS[form.task_type as TaskType]}` }, supabase)
     router.push('/admin/tasks')
   }
