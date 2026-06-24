@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useBranchId } from '@/context/branch'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import Link from 'next/link'
 import { logActivity } from '@/lib/activity-log'
@@ -19,6 +20,7 @@ function SearchIcon() {
 }
 
 export default function DebtorsPage() {
+  const branchId = useBranchId()
   const [debtors, setDebtors] = useState<any[]>([])
   const [filtered, setFiltered] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -28,11 +30,13 @@ export default function DebtorsPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    const { data } = await supabase.from('debtors').select('*').order('created_at', { ascending: false })
+    let q = supabase.from('debtors').select('*').order('created_at', { ascending: false })
+    if (branchId) q = (q as any).eq('branch_id', branchId)
+    const { data } = await q
     setDebtors(data ?? [])
     setFiltered(data ?? [])
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { load() }, [load])
 

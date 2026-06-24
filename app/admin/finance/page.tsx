@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useBranchId } from '@/context/branch'
 import { fmtMoney, fmtDate, fmtDateTime } from '@/lib/utils'
 import { RECEIPT_STATUS_LABELS, WALLET_TRANSACTION_LABELS } from '@/lib/types'
 import type { ReceiptStatus, WalletTransactionType } from '@/lib/types'
@@ -43,6 +44,7 @@ const STATUS_COLORS: Record<ReceiptStatus, string> = {
 }
 
 export default function FinancePage() {
+  const branchId = useBranchId()
   const [lawyers, setLawyers] = useState<Lawyer[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [receipts, setReceipts] = useState<Receipt[]>([])
@@ -60,12 +62,13 @@ export default function FinancePage() {
   const supabase = createClient()
 
   useEffect(() => {
-    supabase.from('profiles').select('id, full_name, username, phone').eq('role', 'lawyer').eq('is_active', true)
-      .then(({ data }) => {
-        setLawyers(data ?? [])
-        if (data?.[0]) setSelectedId(data[0].id)
-      })
-  }, [])
+    let q = supabase.from('profiles').select('id, full_name, username, phone').eq('role', 'lawyer').eq('is_active', true)
+    if (branchId) q = (q as any).eq('branch_id', branchId)
+    q.then(({ data }) => {
+      setLawyers(data ?? [])
+      if (data?.[0]) setSelectedId(data[0].id)
+    })
+  }, [branchId])
 
   useEffect(() => {
     if (!selectedId) return

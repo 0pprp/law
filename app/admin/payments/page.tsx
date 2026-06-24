@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useBranchId } from '@/context/branch'
 import { TASK_TYPE_LABELS } from '@/lib/types'
 import type { TaskType } from '@/lib/types'
 import { logActivity } from '@/lib/activity-log'
@@ -22,6 +23,7 @@ const INP = 'w-full border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2.5
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
 export default function PaymentsPage() {
+  const branchId = useBranchId()
   const [debtors, setDebtors] = useState<any[]>([])
   const [lawyers, setLawyers] = useState<any[]>([])
   const [allTasks, setAllTasks] = useState<any[]>([])
@@ -48,15 +50,20 @@ export default function PaymentsPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    const [{ data: d }, { data: l }, { data: t }, { data: p }] = await Promise.all([
-      supabase.from('debtors').select('id, full_name, governorate').order('full_name'),
-      supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name'),
-      supabase.from('tasks').select('id, debtor_id, task_type'),
-      supabase.from('debtor_payments').select(`*, debtors(full_name, governorate), lawyer:profiles!debtor_payments_lawyer_id_fkey(full_name), creator:profiles!debtor_payments_created_by_fkey(full_name), task:tasks!debtor_payments_task_id_fkey(task_type)`).order('payment_date', { ascending: false }),
-    ])
+    let dq = supabase.from('debtors').select('id, full_name, governorate').order('full_name')
+    let lq = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
+    let tq = supabase.from('tasks').select('id, debtor_id, task_type')
+    let pq = supabase.from('debtor_payments').select(`*, debtors(full_name, governorate), lawyer:profiles!debtor_payments_lawyer_id_fkey(full_name), creator:profiles!debtor_payments_created_by_fkey(full_name), task:tasks!debtor_payments_task_id_fkey(task_type)`).order('payment_date', { ascending: false })
+    if (branchId) {
+      dq = (dq as any).eq('branch_id', branchId)
+      lq = (lq as any).eq('branch_id', branchId)
+      tq = (tq as any).eq('branch_id', branchId)
+      pq = (pq as any).eq('branch_id', branchId)
+    }
+    const [{ data: d }, { data: l }, { data: t }, { data: p }] = await Promise.all([dq, lq, tq, pq])
     setDebtors(d ?? []); setLawyers(l ?? []); setAllTasks(t ?? []); setPayments(p ?? [])
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { load() }, [load])
 

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useBranchId } from '@/context/branch'
 import { TASK_TYPE_LABELS } from '@/lib/types'
 import type { TaskType } from '@/lib/types'
 import { logActivity } from '@/lib/activity-log'
@@ -16,6 +17,7 @@ const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm 
 const lbl = 'block text-xs font-semibold text-[#231F20] mb-1.5'
 
 export default function ExpensesPage() {
+  const branchId = useBranchId()
   const [expenses, setExpenses] = useState<any[]>([])
   const [lawyers, setLawyers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -31,13 +33,16 @@ export default function ExpensesPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    const [{ data: e }, { data: l }] = await Promise.all([
-      supabase.from('expenses').select(`*, debtors(full_name, governorate), profiles!expenses_created_by_fkey(full_name), tasks!expenses_task_id_fkey(task_type)`).order('expense_date', { ascending: false }),
-      supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name'),
-    ])
+    let eq = supabase.from('expenses').select(`*, debtors(full_name, governorate), profiles!expenses_created_by_fkey(full_name), tasks!expenses_task_id_fkey(task_type)`).order('expense_date', { ascending: false })
+    let lq = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
+    if (branchId) {
+      eq = (eq as any).eq('branch_id', branchId)
+      lq = (lq as any).eq('branch_id', branchId)
+    }
+    const [{ data: e }, { data: l }] = await Promise.all([eq, lq])
     setExpenses(e ?? []); setLawyers(l ?? [])
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { load() }, [load])
 

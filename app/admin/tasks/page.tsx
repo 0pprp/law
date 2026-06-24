@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useBranchId } from '@/context/branch'
 import { TASK_STATUS_LABELS, TASK_TYPE_LABELS, TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '@/lib/types'
 import type { TaskStatus, TaskType, TaskPriority } from '@/lib/types'
 import { logActivity } from '@/lib/activity-log'
@@ -81,6 +82,7 @@ function AssignModal({ taskId, taskLabel, lawyers, onClose, onDone }: {
 }
 
 export default function TasksPage() {
+  const branchId = useBranchId()
   const [tasks, setTasks] = useState<any[]>([])
   const [lawyers, setLawyers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -93,14 +95,17 @@ export default function TasksPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    const [{ data: t }, { data: l }] = await Promise.all([
-      supabase.from('tasks').select('*, debtors(full_name, governorate), profiles!tasks_assigned_to_fkey(id, full_name)').order('created_at', { ascending: false }),
-      supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name'),
-    ])
+    let tq = supabase.from('tasks').select('*, debtors(full_name, governorate), profiles!tasks_assigned_to_fkey(id, full_name)').order('created_at', { ascending: false })
+    let lq = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
+    if (branchId) {
+      tq = (tq as any).eq('branch_id', branchId)
+      lq = (lq as any).eq('branch_id', branchId)
+    }
+    const [{ data: t }, { data: l }] = await Promise.all([tq, lq])
     setTasks(t ?? [])
     setLawyers(l ?? [])
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { load() }, [load])
 

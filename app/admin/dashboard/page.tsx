@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useBranchId } from '@/context/branch'
 import Link from 'next/link'
-import CurrentBranchDisplay from '@/components/CurrentBranchDisplay'
 
 // ── Types ──────────────────────────────────────────────────────
 interface StageItem {
@@ -360,6 +360,7 @@ function WaitingDebtorsModal({
 
 // ── Main Dashboard ─────────────────────────────────────────────
 export default function DashboardPage() {
+  const branchId = useBranchId()
   const [stages, setStages] = useState<StageItem[]>([])
   const [waitingGroups, setWaitingGroups] = useState<WaitingGroup[]>([])
   const [totalDebtors, setTotalDebtors] = useState(0)
@@ -369,24 +370,31 @@ export default function DashboardPage() {
   const [stageDebtors, setStageDebtors] = useState<StageDebtor[]>([])
   const [loadingStage, setLoadingStage] = useState(false)
   const [selectedWaiting, setSelectedWaiting] = useState<WaitingGroup | null>(null)
-  const [recentActivity, setRecentActivity] = useState<{ action: string; user_name: string; created_at: string }[]>([])
+  const [recentActivity, setRecentActivity] = useState<{ action: string; new_data: any; created_at: string }[]>([])
 
   const loadData = useCallback(async () => {
     setLoading(true)
     const supabase = createClient()
 
-    const [tasksRes, waitingRes, debtorsRes, activityRes] = await Promise.all([
-      supabase
-        .from('tasks')
-        .select('debtor_id, task_definition_id, task_status, task_definitions!inner(id, label, sort_order, is_active)')
-        .not('task_status', 'in', '(waiting_assignment,completed,approved,cancelled)'),
-      supabase
-        .from('tasks')
-        .select('task_definition_id, task_definitions(id, label)')
-        .eq('task_status', 'waiting_assignment'),
-      supabase.from('debtors').select('id', { count: 'exact', head: true }),
-      supabase.from('activity_log').select('action, user_name, created_at').order('created_at', { ascending: false }).limit(5),
-    ])
+    let tq = supabase
+      .from('tasks')
+      .select('debtor_id, task_definition_id, task_status, task_definitions!inner(id, label, sort_order, is_active)')
+      .not('task_status', 'in', '(waiting_assignment,completed,approved,cancelled)')
+    let wq = supabase
+      .from('tasks')
+      .select('task_definition_id, task_definitions(id, label)')
+      .eq('task_status', 'waiting_assignment')
+    let dq = supabase.from('debtors').select('id', { count: 'exact', head: true })
+    let aq = supabase.from('activity_logs').select('action, new_data, created_at').order('created_at', { ascending: false }).limit(5)
+
+    if (branchId) {
+      tq = (tq as any).eq('branch_id', branchId)
+      wq = (wq as any).eq('branch_id', branchId)
+      dq = (dq as any).eq('branch_id', branchId)
+      aq = (aq as any).eq('branch_id', branchId)
+    }
+
+    const [tasksRes, waitingRes, debtorsRes, activityRes] = await Promise.all([tq, wq, dq, aq])
 
     // Build stage map (excludes waiting_assignment)
     const stageMap = new Map<string, {
@@ -428,7 +436,7 @@ export default function DashboardPage() {
     setTotalPendingReview(globalPending)
     setRecentActivity(activityRes.data ?? [])
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -436,12 +444,14 @@ export default function DashboardPage() {
     setSelectedStage({ id, label })
     setLoadingStage(true)
     setStageDebtors([])
-    const { data } = await createClient()
+    let q = createClient()
       .from('tasks')
       .select('id, task_status, debtor_id, debtors!inner(full_name), profiles!assigned_to(full_name)')
       .eq('task_definition_id', id)
       .not('task_status', 'in', '(waiting_assignment,completed,approved,cancelled)')
       .order('created_at', { ascending: false })
+    if (branchId) q = (q as any).eq('branch_id', branchId)
+    const { data } = await q
 
     setStageDebtors((data as any[] ?? []).map(t => ({
       debtorName: t.debtors?.full_name ?? '—',
@@ -467,7 +477,6 @@ export default function DashboardPage() {
             <p className="text-[#2C8780] text-[10px] font-bold tracking-[0.25em] uppercase mb-2">منصة التحصيل القانوني</p>
             <h1 className="text-white text-2xl font-black leading-tight">لوحة التحكم</h1>
             <p className="text-white/40 text-sm mt-1">توزيع المدينين حسب المراحل القانونية</p>
-            <div className="mt-2"><CurrentBranchDisplay /></div>
           </div>
           <div className="flex items-stretch gap-4 shrink-0">
             <div className="text-center">
@@ -612,11 +621,10 @@ export default function DashboardPage() {
             {recentActivity.map((a, i) => (
               <div key={i} className="flex items-start gap-3 px-5 py-3">
                 <div className="w-6 h-6 rounded-full bg-[#2C8780]/10 flex items-center justify-center shrink-0 mt-0.5">
-                  <span className="text-[#2C8780] text-[10px] font-bold">{a.user_name?.[0] ?? '؟'}</span>
+                  <span className="text-[#2C8780] text-[10px] font-bold">؟</span>
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-[#231F20] leading-snug">{a.action}</p>
-                  <p className="text-[10px] text-[#767676] mt-0.5">{a.user_name}</p>
                 </div>
                 <span className="text-[10px] text-[#767676] shrink-0 tabular-nums" dir="ltr">
                   {a.created_at ? new Date(a.created_at).toLocaleDateString('en-CA') : '—'}

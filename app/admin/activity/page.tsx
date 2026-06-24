@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useBranchId } from '@/context/branch'
 import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
@@ -45,6 +46,7 @@ const ACTION_BADGE_MAP: Record<string, 'success' | 'info' | 'warning' | 'danger'
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
 export default function ActivityPage() {
+  const branchId = useBranchId()
   const [logs, setLogs] = useState<any[]>([])
   const [users, setUsers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -56,15 +58,18 @@ export default function ActivityPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    Promise.all([
-      supabase.from('activity_logs').select(`*, user:profiles!activity_logs_user_id_fkey(full_name, role)`).order('created_at', { ascending: false }).limit(1000),
-      supabase.from('profiles').select('id, full_name').order('full_name'),
-    ]).then(([{ data: l }, { data: u }]) => {
+    let lq = supabase.from('activity_logs').select(`*, user:profiles!activity_logs_user_id_fkey(full_name, role)`).order('created_at', { ascending: false }).limit(1000)
+    let uq = supabase.from('profiles').select('id, full_name').order('full_name')
+    if (branchId) {
+      lq = (lq as any).eq('branch_id', branchId)
+      uq = (uq as any).eq('branch_id', branchId)
+    }
+    Promise.all([lq, uq]).then(([{ data: l }, { data: u }]) => {
       setLogs(l ?? [])
       setUsers(u ?? [])
       setLoading(false)
     })
-  }, [])
+  }, [branchId])
 
   const filtered = useMemo(() => logs.filter(l => {
     if (filterUser && l.user_id !== filterUser) return false

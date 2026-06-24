@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useBranchId } from '@/context/branch'
 import { REQUIRED_FIELD_LABELS } from '@/lib/types'
 import type { RequiredField } from '@/lib/types'
 
@@ -115,6 +116,7 @@ interface Branch { id: string; name: string; city: string | null }
 interface Court { id: string; name: string; branch_id: string | null; is_active: boolean }
 
 function CourtsTab({ branches }: { branches: Branch[] }) {
+  const branchId = useBranchId()
   const [courts, setCourts] = useState<Court[]>([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState<{ name: string; branch_id: string } | null>(null)
@@ -125,10 +127,12 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await createClient().from('courts').select('*').order('name')
+    let q = createClient().from('courts').select('*').order('name')
+    if (branchId) q = (q as any).eq('branch_id', branchId)
+    const { data } = await q
     setCourts(data ?? [])
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { load() }, [load])
 
@@ -238,6 +242,7 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
 interface ExecDept { id: string; name: string; court_id: string | null; is_active: boolean }
 
 function ExecDeptsTab({ branches }: { branches: Branch[] }) {
+  const branchId = useBranchId()
   const [depts, setDepts] = useState<ExecDept[]>([])
   const [courts, setCourts] = useState<Court[]>([])
   const [loading, setLoading] = useState(true)
@@ -250,14 +255,17 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
-    const [{ data: d }, { data: c }] = await Promise.all([
-      sb.from('execution_departments').select('*').order('name'),
-      sb.from('courts').select('*').order('name'),
-    ])
+    let dq = sb.from('execution_departments').select('*').order('name')
+    let cq = sb.from('courts').select('*').order('name')
+    if (branchId) {
+      dq = (dq as any).eq('branch_id', branchId)
+      cq = (cq as any).eq('branch_id', branchId)
+    }
+    const [{ data: d }, { data: c }] = await Promise.all([dq, cq])
     setDepts(d ?? [])
     setCourts(c ?? [])
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { load() }, [load])
 
@@ -401,6 +409,7 @@ interface ReqField {
 interface DynField { field_label: string; field_type: string; is_required: boolean }
 
 function TaskDefsTab() {
+  const branchId = useBranchId()
   const [defs, setDefs] = useState<TaskDef[]>([])
   const [reqFields, setReqFields] = useState<ReqField[]>([])
   const [loading, setLoading] = useState(true)
@@ -414,14 +423,16 @@ function TaskDefsTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
+    let dq = (sb as any).from('task_definitions').select('*').order('sort_order')
+    if (branchId) dq = dq.eq('branch_id', branchId)
     const [{ data: d }, { data: f }] = await Promise.all([
-      (sb as any).from('task_definitions').select('*').order('sort_order'),
+      dq,
       (sb as any).from('task_required_fields').select('*').order('sort_order'),
     ])
     setDefs(d ?? [])
     setReqFields(f ?? [])
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { load() }, [load])
 
@@ -702,6 +713,7 @@ interface ExpenseType {
 }
 
 function ExpenseTypesTab() {
+  const branchId = useBranchId()
   const [types, setTypes] = useState<ExpenseType[]>([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState<{
@@ -715,10 +727,12 @@ function ExpenseTypesTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await createClient().from('expense_types').select('*').order('name')
+    let q = createClient().from('expense_types').select('*').order('name')
+    if (branchId) q = (q as any).eq('branch_id', branchId)
+    const { data } = await q
     setTypes(data ?? [])
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { load() }, [load])
 

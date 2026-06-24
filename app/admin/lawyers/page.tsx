@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getBranchContext } from '@/lib/branch-context'
 import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
 import Link from 'next/link'
@@ -21,9 +22,13 @@ const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange
 export default async function LawyersPage() {
   const supabase = await createClient()
   const admin = createAdminClient()
+  const { branchId } = await getBranchContext()
+
+  let profilesQ = supabase.from('profiles').select('*').order('created_at', { ascending: false })
+  if (branchId) profilesQ = (profilesQ as any).eq('branch_id', branchId)
 
   const [{ data: profiles }, { data: authList }, { data: attachmentRows }] = await Promise.all([
-    supabase.from('profiles').select('*').order('created_at', { ascending: false }),
+    profilesQ,
     admin.auth.admin.listUsers({ perPage: 1000 }),
     supabase.from('lawyer_attachments').select('lawyer_id'),
   ])

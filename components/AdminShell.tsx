@@ -7,12 +7,16 @@ import { createClient } from '@/lib/supabase/client'
 import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { BranchProvider } from '@/context/branch'
+import BranchSelector from '@/components/BranchSelector'
 
 interface AdminShellProps {
   userName: string
   userRole: string
   userBranchId?: string
-  children: React.ReactNode
+  initialBranchId?: string | null
+  initialBranchName?: string | null
+  children: ReactNode
 }
 
 const sections = [
@@ -94,78 +98,18 @@ function NavLink({ item, pathname, onClick }: {
   )
 }
 
-function BranchSwitcher({ userRole, userBranchId }: { userRole: string; userBranchId?: string }) {
-  const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
-  const [selectedId, setSelectedId] = useState('')
-  const isAdmin = userRole === 'admin'
-
-  useEffect(() => {
-    const supabase = createClient()
-    let q = supabase.from('branches').select('id, name').eq('is_active', true).order('name')
-    if (!isAdmin && userBranchId) {
-      (q as any).eq('id', userBranchId)
-    }
-    q.then(({ data }) => {
-      const list = data ?? []
-      setBranches(list)
-      if (!isAdmin && userBranchId) {
-        // Non-admin: always locked to their branch
-        setSelectedId(userBranchId)
-        localStorage.setItem('selected_branch_id', userBranchId)
-      } else {
-        const saved = localStorage.getItem('selected_branch_id')
-        if (saved && list.find(b => b.id === saved)) {
-          setSelectedId(saved)
-        } else if (list.length > 0) {
-          setSelectedId(list[0].id)
-          localStorage.setItem('selected_branch_id', list[0].id)
-        }
-      }
-    })
-  }, [isAdmin, userBranchId])
-
-  function handleChange(id: string) {
-    if (!isAdmin) return
-    setSelectedId(id)
-    localStorage.setItem('selected_branch_id', id)
-    window.dispatchEvent(new Event('branch-changed'))
-  }
-
-  if (!branches.length) return null
-  const current = branches.find(b => b.id === selectedId)
-
-  if (!isAdmin) {
-    return (
-      <div className="flex items-center gap-1.5 bg-[#F3F1F2] rounded-xl px-2.5 py-1.5 border border-[rgba(118,118,118,0.1)]">
-        <svg className="w-3 h-3 text-[#2C8780] shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-        </svg>
-        <span className="text-xs font-semibold text-[#231F20]">{current?.name ?? '—'}</span>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex items-center gap-1.5 bg-[#F3F1F2] rounded-xl px-2.5 py-1.5 border border-[rgba(118,118,118,0.1)]">
-      <svg className="w-3 h-3 text-[#2C8780] shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-      </svg>
-      <select
-        value={selectedId}
-        onChange={e => handleChange(e.target.value)}
-        className="bg-transparent text-xs font-semibold text-[#231F20] focus:outline-none cursor-pointer max-w-[130px]"
-      >
-        {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-      </select>
-    </div>
-  )
-}
-
 function getArabicDate() {
   return new Date().toLocaleDateString('ar-IQ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 }
 
-export default function AdminShell({ userName, userRole, userBranchId, children }: AdminShellProps) {
+export default function AdminShell({
+  userName,
+  userRole,
+  userBranchId,
+  initialBranchId,
+  initialBranchName,
+  children,
+}: AdminShellProps) {
   const pathname = usePathname()
   const router = useRouter()
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -239,64 +183,75 @@ export default function AdminShell({ userName, userRole, userBranchId, children 
   )
 
   return (
-    <div className="flex h-full min-h-screen" dir="rtl">
-      <aside className="hidden lg:flex flex-col w-60 shrink-0 sticky top-0 h-screen bg-[#231F20] z-30">
-        {SidebarContent}
-      </aside>
+    <BranchProvider
+      initialBranchId={initialBranchId ?? null}
+      initialBranchName={initialBranchName ?? null}
+    >
+      <div className="flex h-full min-h-screen" dir="rtl">
+        <aside className="hidden lg:flex flex-col w-60 shrink-0 sticky top-0 h-screen bg-[#231F20] z-30">
+          {SidebarContent}
+        </aside>
 
-      {drawerOpen && (
-        <div className="fixed inset-0 bg-black/60 z-40 lg:hidden backdrop-blur-sm" onClick={() => setDrawerOpen(false)} />
-      )}
+        {drawerOpen && (
+          <div className="fixed inset-0 bg-black/60 z-40 lg:hidden backdrop-blur-sm" onClick={() => setDrawerOpen(false)} />
+        )}
 
-      <aside className={cn(
-        'fixed top-0 right-0 h-full w-64 bg-[#231F20] z-50 lg:hidden transition-transform duration-300 flex flex-col',
-        drawerOpen ? 'translate-x-0' : 'translate-x-full'
-      )}>
-        <button onClick={() => setDrawerOpen(false)} className="absolute top-4 left-4 w-8 h-8 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
-        {SidebarContent}
-      </aside>
-
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
-        <header className="sticky top-0 z-30 bg-white border-b border-[rgba(118,118,118,0.1)] h-14 flex items-center px-4 lg:px-6 gap-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-          <button onClick={() => setDrawerOpen(true)} className="lg:hidden w-9 h-9 flex items-center justify-center text-[#767676] hover:text-[#231F20] hover:bg-[rgba(118,118,118,0.08)] rounded-lg transition-colors">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <aside className={cn(
+          'fixed top-0 right-0 h-full w-64 bg-[#231F20] z-50 lg:hidden transition-transform duration-300 flex flex-col',
+          drawerOpen ? 'translate-x-0' : 'translate-x-full'
+        )}>
+          <button onClick={() => setDrawerOpen(false)} className="absolute top-4 left-4 w-8 h-8 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
+          {SidebarContent}
+        </aside>
 
-          <div className="flex lg:hidden items-center gap-2">
-            <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}>
-              <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
-              </svg>
+        <div className="flex-1 flex flex-col min-w-0 min-h-screen">
+          <header className="sticky top-0 z-30 bg-white border-b border-[rgba(118,118,118,0.1)] h-14 flex items-center px-4 lg:px-6 gap-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+            <button onClick={() => setDrawerOpen(true)} className="lg:hidden w-9 h-9 flex items-center justify-center text-[#767676] hover:text-[#231F20] hover:bg-[rgba(118,118,118,0.08)] rounded-lg transition-colors">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+
+            <div className="flex lg:hidden items-center gap-2">
+              <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}>
+                <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
+                </svg>
+              </div>
+              <span className="font-bold text-sm text-[#231F20]">قلعة الضمان</span>
             </div>
-            <span className="font-bold text-sm text-[#231F20]">قلعة الضمان</span>
-          </div>
 
-          <div className="hidden lg:flex items-center gap-2 text-xs text-[#767676]">
-            <svg className="w-3.5 h-3.5 text-[#2C8780]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            <span>{arabicDate}</span>
-          </div>
-
-          <div className="hidden sm:block">
-            <BranchSwitcher userRole={userRole} userBranchId={userBranchId} />
-          </div>
-
-          <div className="flex items-center gap-2 mr-auto">
-            <div className="hidden sm:flex flex-col items-end">
-              <p className="text-xs font-semibold text-[#231F20] leading-none">{userName}</p>
-              <p className="text-[10px] text-[#767676] mt-0.5">{USER_ROLE_LABELS[userRole as UserRole] ?? userRole}</p>
+            <div className="hidden lg:flex items-center gap-2 text-xs text-[#767676]">
+              <svg className="w-3.5 h-3.5 text-[#2C8780]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span>{arabicDate}</span>
             </div>
-            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}>
-              {initials}
-            </div>
-          </div>
-        </header>
 
-        <main className="flex-1 p-4 lg:p-6 min-w-0 bg-[#F8F7F8]">
-          {children}
-        </main>
+            {/* ── Premium Branch Selector ── */}
+            <div className="hidden sm:block">
+              <BranchSelector
+                userRole={userRole}
+                userBranchId={userBranchId}
+                initialBranchId={initialBranchId ?? undefined}
+                initialBranchName={initialBranchName ?? undefined}
+              />
+            </div>
+
+            <div className="flex items-center gap-2 mr-auto">
+              <div className="hidden sm:flex flex-col items-end">
+                <p className="text-xs font-semibold text-[#231F20] leading-none">{userName}</p>
+                <p className="text-[10px] text-[#767676] mt-0.5">{USER_ROLE_LABELS[userRole as UserRole] ?? userRole}</p>
+              </div>
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}>
+                {initials}
+              </div>
+            </div>
+          </header>
+
+          <main className="flex-1 p-4 lg:p-6 min-w-0 bg-[#F8F7F8]">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </BranchProvider>
   )
 }

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useBranchId } from '@/context/branch'
 import { TASK_FEE_MAP } from '@/lib/constants'
 import type { TaskType } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
@@ -22,6 +23,7 @@ function IconFee() { return <svg className="w-6 h-6 text-white" fill="none" stro
 function IconTask() { return <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> }
 
 export default function ReportsPage() {
+  const branchId = useBranchId()
   const [lawyers, setLawyers] = useState<any[]>([])
   const [debtors, setDebtors] = useState<any[]>([])
   const [tasks, setTasks] = useState<any[]>([])
@@ -33,18 +35,24 @@ export default function ReportsPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    Promise.all([
-      supabase.from('profiles').select('id, full_name, governorate').eq('role', 'lawyer').eq('is_active', true).order('full_name'),
-      supabase.from('debtors').select('id, full_name, required_amount').order('full_name'),
-      supabase.from('tasks').select('id, task_type, task_status, assigned_to, debtor_id, completed_at, due_date, created_at'),
-      supabase.from('expenses').select('id, debtor_id, amount, expense_date'),
-      supabase.from('debtor_payments').select('id, debtor_id, lawyer_id, amount, payment_date').order('payment_date', { ascending: false }),
-    ]).then(([{ data: l }, { data: d }, { data: t }, { data: e }, { data: p }]) => {
+    let lq = supabase.from('profiles').select('id, full_name, governorate').eq('role', 'lawyer').eq('is_active', true).order('full_name')
+    let dq = supabase.from('debtors').select('id, full_name, required_amount').order('full_name')
+    let tq = supabase.from('tasks').select('id, task_type, task_status, assigned_to, debtor_id, completed_at, due_date, created_at')
+    let eq = supabase.from('expenses').select('id, debtor_id, amount, expense_date')
+    let pq = supabase.from('debtor_payments').select('id, debtor_id, lawyer_id, amount, payment_date').order('payment_date', { ascending: false })
+    if (branchId) {
+      lq = (lq as any).eq('branch_id', branchId)
+      dq = (dq as any).eq('branch_id', branchId)
+      tq = (tq as any).eq('branch_id', branchId)
+      eq = (eq as any).eq('branch_id', branchId)
+      pq = (pq as any).eq('branch_id', branchId)
+    }
+    Promise.all([lq, dq, tq, eq, pq]).then(([{ data: l }, { data: d }, { data: t }, { data: e }, { data: p }]) => {
       setLawyers(l ?? []); setDebtors(d ?? []); setTasks(t ?? [])
       setExpenses(e ?? []); setPayments(p ?? [])
       setLoading(false)
     })
-  }, [])
+  }, [branchId])
 
   const summary = useMemo(() => {
     const { dateFrom, dateTo, debtorId, lawyerId } = applied
