@@ -129,7 +129,7 @@ function CompletionModal({ task, reqFields, fee, onClose, onSubmitted }: {
       updateErr = error
     }
 
-    if (updateErr) { setError(updateErr.message); setSaving(false); return }
+    if (updateErr) { setError(updateErr.message ?? 'خطأ في التحديث'); setSaving(false); return }
 
     // Create fee receipt if fee > 0
     if (fee > 0 && user) {

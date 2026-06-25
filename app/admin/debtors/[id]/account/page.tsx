@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader } from '@/components/ui/card'
 import { StatCard } from '@/components/ui/stat-card'
 import { fmtMoney, fmtDate } from '@/lib/utils'
+import { RECEIPT_NUMBER_LABEL, LEGAL_ISSUE_DATE_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import DebtorTasksHistory from '@/components/DebtorTasksHistory'
 import DebtorNotesPanel from '@/components/DebtorNotesPanel'
 import DebtorGPSCard from '@/components/DebtorGPSCard'
@@ -91,15 +92,14 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
           <CardHeader title="معلومات المدين" />
           <div className="p-4">
             <InfoRow label="رقم الهوية" value={debtor.id_number} mono />
-            <InfoRow label="نوع الصك" value={RECEIPT_TYPE_LABELS[debtor.receipt_type as ReceiptType]} />
-            <InfoRow label="رقم الصك" value={debtor.receipt_number} mono />
-            <InfoRow label="مبلغ الصك" value={fmtMoney(debtor.receipt_amount)} />
+            <InfoRow label={RECEIPT_TYPE_LABEL} value={RECEIPT_TYPE_LABELS[debtor.receipt_type as ReceiptType]} />
+            <InfoRow label={RECEIPT_NUMBER_LABEL} value={debtor.receipt_number} mono />
+            <InfoRow label={RECEIPT_AMOUNT_LABEL} value={fmtMoney(debtor.receipt_amount)} />
             <InfoRow label="الشرط الجزائي" value={fmtMoney(debtor.penalty_amount)} />
             <InfoRow label="الصرفيات" value={fmtMoney(totalExpensesSum)} />
             <InfoRow label="أتعاب المحامين" value={fmtMoney(debtor.lawyer_fees)} />
             {debtor.address && <InfoRow label="العنوان" value={debtor.address} />}
-            {debtor.employer && <InfoRow label="جهة العمل" value={debtor.employer} />}
-            {debtor.export_date && <InfoRow label="تاريخ الإصدار" value={fmtDate(debtor.export_date)} mono />}
+            {debtor.export_date && <InfoRow label={LEGAL_ISSUE_DATE_LABEL} value={fmtDate(debtor.export_date)} mono />}
             <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} mono />
           </div>
         </Card>

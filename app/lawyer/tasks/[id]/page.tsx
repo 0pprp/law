@@ -9,6 +9,7 @@ import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { fmtMoney, fmtDate } from '@/lib/utils'
+import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   assignment_pending_acceptance: 'warning',
@@ -166,9 +167,9 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
           <InfoRow label="الاسم" value={d?.full_name} />
           <InfoRow label="الهاتف" value={d?.phone} href={d?.phone ? `tel:${d.phone}` : undefined} dir="ltr" />
           <InfoRow label="المحافظة" value={d?.governorate} />
-          <InfoRow label="نوع السند" value={d ? (RECEIPT_TYPE_LABELS[d.receipt_type as keyof typeof RECEIPT_TYPE_LABELS] ?? d.receipt_type) : null} />
-          <InfoRow label="رقم السند" value={d?.receipt_number} dir="ltr" />
-          {Number(d?.receipt_amount) > 0 && <InfoRow label="مبلغ الصك" value={fmtMoney(d.receipt_amount)} />}
+          <InfoRow label={RECEIPT_TYPE_LABEL} value={d ? (RECEIPT_TYPE_LABELS[d.receipt_type as keyof typeof RECEIPT_TYPE_LABELS] ?? d.receipt_type) : null} />
+          <InfoRow label={RECEIPT_NUMBER_LABEL} value={d?.receipt_number} dir="ltr" />
+          {Number(d?.receipt_amount) > 0 && <InfoRow label={RECEIPT_AMOUNT_LABEL} value={fmtMoney(d.receipt_amount)} />}
           {Number(d?.remaining_amount) > 0 && <InfoRow label="المبلغ المتبقي" value={fmtMoney(d.remaining_amount)} />}
           {Number(d?.required_amount) > 0 && <InfoRow label="المطلوب النهائي" value={fmtMoney(d.required_amount)} />}
           {d?.notes && <InfoRow label="ملاحظات" value={d.notes} />}

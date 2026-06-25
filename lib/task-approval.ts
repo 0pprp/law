@@ -23,17 +23,27 @@ export function extractGpsFromCompletion(
   return null
 }
 
-/** Sum lawyer wallet balance from transactions. */
+/** Wallet balance via SQL aggregate — avoids fetching all rows. */
 export async function fetchLawyerWalletBalance(
   supabase: SupabaseClient,
   lawyerId: string,
 ): Promise<number> {
-  const { data } = await supabase
+  // PostgREST aggregate: returns [{ sum: "value" }] or null
+  const { data } = await (supabase as any)
+    .from('lawyer_wallet_transactions')
+    .select('amount.sum()')
+    .eq('lawyer_id', lawyerId)
+    .single()
+  const raw = (data as any)?.sum
+  if (raw != null) return Number(raw)
+
+  // Fallback: manual sum with limit
+  const { data: rows } = await supabase
     .from('lawyer_wallet_transactions')
     .select('amount')
     .eq('lawyer_id', lawyerId)
-
-  return (data ?? []).reduce((sum, row) => sum + Number(row.amount ?? 0), 0)
+    .limit(500)
+  return (rows ?? []).reduce((s, r) => s + Number(r.amount ?? 0), 0)
 }
 
 async function approvePendingReceiptsOnly(

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getBranchContext } from '@/lib/branch-context'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
-import { getBranchContext } from '@/lib/branch-context'
+import { isMainBranchName } from '@/lib/branch-constants'
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
@@ -23,6 +24,12 @@ export async function POST(request: NextRequest) {
   const branchId = bodyBranchId ?? cookieBranchId
   if (!branchId)
     return NextResponse.json({ error: 'يجب اختيار فرع قبل إضافة مستخدم' }, { status: 400 })
+
+  const { data: branchRow } = await supabase.from('branches').select('name').eq('id', branchId).single()
+  if (!branchRow || isMainBranchName(branchRow.name))
+    return NextResponse.json({ error: 'لا يمكن إضافة مستخدم على الفرع الرئيسي — اختر فرعاً رسمياً' }, { status: 400 })
+
+  const branchGovernorate = branchRow.name
 
   if (!email || !full_name || !temporary_password)
     return NextResponse.json({ error: 'الحقول المطلوبة غير مكتملة' }, { status: 400 })
@@ -66,7 +73,7 @@ export async function POST(request: NextRequest) {
     phone: phone || null,
     role: 'lawyer',
     is_active: is_active ?? true,
-    governorate: governorate || null,
+    governorate: governorate || branchGovernorate,
     identity_type: identity_type || null,
     identity_number: identity_number || null,
     identity_category: identity_category || null,

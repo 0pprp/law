@@ -6,10 +6,9 @@ import { useBranchId } from '@/context/branch'
 import Link from 'next/link'
 import { StatCard } from '@/components/ui/stat-card'
 import { stageAccent, stageIconBg } from '@/lib/stage-config'
-import { backfillDebtorCurrentTask } from '@/lib/debtor-current-task'
+import { batchBackfillDebtorCurrentTasks } from '@/lib/debtor-current-task'
 import {
-  fetchCurrentTaskStats,
-  fetchUnassignedStageCounts,
+  fetchDashboardData,
   fetchPendingReviewCount,
   autoAcceptExpiredAssignments,
   type UnassignedStageCount,
@@ -55,7 +54,7 @@ export default function DashboardPage() {
         .eq('branch_id', branchId)
         .limit(50)
       const { data: staleDebtors } = await staleQ
-      await Promise.all((staleDebtors ?? []).map(d => backfillDebtorCurrentTask(supabase, d.id)))
+      await batchBackfillDebtorCurrentTasks(supabase, (staleDebtors ?? []).map(d => d.id))
       await autoAcceptExpiredAssignments(supabase, { branchId })
 
       let aq = supabase
@@ -65,16 +64,16 @@ export default function DashboardPage() {
         .limit(5)
       aq = (aq as any).eq('branch_id', branchId)
 
-      const [stageCounts, heroStats, pendingReview, activityRes] = await Promise.all([
-        fetchUnassignedStageCounts(supabase, branchId),
-        fetchCurrentTaskStats(supabase, branchId),
+      // fetchDashboardData runs fetchCurrentBranchTaskRows once for both stages + hero counts
+      const [dashData, pendingReview, activityRes] = await Promise.all([
+        fetchDashboardData(supabase, branchId),
         fetchPendingReviewCount(supabase, branchId),
         aq,
       ])
 
-      setStages(stageCounts)
-      setTotalWaiting(heroStats.unassigned)
-      setTotalAssigned(heroStats.assigned)
+      setStages(dashData.stages)
+      setTotalWaiting(dashData.unassigned)
+      setTotalAssigned(dashData.assigned)
       setTotalPendingReview(pendingReview)
       setRecentActivity(activityRes.data ?? [])
     } catch (e: unknown) {

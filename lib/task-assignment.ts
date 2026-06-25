@@ -134,7 +134,7 @@ export async function fetchPendingReviewTasks(
 
   const lawyerMap = new Map((lawyers ?? []).map(l => [l.id, l]))
   const defMap = new Map((defs ?? []).map(d => [d.id, d]))
-  const courtMap = new Map((courts ?? []).map((c: { id: string; name: string }) => [c.id, c]))
+  const courtMap = new Map(((courts as { id: string; name: string }[]) ?? []).map(c => [c.id, c]))
 
   return branchTasks.map(t => {
     const d = debtorMap.get(t.debtor_id)!
@@ -151,13 +151,18 @@ export async function fetchPendingReviewTasks(
   })
 }
 
-/** Hero metric — same filter as review page list. */
+/** Hero metric — direct COUNT query, no full task fetch. */
 export async function fetchPendingReviewCount(
   supabase: SupabaseClient,
   branchId: string | null,
 ): Promise<number> {
-  const tasks = await fetchPendingReviewTasks(supabase, branchId)
-  return tasks.length
+  if (!branchId) return 0
+  const { count } = await supabase
+    .from('tasks')
+    .select('id', { count: 'exact', head: true })
+    .in('task_status', [...REVIEW_QUEUE_STATUSES])
+    .eq('branch_id', branchId)
+  return count ?? 0
 }
 
 export interface UnassignedStageCount {
@@ -286,6 +291,51 @@ export async function fetchCurrentTaskStats(
   }
 }
 
+/**
+ * Combined dashboard load: calls fetchCurrentBranchTaskRows ONCE
+ * and derives both stage counts and hero stats from the same result.
+ */
+export async function fetchDashboardData(
+  supabase: SupabaseClient,
+  branchId: string | null,
+): Promise<{ stages: UnassignedStageCount[]; unassigned: number; assigned: number }> {
+  const rows = await fetchCurrentBranchTaskRows(supabase, branchId)
+  const unassignedRows = rows.filter(isUnassignedCurrentTask)
+
+  let stages: UnassignedStageCount[] = []
+  if (unassignedRows.length > 0) {
+    const defIds = [...new Set(unassignedRows.map(r => r.task_definition_id).filter(Boolean))] as string[]
+    const { data: defs } = defIds.length
+      ? await supabase.from('task_definitions').select('id, label, sort_order').in('id', defIds)
+      : { data: [] as { id: string; label: string; sort_order: number }[] }
+
+    const defMap = new Map((defs ?? []).map(d => [d.id, d]))
+    const stageMap = new Map<string, UnassignedStageCount>()
+    for (const r of unassignedRows) {
+      if (!r.task_definition_id) continue
+      const def = defMap.get(r.task_definition_id)
+      if (!stageMap.has(r.task_definition_id)) {
+        stageMap.set(r.task_definition_id, {
+          id: r.task_definition_id,
+          label: def?.label ?? r.taskLabel,
+          sortOrder: def?.sort_order ?? 999,
+          count: 0,
+        })
+      }
+      stageMap.get(r.task_definition_id)!.count++
+    }
+    stages = Array.from(stageMap.values())
+      .filter(s => s.count > 0)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+  }
+
+  return {
+    stages,
+    unassigned: unassignedRows.length,
+    assigned: rows.filter(r => !!r.lawyerId).length,
+  }
+}
+
 export async function fetchUnassignedCurrentTasks(
   supabase: SupabaseClient,
   branchId: string | null,
@@ -387,6 +437,7 @@ export async function fetchLawyerAssignedTasks(
     .eq('assigned_to', lawyerId)
     .not('task_status', 'eq', 'draft')
     .order('created_at', { ascending: false })
+    .limit(300)
 
   if (error) {
     console.error('[fetchLawyerAssignedTasks]', error.message ?? error)

@@ -4,6 +4,11 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useBranch } from '@/context/branch'
+import {
+  filterSelectableBranches,
+  isMainBranchName,
+  pickDefaultBranch,
+} from '@/lib/branch-constants'
 
 interface Branch {
   id: string
@@ -54,11 +59,15 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
       .eq('is_active', true)
       .order('name')
       .then(({ data }) => {
-        const list = data ?? []
+        const list = filterSelectableBranches(data ?? [])
         setBranches(list)
-        // If admin has no branch selected yet, default to first branch
-        if (isAdmin && !branchId && list.length > 0) {
-          handleSelect(list[0].id, list[0].name)
+        const currentIsInvalid =
+          !branchId ||
+          isMainBranchName(branchName ?? initialBranchName) ||
+          isMainBranchName(list.find(b => b.id === branchId)?.name)
+        if (isAdmin && currentIsInvalid && list.length > 0) {
+          const def = pickDefaultBranch(list)
+          if (def) handleSelect(def.id, def.name)
         }
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps

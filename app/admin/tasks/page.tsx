@@ -14,13 +14,14 @@ import {
 } from '@/lib/task-assignment'
 import { fetchBranchProfiles, filterLawyerProfiles } from '@/lib/branch-profiles'
 import { formatErrorMessage } from '@/lib/format-error'
-import { backfillDebtorCurrentTask } from '@/lib/debtor-current-task'
+import { batchBackfillDebtorCurrentTasks } from '@/lib/debtor-current-task'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtDate } from '@/lib/utils'
 import Link from 'next/link'
+import { PremiumSelect } from '@/components/ui/premium-select'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   waiting_assignment: 'warning',
@@ -75,7 +76,7 @@ export default function TasksPage() {
         .limit(50)
       if (branchId) staleQ = (staleQ as any).eq('branch_id', branchId)
       const { data: staleDebtors } = await staleQ
-      await Promise.all((staleDebtors ?? []).map(d => backfillDebtorCurrentTask(supabase, d.id)))
+      await batchBackfillDebtorCurrentTasks(supabase, (staleDebtors ?? []).map(d => d.id))
       await autoAcceptExpiredAssignments(supabase, { branchId })
 
       const [{ data: defs }, raw, profilesResult] = await Promise.all([
@@ -197,10 +198,18 @@ export default function TasksPage() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           <input type="text" placeholder="بحث باسم المدين..." value={search}
             onChange={e => setSearch(e.target.value)} className={SEL + ' col-span-2 lg:col-span-1'} />
-          <select value={filterDef} onChange={e => setFilterDef(e.target.value)} className={SEL}>
-            <option value="">كل أنواع المهام</option>
-            {taskDefs.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
-          </select>
+          <PremiumSelect
+            value={filterDef}
+            onChange={setFilterDef}
+            options={[
+              { value: '', label: 'كل أنواع المهام' },
+              ...taskDefs.map(d => ({ value: d.id, label: d.label })),
+            ]}
+            placeholder="كل أنواع المهام"
+            headerTitle="تصفية حسب نوع المهمة"
+            searchPlaceholder="بحث..."
+            className="col-span-2 lg:col-span-1"
+          />
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
             className={SEL} dir="ltr" title="من تاريخ" />
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
@@ -215,11 +224,20 @@ export default function TasksPage() {
         )}
 
         <div className="border-t border-[rgba(118,118,118,0.1)] pt-4 flex flex-col sm:flex-row gap-2">
-          <select value={bulkLawyerId} onChange={e => { setBulkLawyerId(e.target.value); setError('') }}
-            className={SEL + ' flex-1'} disabled={!branchId}>
-            <option value="">— اختر محامياً من هذا الفرع —</option>
-            {lawyers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-          </select>
+          <PremiumSelect
+            value={bulkLawyerId}
+            onChange={v => { setBulkLawyerId(v); setError('') }}
+            options={[
+              { value: '', label: '— اختر محامياً من هذا الفرع —' },
+              ...lawyers.map(l => ({ value: l.id, label: l.full_name })),
+            ]}
+            placeholder="— اختر محامياً —"
+            headerTitle="اختر المحامي"
+            headerSubtitle={`${lawyers.length} محامٍ في الفرع`}
+            searchPlaceholder="بحث بالاسم..."
+            disabled={!branchId}
+            className="flex-1"
+          />
           <input type="date" value={bulkDueDate} onChange={e => setBulkDueDate(e.target.value)}
             className={SEL + ' sm:w-44'} dir="ltr" title="تاريخ نهاية التكليف" required />
           <button onClick={() => assignTaskIds(Array.from(selected), bulkLawyerId, bulkDueDate || undefined)}
@@ -302,12 +320,16 @@ export default function TasksPage() {
                   </TD>
                   <TD>
                     {singleAssignId === t.id ? (
-                      <div className="flex items-center gap-1 min-w-[180px]">
-                        <select value={singleLawyerId} onChange={e => setSingleLawyerId(e.target.value)}
-                          className="text-[10px] border rounded px-1 py-1 flex-1">
-                          <option value="">محامي</option>
-                          {lawyers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-                        </select>
+                      <div className="flex items-center gap-1 min-w-[200px]">
+                        <PremiumSelect
+                          value={singleLawyerId}
+                          onChange={setSingleLawyerId}
+                          options={lawyers.map(l => ({ value: l.id, label: l.full_name }))}
+                          placeholder="محامي"
+                          headerTitle="تكليف سريع"
+                          searchable={lawyers.length > 4}
+                          className="flex-1"
+                        />
                         <button onClick={() => assignTaskIds([t.id], singleLawyerId, bulkDueDate || undefined)}
                           disabled={assigning || !singleLawyerId}
                           className="text-[10px] font-bold text-white px-2 py-1 rounded bg-[#2C8780] disabled:opacity-50">

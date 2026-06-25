@@ -9,22 +9,13 @@ import Link from 'next/link'
 import { logActivity } from '@/lib/activity-log'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
-import { Card, CardHeader } from '@/components/ui/card'
 import { fmtDate } from '@/lib/utils'
+import { RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
+import { cn } from '@/lib/utils'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
-const INP = 'w-full border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2.5 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
-
-function Field({ label, required: req, children }: { label: string; required?: boolean; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-sm font-semibold text-[#231F20] mb-1.5">
-        {label}{req && <span className="text-red-500 mr-0.5">*</span>}
-      </label>
-      {children}
-    </div>
-  )
-}
 
 interface Attachment { id: string; file_name: string; file_path: string; file_size: number | null }
 
@@ -42,7 +33,7 @@ export default function EditDebtorPage() {
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null)
 
   const [form, setForm] = useState({
-    full_name: '', phone: '', address: '', employer: '', id_number: '',
+    full_name: '', phone: '', address: '', id_number: '',
     receipt_type: 'check' as ReceiptType,
     receipt_number: '', receipt_amount: '', remaining_amount: '', lawyer_fees: '',
     penalty_amount: '', has_contract: false, notes: '',
@@ -62,7 +53,6 @@ export default function EditDebtorPage() {
           full_name: data.full_name ?? '',
           phone: data.phone ?? '',
           address: data.address ?? '',
-          employer: data.employer ?? '',
           id_number: data.id_number ?? '',
           receipt_type: data.receipt_type ?? 'check',
           receipt_number: data.receipt_number ?? '',
@@ -107,7 +97,7 @@ export default function EditDebtorPage() {
     if (!user) { router.push('/login'); return }
     const { error: dbError } = await supabase.from('debtors').update({
       full_name: form.full_name, phone: form.phone || null, address: form.address || null,
-      employer: form.employer || null, id_number: form.id_number || null,
+      id_number: form.id_number || null,
       receipt_type: form.receipt_type, receipt_number: form.receipt_number || null,
       receipt_amount: parseFloat(form.receipt_amount) || 0,
       remaining_amount: parseFloat(form.remaining_amount) || 0,
@@ -143,98 +133,105 @@ export default function EditDebtorPage() {
       />
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        <Card>
-          <CardHeader title="البيانات الشخصية" />
-          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="الاسم الكامل" required>
-              <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={INP} />
-            </Field>
-            <Field label="رقم الهاتف">
-              <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} className={INP} dir="ltr" />
-            </Field>
-            <Field label="رقم الهوية">
-              <input type="text" value={form.id_number} onChange={e => set('id_number', e.target.value)} className={INP} dir="ltr" />
-            </Field>
-            <Field label="جهة العمل">
-              <input type="text" value={form.employer} onChange={e => set('employer', e.target.value)} className={INP} />
-            </Field>
-            <div className="md:col-span-2">
-              <Field label="العنوان">
-                <input type="text" value={form.address} onChange={e => set('address', e.target.value)} className={INP} />
-              </Field>
+        <FormFlow>
+          <FormFlowStep step={1} title="البيانات الشخصية" subtitle="معلومات التواصل والهوية">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField label="الاسم الكامل" required>
+                <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={formInputClass} />
+              </FormField>
+              <FormField label="رقم الهاتف">
+                <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} className={formInputClass} dir="ltr" />
+              </FormField>
+              <FormField label="رقم الهوية">
+                <input type="text" value={form.id_number} onChange={e => set('id_number', e.target.value)} className={formInputClass} dir="ltr" />
+              </FormField>
+              <FormField label="العنوان" className="md:col-span-2">
+                <input type="text" value={form.address} onChange={e => set('address', e.target.value)} className={formInputClass} />
+              </FormField>
             </div>
-          </div>
-        </Card>
+          </FormFlowStep>
 
-        <Card>
-          <CardHeader title="بيانات المستند" />
-          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="نوع الصك" required>
-              <select value={form.receipt_type} onChange={e => set('receipt_type', e.target.value)} required className={INP}>
-                {FORM_RECEIPT_TYPES.map(t => <option key={t} value={t}>{RECEIPT_TYPE_LABELS[t]}</option>)}
-              </select>
-            </Field>
-            <Field label="رقم الصك">
-              <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={INP} dir="ltr" />
-            </Field>
-            <Field label="المبلغ الأصلي (د.ع)">
-              <input type="number" value={form.receipt_amount} onChange={e => set('receipt_amount', e.target.value)} className={INP} min="0" step="any" dir="ltr" />
-            </Field>
-            <Field label="المبلغ المتبقي (د.ع)">
-              <input type="number" value={form.remaining_amount} onChange={e => set('remaining_amount', e.target.value)} className={INP} min="0" step="any" dir="ltr" />
-            </Field>
-            <Field label="أتعاب المحامي (د.ع)">
-              <input type="number" value={form.lawyer_fees} onChange={e => set('lawyer_fees', e.target.value)} className={INP} min="0" step="any" dir="ltr" />
-            </Field>
-            <div className="md:col-span-2">
-              <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                <input type="checkbox" id="has_contract" checked={form.has_contract}
-                  onChange={e => { set('has_contract', e.target.checked); if (!e.target.checked) set('penalty_amount', '0') }}
-                  className="w-4 h-4 rounded accent-[#2C8780]" />
-                <span className="text-sm font-semibold text-[#231F20]">يوجد عقد موقّع</span>
-              </label>
-            </div>
-            {form.has_contract && (
-              <Field label="الشرط الجزائي (د.ع)">
-                <input type="number" value={form.penalty_amount} onChange={e => set('penalty_amount', e.target.value)} className={INP} min="0" step="any" dir="ltr" />
-              </Field>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="ملف المدين" />
-          <div className="p-5 space-y-4">
-            {attachments.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-[#767676] mb-1">الملفات الحالية:</p>
-                {attachments.map(a => (
-                  <div key={a.id} className="flex items-center gap-2 bg-[rgba(118,118,118,0.04)] rounded-lg px-3 py-2.5 border border-[rgba(118,118,118,0.1)]">
-                    <svg className="w-4 h-4 text-red-500 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm-1 15v-4H9l3-5 3 5h-2v4h-2z" /></svg>
-                    <span className="text-sm text-[#231F20] font-semibold flex-1 min-w-0 truncate">{a.file_name}</span>
-                    {a.file_size && <span className="text-xs text-[#767676] shrink-0">{(a.file_size / 1024).toFixed(0)} KB</span>}
-                    <button type="button" onClick={() => deleteFile(a)} disabled={deletingFileId === a.id}
-                      className="text-xs text-red-600 hover:text-red-800 font-semibold shrink-0 disabled:opacity-50">
-                      {deletingFileId === a.id ? '...' : 'حذف'}
-                    </button>
-                  </div>
-                ))}
+          <FormFlowStep step={2} title="بيانات المستند" subtitle="تفاصيل الوصل والمبالغ">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField label={RECEIPT_TYPE_LABEL} required>
+                <PremiumSelect
+                  value={form.receipt_type}
+                  onChange={v => set('receipt_type', v)}
+                  options={FORM_RECEIPT_TYPES.map(t => ({ value: t, label: RECEIPT_TYPE_LABELS[t] }))}
+                  headerTitle={RECEIPT_TYPE_LABEL}
+                  searchable={false}
+                />
+              </FormField>
+              <FormField label={RECEIPT_NUMBER_LABEL}>
+                <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={formInputClass} dir="ltr" />
+              </FormField>
+              <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`}>
+                <input type="number" value={form.receipt_amount} onChange={e => set('receipt_amount', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" />
+              </FormField>
+              <FormField label="المبلغ المتبقي (د.ع)">
+                <input type="number" value={form.remaining_amount} onChange={e => set('remaining_amount', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" />
+              </FormField>
+              <FormField label="أتعاب المحامي (د.ع)">
+                <input type="number" value={form.lawyer_fees} onChange={e => set('lawyer_fees', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" />
+              </FormField>
+              <div className="md:col-span-2">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none p-3 rounded-xl border border-[rgba(118,118,118,0.12)] bg-[#FAFAFA] hover:bg-[#F3F1F2] transition-colors">
+                  <input type="checkbox" id="has_contract" checked={form.has_contract}
+                    onChange={e => { set('has_contract', e.target.checked); if (!e.target.checked) set('penalty_amount', '0') }}
+                    className="w-4 h-4 rounded accent-[#2C8780]" />
+                  <span className="text-sm font-semibold text-[#231F20]">يوجد عقد موقّع</span>
+                </label>
               </div>
-            )}
-            <Field label="رفع ملف PDF جديد (اختياري)">
-              <input type="file" accept="application/pdf" onChange={handleFileChange}
-                className="w-full text-sm text-[#231F20] file:ml-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#2C8780]/8 file:text-[#2C8780] hover:file:bg-[#2C8780]/15 cursor-pointer" />
-              {pdfFile && <p className="text-xs text-emerald-700 mt-1.5 font-semibold">✓ {pdfFile.name} ({(pdfFile.size / 1024).toFixed(0)} KB)</p>}
-            </Field>
-          </div>
-        </Card>
+              {form.has_contract && (
+                <FormField label="الشرط الجزائي (د.ع)">
+                  <input type="number" value={form.penalty_amount} onChange={e => set('penalty_amount', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" />
+                </FormField>
+              )}
+            </div>
+          </FormFlowStep>
 
-        <Card>
-          <CardHeader title="ملاحظات" />
-          <div className="p-5">
-            <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} className={`${INP} resize-none`} placeholder="ملاحظات إضافية..." />
-          </div>
-        </Card>
+          <FormFlowStep step={3} title="ملف المدين" subtitle="المستمسكات المرفقة">
+            <div className="space-y-4">
+              {attachments.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold text-[#767676]">الملفات الحالية</p>
+                  {attachments.map(a => (
+                    <div key={a.id} className="flex items-center gap-2 bg-[#2C8780]/5 rounded-xl px-3 py-2.5 border border-[#2C8780]/15">
+                      <div className="w-8 h-8 rounded-lg bg-[#2C8780]/10 flex items-center justify-center shrink-0">
+                        <svg className="w-4 h-4 text-[#2C8780]" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </div>
+                      <span className="text-sm text-[#231F20] font-semibold flex-1 min-w-0 truncate">{a.file_name}</span>
+                      {a.file_size && <span className="text-xs text-[#767676] shrink-0">{(a.file_size / 1024).toFixed(0)} KB</span>}
+                      <button type="button" onClick={() => deleteFile(a)} disabled={deletingFileId === a.id}
+                        className="text-xs text-red-600 hover:text-red-800 font-semibold shrink-0 disabled:opacity-50">
+                        {deletingFileId === a.id ? '...' : 'حذف'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <FormField label="رفع ملف PDF جديد" hint="اختياري">
+                <label className={cn(
+                  'flex flex-col items-center justify-center gap-2 p-5 rounded-xl border-2 border-dashed cursor-pointer transition-all',
+                  pdfFile ? 'border-[#2C8780]/40 bg-[#2C8780]/5' : 'border-[rgba(118,118,118,0.2)] bg-[#FAFAFA] hover:border-[#2C8780]/35',
+                )}>
+                  <input type="file" accept="application/pdf" onChange={handleFileChange} className="hidden" />
+                  {pdfFile ? (
+                    <p className="text-sm font-bold text-[#2C8780]">{pdfFile.name} ({(pdfFile.size / 1024).toFixed(0)} KB)</p>
+                  ) : (
+                    <p className="text-sm text-[#767676]">اضغط لرفع ملف PDF</p>
+                  )}
+                </label>
+              </FormField>
+            </div>
+          </FormFlowStep>
+
+          <FormFlowStep step={4} title="ملاحظات" isLast>
+            <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} className={cn(formInputClass, 'resize-none')} placeholder="ملاحظات إضافية..." />
+          </FormFlowStep>
+        </FormFlow>
 
         {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>}
 

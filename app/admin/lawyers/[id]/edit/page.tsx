@@ -11,7 +11,7 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { fmtDate } from '@/lib/utils'
-import { useBranchId } from '@/context/branch'
+import { useBranchId, useBranch } from '@/context/branch'
 
 const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer']
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
@@ -41,6 +41,7 @@ export default function EditLawyerPage() {
   const router = useRouter()
   const params = useParams()
   const branchId = useBranchId()
+  const { branchName } = useBranch()
   const id = params.id as string
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -191,9 +192,15 @@ export default function EditLawyerPage() {
         <Card>
           <CardHeader title="بيانات الهوية" />
           <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="المحافظة">
-              <input type="text" value={form.governorate} onChange={e => set('governorate', e.target.value)} className={INP} placeholder="مثال: بغداد" />
-            </Field>
+            {form.role === 'lawyer' ? (
+              <Field label="الفرع / المحافظة">
+                <input type="text" value={form.governorate || branchName || '—'} readOnly className={`${INP} bg-slate-50 text-slate-600`} />
+              </Field>
+            ) : (
+              <Field label="المحافظة">
+                <input type="text" value={form.governorate} onChange={e => set('governorate', e.target.value)} className={INP} placeholder="مثال: بغداد" />
+              </Field>
+            )}
             <Field label="نوع الهوية">
               <input type="text" value={form.identity_type} onChange={e => set('identity_type', e.target.value)} className={INP} placeholder="جواز / هوية وطنية / نقابة" />
             </Field>

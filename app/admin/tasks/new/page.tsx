@@ -9,10 +9,12 @@ import Link from 'next/link'
 import { logActivity } from '@/lib/activity-log'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
-import { Card, CardHeader } from '@/components/ui/card'
 import { fmtMoney } from '@/lib/utils'
 import { useBranchId } from '@/context/branch'
 import { ACTIVE_CASE_BLOCK_MSG, hasActiveCurrentTask } from '@/lib/debtor-current-task'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
+import { cn } from '@/lib/utils'
 
 const ALL_TASK_TYPES: TaskType[] = [
   'file_lawsuit', 'notification', 'pleading', 'decision_ratification',
@@ -22,19 +24,6 @@ const ALL_TASK_TYPES: TaskType[] = [
   'salary_seizure', 'first_registration', 'file_closure',
 ]
 const ALL_TASK_STATUSES: TaskStatus[] = ['new', 'in_progress', 'completed', 'failed', 'postponed', 'needs_info', 'closed']
-
-const INP = 'w-full border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2.5 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
-
-function Field({ label, required: req, children }: { label: string; required?: boolean; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-sm font-semibold text-[#231F20] mb-1.5">
-        {label}{req && <span className="text-red-500 mr-0.5">*</span>}
-      </label>
-      {children}
-    </div>
-  )
-}
 
 export default function NewTaskPage() {
   const router = useRouter()
@@ -121,21 +110,25 @@ export default function NewTaskPage() {
       />
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        <Card>
-          <CardHeader title="المدين / الزبون" />
-          <div className="p-5 space-y-4">
-            <Field label="اختر المدين" required>
-              <select value={form.debtor_id} onChange={e => handleDebtorChange(e.target.value)} className={INP} required>
-                <option value="">-- اختر المدين --</option>
-                {debtors.map(d => (
-                  <option key={d.id} value={d.id}>
-                    {d.full_name}{d.governorate ? ` | ${d.governorate}` : ''}{d.receipt_number ? ` | ${d.receipt_number}` : ''}
-                  </option>
-                ))}
-              </select>
-            </Field>
+        <FormFlow>
+          <FormFlowStep step={1} title="المدين / الزبون" subtitle="اختر المدين المراد تكليفه">
+            <FormField label="اختر المدين" required>
+              <PremiumSelect
+                value={form.debtor_id}
+                onChange={handleDebtorChange}
+                options={debtors.map(d => ({
+                  value: d.id,
+                  label: d.full_name,
+                  hint: [d.governorate, d.receipt_number].filter(Boolean).join(' · ') || undefined,
+                }))}
+                placeholder="— اختر المدين —"
+                headerTitle="اختر المدين"
+                headerSubtitle={`${debtors.length} مدين في هذا الفرع`}
+                searchPlaceholder="بحث بالاسم أو رقم الوصل..."
+              />
+            </FormField>
             {selectedDebtor && (
-              <div className="bg-[#2C8780]/5 border border-[#2C8780]/20 rounded-xl p-4">
+              <div className="mt-3 bg-[#2C8780]/5 border border-[#2C8780]/20 rounded-xl p-4">
                 <p className="font-bold text-[#231F20] mb-3">{selectedDebtor.full_name}</p>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
                   {selectedDebtor.phone && <><span className="text-[#767676]">الهاتف</span><span className="font-mono" dir="ltr">{selectedDebtor.phone}</span></>}
@@ -147,67 +140,79 @@ export default function NewTaskPage() {
                 </div>
               </div>
             )}
-          </div>
-        </Card>
+          </FormFlowStep>
 
-        <Card>
-          <CardHeader title="المحامي المكلف" />
-          <div className="p-5 space-y-4">
-            <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <input type="checkbox" id="showAll" checked={showAllLawyers}
-                onChange={e => { setShowAllLawyers(e.target.checked); set('assigned_to', '') }}
-                className="w-4 h-4 rounded accent-[#2C8780]" />
-              <span className="text-sm font-medium text-[#231F20]">عرض كل المحامين (بغض النظر عن المحافظة)</span>
-            </label>
-            {showLawyerEmptyState ? (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-sm text-yellow-800">
-                لا يوجد محامٍ فعال في محافظة المدين. فعّل خيار عرض كل المحامين أو أضف محامياً لهذه المحافظة.
-              </div>
-            ) : (
-              <Field label="المحامي">
-                <select value={form.assigned_to} onChange={e => set('assigned_to', e.target.value)} className={INP}>
-                  <option value="">-- بدون تكليف --</option>
-                  {filteredLawyers.map(l => (
-                    <option key={l.id} value={l.id}>
-                      {l.full_name}{l.governorate ? ` | ${l.governorate}` : ''}{l.phone ? ` | ${l.phone}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="تفاصيل المهمة" />
-          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="نوع المهمة" required>
-              <select value={form.task_type} onChange={e => set('task_type', e.target.value)} className={INP} required>
-                <option value="">-- اختر النوع --</option>
-                {ALL_TASK_TYPES.map(t => <option key={t} value={t}>{TASK_TYPE_LABELS[t]}</option>)}
-              </select>
-            </Field>
-            <Field label="حالة المهمة">
-              <select value={form.task_status} onChange={e => set('task_status', e.target.value as TaskStatus)} className={INP}>
-                {ALL_TASK_STATUSES.map(s => <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>)}
-              </select>
-            </Field>
-            <Field label="محافظة المهمة">
-              <input type="text" value={form.governorate} onChange={e => set('governorate', e.target.value)} className={INP} placeholder="تُملأ تلقائياً من المدين" />
-            </Field>
-            <Field label="اسم المحكمة">
-              <input type="text" value={form.court_name} onChange={e => set('court_name', e.target.value)} className={INP} placeholder="مثال: محكمة بداءة بغداد" />
-            </Field>
-            <Field label="تاريخ الاستحقاق">
-              <input type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} className={INP} dir="ltr" />
-            </Field>
-            <div className="md:col-span-2">
-              <Field label="ملاحظات الإدارة">
-                <textarea value={form.admin_notes} onChange={e => set('admin_notes', e.target.value)} className={`${INP} resize-none`} rows={3} placeholder="ملاحظات اختيارية للمحامي..." />
-              </Field>
+          <FormFlowStep step={2} title="المحامي المكلف" subtitle="اختياري — يمكن التكليف لاحقاً">
+            <div className="space-y-4">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none p-3 rounded-xl border border-[rgba(118,118,118,0.12)] bg-[#FAFAFA] hover:bg-[#F3F1F2] transition-colors">
+                <input type="checkbox" id="showAll" checked={showAllLawyers}
+                  onChange={e => { setShowAllLawyers(e.target.checked); set('assigned_to', '') }}
+                  className="w-4 h-4 rounded accent-[#2C8780]" />
+                <span className="text-sm font-medium text-[#231F20]">عرض كل المحامين (بغض النظر عن المحافظة)</span>
+              </label>
+              {showLawyerEmptyState ? (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-sm text-yellow-800">
+                  لا يوجد محامٍ فعال في محافظة المدين. فعّل خيار عرض كل المحامين أو أضف محامياً لهذه المحافظة.
+                </div>
+              ) : (
+                <FormField label="المحامي">
+                  <PremiumSelect
+                    value={form.assigned_to}
+                    onChange={v => set('assigned_to', v)}
+                    options={[
+                      { value: '', label: '— بدون تكليف —' },
+                      ...filteredLawyers.map(l => ({
+                        value: l.id,
+                        label: l.full_name,
+                        hint: [l.governorate, l.phone].filter(Boolean).join(' · ') || undefined,
+                      })),
+                    ]}
+                    placeholder="— بدون تكليف —"
+                    headerTitle="اختر المحامي"
+                    searchPlaceholder="بحث بالاسم..."
+                    disabled={!selectedDebtor}
+                  />
+                </FormField>
+              )}
             </div>
-          </div>
-        </Card>
+          </FormFlowStep>
+
+          <FormFlowStep step={3} title="تفاصيل المهمة" subtitle="نوع المهمة وحالتها" isLast>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField label="نوع المهمة" required>
+                <PremiumSelect
+                  value={form.task_type}
+                  onChange={v => set('task_type', v)}
+                  options={ALL_TASK_TYPES.map(t => ({ value: t, label: TASK_TYPE_LABELS[t] }))}
+                  placeholder="— اختر النوع —"
+                  headerTitle="نوع المهمة"
+                  searchPlaceholder="بحث في أنواع المهام..."
+                />
+              </FormField>
+              <FormField label="حالة المهمة">
+                <PremiumSelect
+                  value={form.task_status}
+                  onChange={v => set('task_status', v as TaskStatus)}
+                  options={ALL_TASK_STATUSES.map(s => ({ value: s, label: TASK_STATUS_LABELS[s] }))}
+                  headerTitle="حالة المهمة"
+                  searchable={false}
+                />
+              </FormField>
+              <FormField label="محافظة المهمة">
+                <input type="text" value={form.governorate} onChange={e => set('governorate', e.target.value)} className={formInputClass} placeholder="تُملأ تلقائياً من المدين" />
+              </FormField>
+              <FormField label="اسم المحكمة">
+                <input type="text" value={form.court_name} onChange={e => set('court_name', e.target.value)} className={formInputClass} placeholder="مثال: محكمة بداءة بغداد" />
+              </FormField>
+              <FormField label="تاريخ الاستحقاق">
+                <input type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} className={formInputClass} dir="ltr" />
+              </FormField>
+              <FormField label="ملاحظات الإدارة" className="md:col-span-2">
+                <textarea value={form.admin_notes} onChange={e => set('admin_notes', e.target.value)} className={cn(formInputClass, 'resize-none')} rows={3} placeholder="ملاحظات اختيارية للمحامي..." />
+              </FormField>
+            </div>
+          </FormFlowStep>
+        </FormFlow>
 
         {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>}
 

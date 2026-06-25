@@ -11,6 +11,7 @@ import { fetchPendingReviewTasks, fetchBranchLawyers } from '@/lib/task-assignme
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/ui/page-header'
 import { useBranchId } from '@/context/branch'
+import { PremiumSelect } from '@/components/ui/premium-select'
 
 interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number }
 
@@ -98,7 +99,7 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
   task: any; taskDefs: TaskDef[]; onClose: () => void; onDone: () => void
 }) {
   const supabase = createClient()
-  const [nextTaskId, setNextTaskId] = useState('')
+  const [nextTaskId, setNextTaskId] = useState<string>('')
   const [updateGps, setUpdateGps] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -158,7 +159,7 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
         closeErr = err
       }
       if (closeErr) {
-        setError(closeErr.message)
+        setError(closeErr.message ?? 'خطأ في إغلاق القضية')
         setSaving(false)
         return
       }
@@ -219,16 +220,19 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
           {/* Option A: next task */}
           <div className="space-y-2">
             <p className="text-xs font-bold text-[#767676]">أ) اختيار مهمة لاحقة</p>
-            <select
+            <PremiumSelect
               value={nextTaskId}
-              onChange={e => { setNextTaskId(e.target.value); setError('') }}
-              className="w-full border border-[rgba(118,118,118,0.2)] rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780]"
-            >
-              <option value="">— اختر المهمة التالية —</option>
-              {taskDefs.map(def => (
-                <option key={def.id} value={def.id}>{def.label}</option>
-              ))}
-            </select>
+              onChange={v => { setNextTaskId(v); setError('') }}
+              options={taskDefs.map(def => ({
+                value: def.id,
+                label: def.label,
+                hint: def.fee_amount ? `${Number(def.fee_amount).toLocaleString('en-US')} د.ع أتعاب` : undefined,
+              }))}
+              placeholder="— اختر المهمة التالية —"
+              headerTitle="المهمة اللاحقة"
+              headerSubtitle={`${taskDefs.length} مهمة متاحة`}
+              searchPlaceholder="بحث في المهام..."
+            />
             <button
               onClick={() => approveAndProceed('next')}
               disabled={saving || !nextTaskId}
@@ -495,15 +499,18 @@ export default function TaskReviewPage() {
       />
 
       <div className="flex items-center gap-3">
-        <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm px-3 py-2 flex items-center gap-2 w-60">
-          <svg className="w-4 h-4 text-[#767676] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
-          </svg>
-          <select value={filterLawyer} onChange={e => setFilterLawyer(e.target.value)}
-            className="flex-1 bg-transparent text-sm text-[#231F20] focus:outline-none">
-            <option value="">كل المحامين</option>
-            {lawyers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-          </select>
+        <div className="w-60">
+          <PremiumSelect
+            value={filterLawyer}
+            onChange={setFilterLawyer}
+            options={[
+              { value: '', label: 'كل المحامين' },
+              ...lawyers.map(l => ({ value: l.id, label: l.full_name })),
+            ]}
+            placeholder="كل المحامين"
+            headerTitle="تصفية حسب المحامي"
+            searchPlaceholder="بحث..."
+          />
         </div>
         <span className="bg-amber-100 text-amber-800 font-bold text-xs px-2.5 py-1 rounded-full">
           {filtered.length} بانتظار الاعتماد

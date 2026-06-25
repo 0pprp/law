@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Branch, Court, ExecutionDepartment } from '@/lib/types'
+import { filterSelectableBranches, isMainBranchName } from '@/lib/branch-constants'
 
 // ─── shared styles ────────────────────────────────────────────────────────────
 const INP = 'w-full bg-[#F3F1F2] border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
@@ -45,7 +46,7 @@ function BranchesSection() {
     setLoading(true)
     const supabase = createClient()
     const { data } = await supabase.from('branches').select('*').order('created_at')
-    setBranches(data ?? [])
+    setBranches(filterSelectableBranches(data ?? []))
     setLoading(false)
   }, [])
 
@@ -64,6 +65,7 @@ function BranchesSection() {
 
   async function save() {
     if (!form.name.trim()) return
+    if (isMainBranchName(form.name.trim())) return
     setSaving(true)
     const supabase = createClient()
     const payload = {
@@ -131,7 +133,7 @@ function BranchesSection() {
         <Modal title={editing ? 'تعديل الفرع' : 'فرع جديد'} onClose={() => setModal(false)}>
           <div className="p-5 space-y-4">
             {([
-              { key: 'name' as const, label: 'اسم الفرع *', placeholder: 'الفرع الرئيسي' },
+              { key: 'name' as const, label: 'اسم الفرع *', placeholder: 'بغداد الكرخ' },
               { key: 'city' as const, label: 'المدينة / المحافظة', placeholder: 'بغداد' },
               { key: 'address' as const, label: 'العنوان', placeholder: 'الشارع والمنطقة' },
               { key: 'phone' as const, label: 'الهاتف', placeholder: '07xxxxxxxxx' },

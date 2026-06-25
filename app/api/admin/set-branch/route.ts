@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { BRANCH_COOKIE } from '@/lib/branch-context'
+import { isMainBranchName } from '@/lib/branch-constants'
 
 export async function POST(req: Request) {
   try {
@@ -34,6 +35,10 @@ export async function POST(req: Request) {
 
     if (!branch) {
       return NextResponse.json({ error: 'Branch not found' }, { status: 404 })
+    }
+
+    if (isMainBranchName(branch.name)) {
+      return NextResponse.json({ error: 'الفرع الرئيسي غير معتمد — اختر أحد الفروع الرسمية' }, { status: 400 })
     }
 
     const cookieStore = await cookies()

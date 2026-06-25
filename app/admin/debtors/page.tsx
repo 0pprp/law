@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
@@ -12,44 +12,88 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtMoney, fmtDate } from '@/lib/utils'
+import { RECEIPT_TYPE_LABEL } from '@/lib/ui-labels'
 
-const INP = 'w-full pr-9 pl-4 py-2.5 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
+const PAGE_SIZE = 50
+const COLS = 'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status'
 
 function SearchIcon() {
   return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
 }
 
+function SkeletonRow() {
+  return (
+    <TR>
+      {[1,2,3,4,5,6,7].map(i => (
+        <TD key={i}><div className="h-4 bg-[rgba(118,118,118,0.1)] rounded animate-pulse" style={{ width: `${50 + (i * 13) % 40}%` }} /></TD>
+      ))}
+    </TR>
+  )
+}
+
+const INP = 'w-full pr-9 pl-4 py-2.5 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
+
 export default function DebtorsPage() {
   const branchId = useBranchId()
   const [debtors, setDebtors] = useState<any[]>([])
-  const [filtered, setFiltered] = useState<any[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const load = useCallback(async () => {
+  // Server-side fetch with optional search
+  const fetchDebtors = useCallback(async (searchTerm: string, offset = 0, append = false) => {
+    if (offset === 0 && !append) setLoading(true)
+    else setLoadingMore(true)
+
     const supabase = createClient()
-    let q = supabase.from('debtors').select('*').order('created_at', { ascending: false })
+    let q = supabase
+      .from('debtors')
+      .select(COLS, { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1)
+
     if (branchId) q = (q as any).eq('branch_id', branchId)
-    const { data } = await q
-    setDebtors(data ?? [])
-    setFiltered(data ?? [])
+
+    if (searchTerm.trim()) {
+      const s = searchTerm.trim()
+      // ilike uses the trigram index for fast Arabic search
+      q = (q as any).or(
+        `full_name.ilike.%${s}%,phone.ilike.%${s}%,id_number.ilike.%${s}%,receipt_number.ilike.%${s}%`
+      )
+    }
+
+    const { data, count } = await q
+    if (append) {
+      setDebtors(prev => [...prev, ...(data ?? [])])
+    } else {
+      setDebtors(data ?? [])
+    }
+    setTotal(count ?? 0)
     setLoading(false)
+    setLoadingMore(false)
   }, [branchId])
 
-  useEffect(() => { load() }, [load])
-
+  // Initial load + branch change
   useEffect(() => {
-    if (!search.trim()) { setFiltered(debtors); return }
-    const q = search.toLowerCase()
-    setFiltered(debtors.filter(d =>
-      d.full_name?.toLowerCase().includes(q) ||
-      d.id_number?.toLowerCase().includes(q) ||
-      d.phone?.includes(q) ||
-      d.receipt_number?.toLowerCase().includes(q)
-    ))
-  }, [search, debtors])
+    fetchDebtors('')
+  }, [fetchDebtors])
+
+  // Debounced search — 300ms
+  function handleSearch(val: string) {
+    setSearch(val)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      fetchDebtors(val)
+    }, 300)
+  }
+
+  function loadMore() {
+    fetchDebtors(search, debtors.length, true)
+  }
 
   async function deleteDebtor(id: string, name: string) {
     if (!confirm(`هل أنت متأكد من حذف المدين "${name}"؟\nسيتم حذف جميع البيانات المرتبطة به.`)) return
@@ -60,14 +104,16 @@ export default function DebtorsPage() {
     if (dbErr) { setError(`فشل الحذف: ${dbErr.message}`); setDeletingId(null); return }
     await logActivity({ action: 'delete_debtor', entity_type: 'debtor', entity_id: id, description: `حذف مدين: ${name}` }, supabase)
     setDeletingId(null)
-    load()
+    fetchDebtors(search)
   }
+
+  const hasMore = debtors.length < total
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="المدينون"
-        subtitle={`${debtors.length} مدين مسجّل في النظام`}
+        subtitle={`${total} مدين مسجّل في النظام`}
         actions={
           <Link href="/admin/debtors/new">
             <Button variant="primary" size="sm">+ إضافة مدين</Button>
@@ -84,11 +130,22 @@ export default function DebtorsPage() {
           <input
             type="text"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => handleSearch(e.target.value)}
             placeholder="بحث بالاسم، رقم الهوية، الهاتف، أو رقم الوصل..."
             className={INP}
           />
+          {search && (
+            <button onClick={() => handleSearch('')}
+              className="absolute inset-y-0 left-3 text-[#767676] hover:text-[#231F20] text-lg leading-none">
+              ×
+            </button>
+          )}
         </div>
+        {search && !loading && (
+          <p className="text-xs text-[#767676] mt-2">
+            {total === 0 ? 'لا نتائج' : `${total} نتيجة`} للبحث عن "{search}"
+          </p>
+        )}
       </div>
 
       {error && (
@@ -97,14 +154,30 @@ export default function DebtorsPage() {
 
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
         {loading ? (
-          <div className="flex flex-col items-center gap-3 py-16">
-            <svg className="w-6 h-6 animate-spin text-[#2C8780]" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            <p className="text-sm text-[#767676]">جارٍ التحميل...</p>
-          </div>
-        ) : !filtered.length ? (
+          <>
+            {/* Desktop skeleton */}
+            <div className="hidden md:block">
+              <Table>
+                <THead>
+                  <tr>
+                    <TH>الاسم</TH><TH>رقم الهوية</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
+                    <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
+                  </tr>
+                </THead>
+                <TBody>{[...Array(8)].map((_, i) => <SkeletonRow key={i} />)}</TBody>
+              </Table>
+            </div>
+            {/* Mobile skeleton */}
+            <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="p-4 space-y-2 animate-pulse">
+                  <div className="h-4 bg-[rgba(118,118,118,0.1)] rounded w-1/2" />
+                  <div className="h-3 bg-[rgba(118,118,118,0.08)] rounded w-1/3" />
+                </div>
+              ))}
+            </div>
+          </>
+        ) : !debtors.length ? (
           <EmptyState
             title={search ? 'لا نتائج للبحث' : 'لا يوجد مدينون مسجلون بعد'}
             description={search ? 'جرّب كلمات بحث مختلفة' : 'ابدأ بإضافة أول مدين في النظام'}
@@ -121,7 +194,7 @@ export default function DebtorsPage() {
                   <tr>
                     <TH>الاسم</TH>
                     <TH>رقم الهوية</TH>
-                    <TH>نوع الصك</TH>
+                    <TH>{RECEIPT_TYPE_LABEL}</TH>
                     <TH>المبلغ المطلوب</TH>
                     <TH>المتبقي</TH>
                     <TH>تاريخ الإضافة</TH>
@@ -129,7 +202,7 @@ export default function DebtorsPage() {
                   </tr>
                 </THead>
                 <TBody>
-                  {filtered.map(debtor => (
+                  {debtors.map(debtor => (
                     <TR key={debtor.id}>
                       <TD>
                         <div>
@@ -173,7 +246,7 @@ export default function DebtorsPage() {
 
             {/* Mobile cards */}
             <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
-              {filtered.map(debtor => (
+              {debtors.map(debtor => (
                 <div key={debtor.id} className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <Link href={`/admin/debtors/${debtor.id}/account`} className="font-semibold text-[#231F20]">{debtor.full_name}</Link>
@@ -208,8 +281,19 @@ export default function DebtorsPage() {
         )}
       </div>
 
-      {!loading && filtered.length > 0 && (
-        <p className="text-xs text-[#767676] text-center">عرض {filtered.length} من {debtors.length} مدين</p>
+      {/* Pagination footer */}
+      {!loading && debtors.length > 0 && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-[#767676]">
+            عرض {debtors.length} من {total} مدين
+          </p>
+          {hasMore && (
+            <button onClick={loadMore} disabled={loadingMore}
+              className="text-xs font-semibold text-[#2C8780] border border-[#2C8780]/30 hover:bg-[#2C8780]/5 px-4 py-2 rounded-lg transition-colors disabled:opacity-60">
+              {loadingMore ? 'جارٍ التحميل...' : `عرض المزيد (${total - debtors.length} متبقٍ)`}
+            </button>
+          )}
+        </div>
       )}
     </div>
   )

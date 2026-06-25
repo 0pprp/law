@@ -39,17 +39,30 @@ export default function ReportsPage() {
 
   useEffect(() => {
     const supabase = createClient()
+
+    // Default date window: last 365 days for tasks/payments/expenses (keeps result sets small)
+    const oneYearAgo = new Date(Date.now() - 365 * 86400 * 1000).toISOString().split('T')[0]
+
     let lq = supabase.from('profiles').select('id, full_name, governorate').eq('role', 'lawyer').eq('is_active', true).order('full_name')
-    let dq = supabase.from('debtors').select('id, full_name, required_amount').order('full_name')
-    let tq = supabase.from('tasks').select('id, task_type, task_status, assigned_to, debtor_id, completed_at, due_date, created_at, task_definition_id, task_definitions(label)')
+    // Debtors: only id+name for filter dropdown (no full scan)
+    let dq = supabase.from('debtors').select('id, full_name, required_amount').order('full_name').limit(500)
+    // Tasks: limited to recent 1000, only needed columns
+    let tq = supabase
+      .from('tasks')
+      .select('id, task_type, task_status, assigned_to, debtor_id, completed_at, due_date, created_at, task_definition_id, task_definitions(label)')
+      .gte('created_at', oneYearAgo)
+      .limit(1000)
     let tdq = supabase.from('task_definitions').select('id, label, sort_order').eq('is_active', true).order('sort_order')
-    let adq = supabase.from('debtors').select(`
-      id, case_status, current_task_id,
-      current_task:tasks!current_task_id(id, task_status, task_definition_id)
-    `).or('case_status.is.null,case_status.neq.closed')
+    let adq = supabase
+      .from('debtors')
+      .select('id, case_status, current_task_id, current_task:tasks!current_task_id(id, task_status, task_definition_id)')
+      .or('case_status.is.null,case_status.neq.closed')
+      .limit(1000)
     let ccq = supabase.from('debtors').select('id', { count: 'exact', head: true }).eq('case_status', 'closed')
-    let eq = supabase.from('expenses').select('id, debtor_id, amount, expense_date')
-    let pq = supabase.from('debtor_payments').select('id, debtor_id, lawyer_id, amount, payment_date').order('payment_date', { ascending: false })
+    // Expenses and payments: limited to last year
+    let eq = supabase.from('expenses').select('id, debtor_id, amount, expense_date').gte('expense_date', oneYearAgo).limit(2000)
+    let pq = supabase.from('debtor_payments').select('id, debtor_id, lawyer_id, amount, payment_date').gte('payment_date', oneYearAgo).order('payment_date', { ascending: false }).limit(2000)
+
     if (branchId) {
       lq = (lq as any).eq('branch_id', branchId)
       dq = (dq as any).eq('branch_id', branchId)

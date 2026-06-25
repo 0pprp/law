@@ -8,29 +8,22 @@ import type { ReceiptType } from '@/lib/types'
 import Link from 'next/link'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
-import { Card, CardHeader } from '@/components/ui/card'
-import { useBranchId } from '@/context/branch'
+import { useBranchId, useBranch } from '@/context/branch'
+import { isMainBranchName } from '@/lib/branch-constants'
+import { LEGAL_ISSUE_DATE_LABEL, PDF_REQUIRED_MESSAGE, RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { FormFlow, FormFlowHero, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
+import { cn } from '@/lib/utils'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
-
-const INP = 'w-full border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2.5 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
-
-function Field({ label, required: req, children }: { label: string; required?: boolean; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-sm font-semibold text-[#231F20] mb-1.5">
-        {label}{req && <span className="text-red-500 mr-0.5">*</span>}
-      </label>
-      {children}
-    </div>
-  )
-}
 
 interface TaskDef { id: string; label: string; fee_amount: number }
 
 export default function NewDebtorPage() {
   const router = useRouter()
   const branchId = useBranchId()
+  const { branchName } = useBranch()
+  const today = new Date().toISOString().split('T')[0]
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [pdfFile, setPdfFile] = useState<File | null>(null)
@@ -40,11 +33,8 @@ export default function NewDebtorPage() {
   const [form, setForm] = useState({
     full_name: '',
     phone: '',
-    governorate: '',
     address: '',
-    employer: '',
     id_number: '',
-    export_date: '',
     receipt_type: 'check' as ReceiptType,
     receipt_number: '',
     receipt_amount: '',
@@ -55,7 +45,6 @@ export default function NewDebtorPage() {
     notes: '',
   })
 
-  // Load task definitions for current branch
   useEffect(() => {
     let q = createClient().from('task_definitions').select('id, label, fee_amount').eq('is_active', true)
     if (branchId) q = (q as any).eq('branch_id', branchId)
@@ -81,8 +70,20 @@ export default function NewDebtorPage() {
     setSaving(true)
     setError('')
 
+    if (!branchId || isMainBranchName(branchName)) {
+      setError('يجب اختيار فرعاً رسمياً من القائمة العلوية قبل إضافة مدين')
+      setSaving(false)
+      return
+    }
+
     if (!selectedTaskDefId) {
       setError('يجب اختيار المهمة الأولية للمدين — لا يمكن إضافة مدين بدون مهمة')
+      setSaving(false)
+      return
+    }
+
+    if (!pdfFile || pdfFile.type !== 'application/pdf') {
+      setError(PDF_REQUIRED_MESSAGE)
       setSaving(false)
       return
     }
@@ -92,15 +93,15 @@ export default function NewDebtorPage() {
     if (!user) { router.push('/login'); return }
 
     const taskDef = taskDefs.find(t => t.id === selectedTaskDefId)
+    const governorate = branchName ?? null
 
     const { data: newDebtor, error: dbError } = await supabase.from('debtors').insert({
       full_name: form.full_name,
       phone: form.phone || null,
-      governorate: form.governorate || null,
+      governorate,
       address: form.address || null,
-      employer: form.employer || null,
       id_number: form.id_number || null,
-      export_date: form.export_date || new Date().toISOString().split('T')[0],
+      export_date: today,
       receipt_type: form.receipt_type,
       receipt_number: form.receipt_number || null,
       receipt_amount: parseFloat(form.receipt_amount) || 0,
@@ -143,155 +144,223 @@ export default function NewDebtorPage() {
       return
     }
 
-    if (pdfFile) {
-      const safeFileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
-      const filePath = `${newDebtor.id}/${safeFileName}`
-      const { error: uploadError } = await supabase.storage
-        .from('debtor-files')
-        .upload(filePath, pdfFile, { contentType: 'application/pdf' })
-      if (uploadError) {
-        setError(`تم إنشاء المدين لكن فشل رفع الملف: ${uploadError.message}`)
-        setSaving(false)
-        return
-      }
-      await supabase.from('debtor_attachments').insert({
-        debtor_id: newDebtor.id,
-        file_name: pdfFile.name,
-        file_path: filePath,
-        file_size: pdfFile.size,
-        mime_type: pdfFile.type,
-        uploaded_by: user.id,
-      })
+    const safeFileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
+    const filePath = `${newDebtor.id}/${safeFileName}`
+    const { error: uploadError } = await supabase.storage
+      .from('debtor-files')
+      .upload(filePath, pdfFile, { contentType: 'application/pdf' })
+
+    if (uploadError) {
+      await supabase.from('tasks').delete().eq('id', newTask.id)
+      await supabase.from('debtors').delete().eq('id', newDebtor.id)
+      setError(`فشل رفع ملف PDF: ${uploadError.message}`)
+      setSaving(false)
+      return
+    }
+
+    const { error: attachErr } = await supabase.from('debtor_attachments').insert({
+      debtor_id: newDebtor.id,
+      file_name: pdfFile.name,
+      file_path: filePath,
+      file_size: pdfFile.size,
+      mime_type: pdfFile.type,
+      uploaded_by: user.id,
+    })
+
+    if (attachErr) {
+      await supabase.storage.from('debtor-files').remove([filePath])
+      await supabase.from('tasks').delete().eq('id', newTask.id)
+      await supabase.from('debtors').delete().eq('id', newDebtor.id)
+      setError(`فشل حفظ سجل الملف: ${attachErr.message}`)
+      setSaving(false)
+      return
     }
 
     router.push('/admin/debtors')
   }
 
   const selectedDef = taskDefs.find(t => t.id === selectedTaskDefId)
+  const branchOk = branchId && branchName && !isMainBranchName(branchName)
+
+  const taskOptions = taskDefs.map(t => ({
+    value: t.id,
+    label: t.label,
+    hint: t.fee_amount > 0 ? `${Number(t.fee_amount).toLocaleString('en-US')} د.ع أتعاب` : undefined,
+  }))
+
+  const receiptOptions = FORM_RECEIPT_TYPES.map(t => ({
+    value: t,
+    label: RECEIPT_TYPE_LABELS[t],
+  }))
 
   return (
     <div className="max-w-3xl space-y-5">
       <PageHeader
         title="إضافة مدين جديد"
+        subtitle="سجّل بيانات المدين واربطه بمهمته الأولية في فرعك الحالي"
         breadcrumb={[{ label: 'المدينون', href: '/admin/debtors' }, { label: 'إضافة جديد' }]}
       />
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Initial Task Selection */}
-        <Card>
-          <CardHeader title="المهمة الأولية المطلوبة" />
-          <div className="p-5">
-            <Field label="المهمة القانونية لهذا المدين" required>
-              <select
+        <FormFlow>
+          {branchOk ? (
+            <FormFlowHero
+              branchName={branchName!}
+              meta={[{ label: LEGAL_ISSUE_DATE_LABEL, value: today }]}
+            />
+          ) : (
+            <FormFlowHero warning="اختر فرعاً رسمياً من القائمة العلوية قبل إضافة مدين." />
+          )}
+
+          <FormFlowStep
+            step={1}
+            title="المهمة الأولية"
+            subtitle="اختر المهمة القانونية التي يبدأ بها مسار هذا المدين"
+            icon={
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            }
+          >
+            <FormField label="المهمة القانونية لهذا المدين" required>
+              <PremiumSelect
                 value={selectedTaskDefId}
-                onChange={e => setSelectedTaskDefId(e.target.value)}
-                className={INP}
-                required
-              >
-                <option value="">— اختر المهمة الأولية —</option>
-                {taskDefs.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}{t.fee_amount > 0 ? ` — ${Number(t.fee_amount).toLocaleString('en-US')} د.ع` : ''}
-                  </option>
-                ))}
-              </select>
-            </Field>
+                onChange={setSelectedTaskDefId}
+                options={taskOptions}
+                placeholder="— اختر المهمة الأولية —"
+                headerTitle="اختر المهمة القانونية"
+                headerSubtitle={`${taskDefs.length} مهمة متاحة في هذا الفرع`}
+                searchPlaceholder="بحث في المهام..."
+                disabled={!branchOk}
+              />
+            </FormField>
             {selectedDef && (
-              <div className="mt-3 flex items-center gap-2 bg-[#2C8780]/8 border border-[#2C8780]/20 rounded-xl px-4 py-2.5">
-                <svg className="w-4 h-4 text-[#2C8780] shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
-                <p className="text-sm text-[#2C8780] font-semibold">
-                  ستُنشأ مهمة <span className="font-black">"{selectedDef.label}"</span> بانتظار تكليف محامٍ
+              <div className="mt-3 flex items-start gap-2.5 bg-[#2C8780]/6 border border-[#2C8780]/20 rounded-xl px-4 py-3">
+                <div className="w-8 h-8 rounded-lg bg-[#2C8780]/12 flex items-center justify-center shrink-0">
+                  <svg className="w-4 h-4 text-[#2C8780]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-sm text-[#231F20] leading-relaxed">
+                  ستُنشأ مهمة <span className="font-black text-[#2C8780]">«{selectedDef.label}»</span> بانتظار تكليف محامٍ فور الحفظ.
                 </p>
               </div>
             )}
-          </div>
-        </Card>
+          </FormFlowStep>
 
-        <Card>
-          <CardHeader title="البيانات الشخصية" />
-          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="الاسم الكامل" required>
-              <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={INP} placeholder="اسم المدين الكامل" />
-            </Field>
-            <Field label="رقم الهاتف">
-              <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} className={INP} dir="ltr" placeholder="+964..." />
-            </Field>
-            <Field label="رقم الهوية">
-              <input type="text" value={form.id_number} onChange={e => set('id_number', e.target.value)} className={INP} dir="ltr" />
-            </Field>
-            <Field label="جهة العمل">
-              <input type="text" value={form.employer} onChange={e => set('employer', e.target.value)} className={INP} />
-            </Field>
-            <Field label="المحافظة">
-              <input type="text" value={form.governorate} onChange={e => set('governorate', e.target.value)} className={INP} placeholder="مثال: بغداد" />
-            </Field>
-            <Field label="العنوان التفصيلي">
-              <input type="text" value={form.address} onChange={e => set('address', e.target.value)} className={INP} placeholder="الحي، الشارع، رقم الدار" />
-            </Field>
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="بيانات المستند" />
-          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="نوع الصك" required>
-              <select value={form.receipt_type} onChange={e => set('receipt_type', e.target.value)} required className={INP}>
-                {FORM_RECEIPT_TYPES.map(t => <option key={t} value={t}>{RECEIPT_TYPE_LABELS[t]}</option>)}
-              </select>
-            </Field>
-            <Field label="رقم الصك / المستند">
-              <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={INP} dir="ltr" />
-            </Field>
-            <Field label="تاريخ الإصدار">
-              <input type="date" value={form.export_date} onChange={e => set('export_date', e.target.value)} className={INP} dir="ltr" />
-            </Field>
-            <Field label="المبلغ الأصلي (د.ع)">
-              <input type="number" value={form.receipt_amount} onChange={e => set('receipt_amount', e.target.value)} className={INP} min="0" step="any" dir="ltr" placeholder="0" />
-            </Field>
-            <Field label="المبلغ المتبقي (د.ع)">
-              <input type="number" value={form.remaining_amount} onChange={e => set('remaining_amount', e.target.value)} className={INP} min="0" step="any" dir="ltr" placeholder="0" />
-            </Field>
-            <Field label="أتعاب المحامي (د.ع)">
-              <input type="number" value={form.lawyer_fees} onChange={e => set('lawyer_fees', e.target.value)} className={INP} min="0" step="any" dir="ltr" placeholder="0" />
-            </Field>
-            <div className="md:col-span-2">
-              <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                <input type="checkbox" checked={form.has_contract}
-                  onChange={e => { set('has_contract', e.target.checked); if (!e.target.checked) set('penalty_amount', '') }}
-                  className="w-4 h-4 rounded accent-[#2C8780]" />
-                <span className="text-sm font-semibold text-[#231F20]">يوجد عقد موقّع</span>
-              </label>
+          <FormFlowStep
+            step={2}
+            title="البيانات الشخصية"
+            subtitle="معلومات التواصل والهوية للمدين"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField label="الاسم الكامل" required>
+                <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={formInputClass} placeholder="اسم المدين الكامل" />
+              </FormField>
+              <FormField label="رقم الهاتف">
+                <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} className={formInputClass} dir="ltr" placeholder="+964..." />
+              </FormField>
+              <FormField label="رقم الهوية">
+                <input type="text" value={form.id_number} onChange={e => set('id_number', e.target.value)} className={formInputClass} dir="ltr" />
+              </FormField>
+              <FormField label="العنوان التفصيلي">
+                <input type="text" value={form.address} onChange={e => set('address', e.target.value)} className={formInputClass} placeholder="الحي، الشارع، رقم الدار" />
+              </FormField>
             </div>
-            {form.has_contract && (
-              <Field label="الشرط الجزائي (د.ع)">
-                <input type="number" value={form.penalty_amount} onChange={e => set('penalty_amount', e.target.value)} className={INP} min="0" step="any" dir="ltr" placeholder="0" />
-              </Field>
-            )}
-          </div>
-        </Card>
+          </FormFlowStep>
 
-        <Card>
-          <CardHeader title="ملف المدين" />
-          <div className="p-5 space-y-4">
-            <Field label="ملف PDF (اختياري)">
-              <input type="file" accept="application/pdf" onChange={handleFileChange}
-                className="w-full text-sm text-[#231F20] file:ml-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#2C8780]/8 file:text-[#2C8780] hover:file:bg-[#2C8780]/15 cursor-pointer" />
-              {pdfFile && <p className="text-xs text-emerald-700 mt-1.5 font-semibold">✓ {pdfFile.name} ({(pdfFile.size / 1024).toFixed(0)} KB)</p>}
-            </Field>
-            <Field label="ملاحظات">
-              <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} className={`${INP} resize-none`} placeholder="ملاحظات إضافية..." />
-            </Field>
-          </div>
-        </Card>
+          <FormFlowStep
+            step={3}
+            title="بيانات المستند"
+            subtitle="تفاصيل الوصل والمبالغ المالية"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField label={RECEIPT_TYPE_LABEL} required>
+                <PremiumSelect
+                  value={form.receipt_type}
+                  onChange={v => set('receipt_type', v)}
+                  options={receiptOptions}
+                  headerTitle={RECEIPT_TYPE_LABEL}
+                  searchable={false}
+                />
+              </FormField>
+              <FormField label={RECEIPT_NUMBER_LABEL}>
+                <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={formInputClass} dir="ltr" />
+              </FormField>
+              <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`}>
+                <input type="number" value={form.receipt_amount} onChange={e => set('receipt_amount', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" placeholder="0" />
+              </FormField>
+              <FormField label="المبلغ المتبقي (د.ع)">
+                <input type="number" value={form.remaining_amount} onChange={e => set('remaining_amount', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" placeholder="0" />
+              </FormField>
+              <FormField label="أتعاب المحامي (د.ع)">
+                <input type="number" value={form.lawyer_fees} onChange={e => set('lawyer_fees', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" placeholder="0" />
+              </FormField>
+              <div className="md:col-span-2">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none p-3 rounded-xl border border-[rgba(118,118,118,0.12)] bg-[#FAFAFA] hover:bg-[#F3F1F2] transition-colors">
+                  <input type="checkbox" checked={form.has_contract}
+                    onChange={e => { set('has_contract', e.target.checked); if (!e.target.checked) set('penalty_amount', '') }}
+                    className="w-4 h-4 rounded accent-[#2C8780]" />
+                  <span className="text-sm font-semibold text-[#231F20]">يوجد عقد موقّع</span>
+                </label>
+              </div>
+              {form.has_contract && (
+                <FormField label="الشرط الجزائي (د.ع)">
+                  <input type="number" value={form.penalty_amount} onChange={e => set('penalty_amount', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" placeholder="0" />
+                </FormField>
+              )}
+            </div>
+          </FormFlowStep>
+
+          <FormFlowStep
+            step={4}
+            title="ملف المدين والملاحظات"
+            subtitle="ارفع ملف PDF الرسمي — إلزامي قبل الحفظ"
+            isLast
+          >
+            <div className="space-y-4">
+              <FormField label="ملف PDF" required hint="PDF فقط — يُحفظ ضمن مستمسكات المدين">
+                <label className={cn(
+                  'flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed cursor-pointer transition-all',
+                  pdfFile
+                    ? 'border-[#2C8780]/40 bg-[#2C8780]/5'
+                    : 'border-[rgba(118,118,118,0.2)] bg-[#FAFAFA] hover:border-[#2C8780]/35 hover:bg-[#2C8780]/3',
+                )}>
+                  <input type="file" accept="application/pdf" onChange={handleFileChange} required className="hidden" />
+                  <div className="w-12 h-12 rounded-2xl bg-[#2C8780]/10 flex items-center justify-center">
+                    <svg className="w-6 h-6 text-[#2C8780]" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  {pdfFile ? (
+                    <>
+                      <p className="text-sm font-bold text-[#2C8780]">{pdfFile.name}</p>
+                      <p className="text-xs text-[#767676]">{(pdfFile.size / 1024).toFixed(0)} KB — اضغط لتغيير الملف</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-bold text-[#231F20]">اسحب الملف أو اضغط للرفع</p>
+                      <p className="text-xs text-[#767676]">PDF فقط</p>
+                    </>
+                  )}
+                </label>
+              </FormField>
+              <FormField label="ملاحظات">
+                <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} className={cn(formInputClass, 'resize-none')} placeholder="ملاحظات إضافية..." />
+              </FormField>
+            </div>
+          </FormFlowStep>
+        </FormFlow>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>
+          <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3 flex items-start gap-2">
+            <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            {error}
+          </div>
         )}
 
         <div className="flex gap-3 pb-6">
-          <Button type="submit" variant="primary" loading={saving}>
+          <Button type="submit" variant="primary" loading={saving} disabled={!branchOk}>
             حفظ المدين وإنشاء المهمة
           </Button>
           <Link href="/admin/debtors">

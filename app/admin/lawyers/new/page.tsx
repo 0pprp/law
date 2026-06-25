@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { useBranchId, useBranch } from '@/context/branch'
+import { isMainBranchName } from '@/lib/branch-constants'
 
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
@@ -43,7 +44,7 @@ export default function NewLawyerPage() {
 
   const [form, setForm] = useState({
     full_name: '', username: '', email: '', temporary_password: '',
-    phone: '', governorate: '', identity_type: '', identity_number: '', identity_category: '', is_active: true,
+    phone: '', identity_type: '', identity_number: '', identity_category: '', is_active: true,
   })
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
@@ -59,8 +60,8 @@ export default function NewLawyerPage() {
 
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
-    if (!branchId) {
-      setError('يجب اختيار فرع من القائمة العلوية قبل إضافة مستخدم')
+    if (!branchId || isMainBranchName(branchName)) {
+      setError('يجب اختيار فرعاً رسمياً من القائمة العلوية قبل إضافة محامٍ')
       return
     }
     setSaving(true); setError('')
@@ -73,7 +74,7 @@ export default function NewLawyerPage() {
         email: form.email,
         temporary_password: form.temporary_password,
         phone: form.phone, is_active: form.is_active,
-        governorate: form.governorate, identity_type: form.identity_type,
+        identity_type: form.identity_type,
         identity_number: form.identity_number, identity_category: form.identity_category,
         branch_id: branchId,
       }),
@@ -104,9 +105,9 @@ export default function NewLawyerPage() {
       />
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        {branchId ? (
+        {branchId && branchName && !isMainBranchName(branchName) ? (
           <p className="text-xs text-[#767676] bg-[#F3F1F2] rounded-lg px-3 py-2">
-            الفرع الحالي: <span className="font-bold text-[#231F20]">{branchName ?? branchId}</span>
+            الفرع / المحافظة: <span className="font-bold text-[#231F20]">{branchName}</span>
           </p>
         ) : (
           <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
@@ -143,9 +144,6 @@ export default function NewLawyerPage() {
         <Card>
           <CardHeader title="بيانات الهوية" />
           <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="المحافظة">
-              <input type="text" value={form.governorate} onChange={e => set('governorate', e.target.value)} className={INP} placeholder="مثال: بغداد" />
-            </Field>
             <Field label="نوع الهوية">
               <input type="text" value={form.identity_type} onChange={e => set('identity_type', e.target.value)} className={INP} placeholder="جواز / هوية وطنية / نقابة" />
             </Field>
