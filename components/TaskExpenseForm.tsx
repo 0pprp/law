@@ -9,7 +9,6 @@ interface ExpenseTypeDef {
   id: string
   name: string
   default_amount: number
-  requires_approval: boolean
   requires_attachment: boolean
   requires_note: boolean
   requires_gps: boolean
@@ -29,6 +28,7 @@ interface Props {
   taskId: string
   debtorId: string
   caseId: string | null
+  branchId: string | null
   expenses: Expense[]
 }
 
@@ -42,7 +42,7 @@ const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   rejected:         { label: 'مرفوضة',           cls: 'bg-red-100 text-red-700' },
 }
 
-export default function TaskExpenseForm({ taskId, debtorId, caseId, expenses: initialExpenses }: Props) {
+export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, expenses: initialExpenses }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -59,13 +59,14 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, expenses: in
   })
 
   useEffect(() => {
-    createClient()
+    let q = createClient()
       .from('expense_types')
-      .select('id, name, default_amount, requires_approval, requires_attachment, requires_note, requires_gps')
+      .select('id, name, default_amount, requires_attachment, requires_note, requires_gps')
       .eq('is_active', true)
       .order('name')
-      .then(({ data }) => setExpenseTypes((data ?? []) as ExpenseTypeDef[]))
-  }, [])
+    if (branchId) q = (q as any).eq('branch_id', branchId)
+    q.then(({ data }) => setExpenseTypes((data ?? []) as ExpenseTypeDef[]))
+  }, [branchId])
 
   const selectedType = expenseTypes.find(t => t.id === form.expense_type_id) ?? null
 

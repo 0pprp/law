@@ -35,8 +35,10 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   if (!debtor) notFound()
 
   const totalPaymentsSum = (payments ?? []).reduce((s, p) => s + Number(p.amount), 0)
-  const totalExpensesSum = (expenses ?? []).reduce((s, e) => s + Number(e.amount), 0)
-  const collectionRate = Number(debtor.required_amount) > 0 ? Math.round((totalPaymentsSum / Number(debtor.required_amount)) * 100) : 0
+  // Only count approved expenses — pending/rejected don't affect the account
+  const totalExpensesSum = (expenses ?? []).filter(e => e.status === 'approved' || e.status == null).reduce((s, e) => s + Number(e.amount), 0)
+  const totalOwed = Number(debtor.required_amount) + totalExpensesSum
+  const collectionRate = totalOwed > 0 ? Math.round((totalPaymentsSum / totalOwed) * 100) : 0
 
   return (
     <div className="space-y-5 max-w-4xl">
@@ -142,17 +144,26 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
               <div className="py-8 text-center text-[#767676] text-sm">لا توجد صرفيات</div>
             ) : (
               <div className="divide-y divide-[rgba(118,118,118,0.08)]">
-                {expenses!.map((e: any) => (
-                  <div key={e.id} className="px-5 py-3.5 flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-red-600 tabular-nums" dir="ltr">{fmtMoney(Number(e.amount))}</p>
-                      <p className="text-xs text-[#767676] mt-0.5">
-                        {[e.expense_type, e.description, e.task?.task_type ? TASK_TYPE_LABELS[e.task.task_type as TaskType] : null].filter(Boolean).join(' · ') || '—'}
-                      </p>
+                {expenses!.map((e: any) => {
+                  const s = e.status ?? 'approved'
+                  const isPending = s === 'pending_approval'
+                  const isRejected = s === 'rejected'
+                  return (
+                    <div key={e.id} className={`px-5 py-3.5 flex items-center justify-between gap-4 ${isPending ? 'opacity-60' : ''}`}>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className={`text-sm font-semibold tabular-nums ${isRejected ? 'text-[#767676] line-through' : 'text-red-600'}`} dir="ltr">{fmtMoney(Number(e.amount))}</p>
+                          {isPending && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700">بانتظار الاعتماد</span>}
+                          {isRejected && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">مرفوضة</span>}
+                        </div>
+                        <p className="text-xs text-[#767676] mt-0.5">
+                          {[e.expense_type, e.description, e.task?.task_type ? TASK_TYPE_LABELS[e.task.task_type as TaskType] : null].filter(Boolean).join(' · ') || '—'}
+                        </p>
+                      </div>
+                      <span className="text-xs text-[#767676] font-mono shrink-0" dir="ltr">{fmtDate(e.expense_date)}</span>
                     </div>
-                    <span className="text-xs text-[#767676] font-mono shrink-0" dir="ltr">{fmtDate(e.expense_date)}</span>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </Card>

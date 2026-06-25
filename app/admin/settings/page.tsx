@@ -775,7 +775,7 @@ function TaskDefsTab() {
 // ══════════════════════════════════════════════════════════════
 interface ExpenseType {
   id: string; name: string; default_amount: number
-  requires_approval: boolean; requires_receipt: boolean; is_active: boolean
+  is_active: boolean
   requires_attachment: boolean; requires_note: boolean; requires_gps: boolean
 }
 
@@ -785,7 +785,6 @@ function ExpenseTypesTab() {
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState<{
     name: string; default_amount: string
-    requires_approval: boolean; requires_receipt: boolean
     requires_attachment: boolean; requires_note: boolean; requires_gps: boolean
   } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -805,14 +804,13 @@ function ExpenseTypesTab() {
   useEffect(() => { load() }, [load])
 
   function openAdd() {
-    setForm({ name: '', default_amount: '0', requires_approval: true, requires_receipt: false, requires_attachment: false, requires_note: false, requires_gps: false })
+    setForm({ name: '', default_amount: '0', requires_attachment: false, requires_note: false, requires_gps: false })
     setEditingId(null); setErr('')
   }
 
   function openEdit(t: ExpenseType) {
     setForm({
       name: t.name, default_amount: String(t.default_amount),
-      requires_approval: t.requires_approval, requires_receipt: t.requires_receipt,
       requires_attachment: t.requires_attachment ?? false,
       requires_note: t.requires_note ?? false,
       requires_gps: t.requires_gps ?? false,
@@ -826,11 +824,10 @@ function ExpenseTypesTab() {
     const payload = {
       name: form.name.trim(),
       default_amount: Number(form.default_amount) || 0,
-      requires_approval: form.requires_approval,
-      requires_receipt: form.requires_receipt,
       requires_attachment: form.requires_attachment,
       requires_note: form.requires_note,
       requires_gps: form.requires_gps,
+      branch_id: branchId || null,
     }
     const sb = createClient()
     const { error } = editingId
@@ -876,10 +873,9 @@ function ExpenseTypesTab() {
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
                 <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">النوع</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-[#767676]">المبلغ</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-[#767676]">المبلغ (د.ع)</th>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">مرفق</th>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">ملاحظة</th>
-                <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">GPS</th>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحالة</th>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">إجراء</th>
               </tr>
@@ -891,10 +887,10 @@ function ExpenseTypesTab() {
                   <td className="px-4 py-3 text-[#767676] tabular-nums text-left font-bold" dir="ltr">
                     {t.default_amount > 0 ? `${Number(t.default_amount).toLocaleString('en-US')} د.ع` : '—'}
                   </td>
-                  {(['requires_attachment', 'requires_note', 'requires_gps'] as const).map(field => (
+                  {(['requires_attachment', 'requires_note'] as const).map(field => (
                     <td key={field} className="px-4 py-3 text-center">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${(t as any)[field] ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'}`}>
-                        {(t as any)[field] ? '✓' : '—'}
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${t[field] ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'}`}>
+                        {t[field] ? '✓' : '—'}
                       </span>
                     </td>
                   ))}
@@ -931,10 +927,10 @@ function ExpenseTypesTab() {
             <input type="number" value={form.default_amount} onChange={e => setForm(f => f ? { ...f, default_amount: e.target.value } : f)} className={INP} dir="ltr" min="0" />
           </div>
           {([
-            { key: 'requires_attachment', label: 'يتطلب مرفق (صورة / PDF)' },
-            { key: 'requires_note',       label: 'يتطلب ملاحظة نصية' },
-            { key: 'requires_gps',        label: 'يتطلب موقع GPS' },
-          ] as const).map(({ key, label }) => (
+            { key: 'requires_attachment' as const, label: 'يتطلب مرفق (صورة / PDF)' },
+            { key: 'requires_note'       as const, label: 'يتطلب ملاحظة نصية' },
+            { key: 'requires_gps'        as const, label: 'يتطلب موقع GPS' },
+          ]).map(({ key, label }) => (
             <div key={key} className="flex items-center justify-between py-2 border-t border-[rgba(118,118,118,0.08)]">
               <span className="text-xs font-semibold text-[#231F20]">{label}</span>
               <div

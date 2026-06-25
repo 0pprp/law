@@ -111,7 +111,12 @@ export default function ExpensesPage() {
   async function approveExpense(id: string, expTypeName: string, amount: number, debtorName: string) {
     setActionId(id)
     const supabase = createClient()
-    const { error } = await (supabase as any).from('expenses').update({ status: 'approved' }).eq('id', id)
+    const { data: { user } } = await supabase.auth.getUser()
+    const { error } = await (supabase as any).from('expenses').update({
+      status: 'approved',
+      approved_at: new Date().toISOString(),
+      approved_by: user?.id ?? null,
+    }).eq('id', id)
     if (error) { alert(error.message); setActionId(null); return }
     await logActivity({ action: 'approve_expense', entity_type: 'expense', entity_id: id, description: `اعتماد صرفية: ${expTypeName} — ${amount.toLocaleString('en-US')} د.ع — ${debtorName}` }, supabase)
     setActionId(null); load()

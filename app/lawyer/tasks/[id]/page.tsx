@@ -207,7 +207,7 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
       )}
 
       {!awaitingAcceptance && (
-        <TaskExpenseForm taskId={id} debtorId={taskWithDebtor.debtor_id} caseId={taskWithDebtor.case_id ?? null} expenses={expenses ?? []} />
+        <TaskExpenseForm taskId={id} debtorId={taskWithDebtor.debtor_id} caseId={taskWithDebtor.case_id ?? null} branchId={task.branch_id ?? null} expenses={expenses ?? []} />
       )}
     </div>
   )
