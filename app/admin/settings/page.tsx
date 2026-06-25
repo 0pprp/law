@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
 import { REQUIRED_FIELD_LABELS } from '@/lib/types'
 import type { RequiredField } from '@/lib/types'
+import { filterSelectableBranches } from '@/lib/branch-constants'
 
 // ── Shared styles ──────────────────────────────────────────────
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/20 focus:border-[#2C8780] transition-all'
@@ -119,7 +120,7 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
   const branchId = useBranchId()
   const [courts, setCourts] = useState<Court[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState<{ name: string; branch_id: string } | null>(null)
+  const [form, setForm] = useState<{ name: string } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -136,13 +137,14 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
 
   useEffect(() => { load() }, [load])
 
-  function openAdd() { setForm({ name: '', branch_id: '' }); setEditingId(null); setErr('') }
-  function openEdit(c: Court) { setForm({ name: c.name, branch_id: c.branch_id ?? '' }); setEditingId(c.id); setErr('') }
+  function openAdd() { setForm({ name: '' }); setEditingId(null); setErr('') }
+  function openEdit(c: Court) { setForm({ name: c.name }); setEditingId(c.id); setErr('') }
 
   async function save() {
     if (!form?.name.trim()) { setErr('اسم المحكمة مطلوب'); return }
     setSaving(true); setErr('')
-    const payload = { name: form.name.trim(), branch_id: form.branch_id || null }
+    // branch_id is always the current branch from context — no manual selection
+    const payload = { name: form.name.trim(), branch_id: branchId || null }
     const sb = createClient()
     const { error } = editingId
       ? await sb.from('courts').update(payload).eq('id', editingId)
@@ -218,14 +220,7 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
           footer={<><CancelBtn onClick={() => setForm(null)} /><SaveBtn saving={saving} label={editingId ? 'حفظ' : 'إضافة'} onClick={save} /></>}>
           <div>
             <label className="block text-xs font-bold text-[#231F20] mb-1.5">اسم المحكمة <span className="text-red-500">*</span></label>
-            <input value={form.name} onChange={e => setForm(f => f ? { ...f, name: e.target.value } : f)} className={INP} placeholder="مثال: محكمة بداءة الرصافة" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">الفرع</label>
-            <select value={form.branch_id} onChange={e => setForm(f => f ? { ...f, branch_id: e.target.value } : f)} className={SEL}>
-              <option value="">— اختر فرعاً —</option>
-              {branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.city ? ` (${b.city})` : ''}</option>)}
-            </select>
+            <input value={form.name} onChange={e => setForm(f => f ? { ...f, name: e.target.value } : f)} className={INP} placeholder="مثال: محكمة بداءة البصرة" autoFocus />
           </div>
           <ErrMsg msg={err} />
         </Modal>
@@ -239,7 +234,7 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
 // ══════════════════════════════════════════════════════════════
 // TAB 2 — EXECUTION DEPARTMENTS
 // ══════════════════════════════════════════════════════════════
-interface ExecDept { id: string; name: string; court_id: string | null; is_active: boolean }
+interface ExecDept { id: string; name: string; court_id: string | null; branch_id: string | null; is_active: boolean }
 
 function ExecDeptsTab({ branches }: { branches: Branch[] }) {
   const branchId = useBranchId()
@@ -255,15 +250,27 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
-    let dq = sb.from('execution_departments').select('*').order('name')
+
+    // Load courts for current branch first
     let cq = sb.from('courts').select('*').order('name')
-    if (branchId) {
-      dq = (dq as any).eq('branch_id', branchId)
-      cq = (cq as any).eq('branch_id', branchId)
-    }
-    const [{ data: d }, { data: c }] = await Promise.all([dq, cq])
-    setDepts(d ?? [])
+    if (branchId) cq = (cq as any).eq('branch_id', branchId)
+    const { data: c } = await cq
     setCourts(c ?? [])
+
+    // Filter exec depts by court_id membership (handles old records where branch_id may be null)
+    let dq = sb.from('execution_departments').select('*').order('name')
+    if (branchId) {
+      const courtIds = (c ?? []).map((ct: any) => ct.id)
+      if (courtIds.length > 0) {
+        dq = (dq as any).in('court_id', courtIds)
+      } else {
+        setDepts([])
+        setLoading(false)
+        return
+      }
+    }
+    const { data: d } = await dq
+    setDepts(d ?? [])
     setLoading(false)
   }, [branchId])
 
@@ -275,7 +282,8 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
   async function save() {
     if (!form?.name.trim()) { setErr('اسم الدائرة مطلوب'); return }
     setSaving(true); setErr('')
-    const payload = { name: form.name.trim(), court_id: form.court_id || null }
+    // Always save branch_id so the dept stays visible in the current branch
+    const payload = { name: form.name.trim(), court_id: form.court_id || null, branch_id: branchId || null }
     const sb = createClient()
     const { error } = editingId
       ? await sb.from('execution_departments').update(payload).eq('id', editingId)
@@ -961,8 +969,8 @@ export default function SettingsPage() {
   const [branches, setBranches] = useState<Branch[]>([])
 
   useEffect(() => {
-    createClient().from('branches').select('id, name, city').order('name')
-      .then(({ data }) => setBranches(data ?? []))
+    createClient().from('branches').select('id, name, city').eq('is_active', true).order('name')
+      .then(({ data }) => setBranches(filterSelectableBranches(data ?? [])))
   }, [])
 
   return (

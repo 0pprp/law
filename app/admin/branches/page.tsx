@@ -430,8 +430,9 @@ export default function BranchesPage() {
   // Load shared data for dropdowns
   useEffect(() => {
     const supabase = createClient()
-    supabase.from('branches').select('*').order('created_at').then(({ data }) => setBranches(data ?? []))
-    ;(supabase as any).from('courts').select('*').order('created_at').then(({ data }: any) => setCourts(data ?? []))
+    supabase.from('branches').select('*').eq('is_active', true).order('name')
+      .then(({ data }) => setBranches(filterSelectableBranches(data ?? [])))
+    ;(supabase as any).from('courts').select('*').order('name').then(({ data }: any) => setCourts(data ?? []))
   }, [])
 
   const tabs: { key: typeof tab; label: string }[] = [
