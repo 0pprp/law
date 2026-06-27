@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { TaskStatus } from '@/lib/types'
+import { endOfLocalDay, endOfNextLocalDay } from '@/lib/local-date'
+import { releasePreviousTaskFeesOnAssignment } from '@/lib/task-approval'
 import { fetchBranchProfiles, toLawyerOptions } from '@/lib/branch-profiles'
 import { formatErrorMessage } from '@/lib/format-error'
 
@@ -8,13 +10,16 @@ export interface CurrentBranchTaskRow {
   task_status: string
   created_at: string
   due_date: string | null
+  assigned_at: string | null
   debtor_id: string
   task_definition_id: string | null
   task_type: string | null
   branch_id: string | null
   lawyerId: string | null
+  lawyerName: string | null
   debtorName: string
   debtorPhone: string | null
+  debtorReceiptNumber: string | null
   taskLabel: string
 }
 
@@ -88,11 +93,17 @@ export async function fetchPendingReviewTasks(
 
   const { data: rawTasks, error } = await supabase
     .from('tasks')
-    .select('*')
+    .select(`
+      id, task_type, task_status, due_date, assigned_at, completed_at,
+      debtor_id, task_definition_id, branch_id, assigned_to, reward_amount,
+      court_id, court_name, lawyer_notes, admin_notes, completion_data, created_at
+    `)
     .in('task_status', [...REVIEW_QUEUE_STATUSES])
+    .eq('branch_id', branchId)
     .not('assigned_to', 'is', null)
     .not('debtor_id', 'is', null)
     .order('completed_at', { ascending: true, nullsFirst: false })
+    .limit(200)
 
   if (error) {
     console.error('[fetchPendingReviewTasks]', error.message ?? error)
@@ -105,14 +116,11 @@ export async function fetchPendingReviewTasks(
     .from('debtors')
     .select('id, full_name, phone, governorate, case_status, branch_id')
     .in('id', debtorIds)
+    .eq('branch_id', branchId)
     .not('case_status', 'eq', 'closed')
 
   const debtorMap = new Map((debtors ?? []).map(d => [d.id, d]))
-
-  const branchTasks = rawTasks.filter(t => {
-    const d = debtorMap.get(t.debtor_id)
-    return d && taskBelongsToBranch(t, d, branchId)
-  })
+  const branchTasks = rawTasks.filter(t => debtorMap.has(t.debtor_id))
 
   if (!branchTasks.length) return []
 
@@ -228,6 +236,7 @@ export async function fetchCurrentBranchTaskRows(
       id,
       full_name,
       phone,
+      receipt_number,
       current_task_id,
       case_status,
       current_task:tasks!current_task_id(
@@ -235,6 +244,7 @@ export async function fetchCurrentBranchTaskRows(
         task_status,
         created_at,
         due_date,
+        assigned_at,
         debtor_id,
         task_definition_id,
         task_type,
@@ -266,15 +276,27 @@ export async function fetchCurrentBranchTaskRows(
       task_status: task.task_status,
       created_at: task.created_at,
       due_date: task.due_date,
+      assigned_at: task.assigned_at ?? null,
       debtor_id: d.id,
       task_definition_id: task.task_definition_id,
       task_type: task.task_type,
       branch_id: task.branch_id,
       lawyerId: taskLawyerId(task),
+      lawyerName: null,
       debtorName: d.full_name,
       debtorPhone: d.phone ?? null,
+      debtorReceiptNumber: d.receipt_number ?? null,
       taskLabel: defLabel ?? task.task_type ?? '—',
     })
+  }
+
+  const lawyerIds = [...new Set(rows.map(r => r.lawyerId).filter(Boolean))] as string[]
+  if (lawyerIds.length) {
+    const { data: lawyers } = await supabase.from('profiles').select('id, full_name').in('id', lawyerIds)
+    const nameMap = new Map((lawyers ?? []).map(l => [l.id, l.full_name]))
+    for (const row of rows) {
+      if (row.lawyerId) row.lawyerName = nameMap.get(row.lawyerId) ?? null
+    }
   }
 
   return rows
@@ -344,6 +366,14 @@ export async function fetchUnassignedCurrentTasks(
   return rows.filter(r => !r.lawyerId).sort((a, b) => b.created_at.localeCompare(a.created_at))
 }
 
+export async function fetchAssignedCurrentTasks(
+  supabase: SupabaseClient,
+  branchId: string | null,
+): Promise<CurrentBranchTaskRow[]> {
+  const rows = await fetchCurrentBranchTaskRows(supabase, branchId)
+  return rows.filter(r => !!r.lawyerId).sort((a, b) => b.created_at.localeCompare(a.created_at))
+}
+
 export async function fetchBranchLawyers(
   supabase: SupabaseClient,
   branchId: string | null,
@@ -358,12 +388,16 @@ export async function fetchBranchLawyers(
 
 export function buildPendingAssignmentPayload(lawyerId: string, dueDate?: string) {
   const now = new Date()
-  const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+  const expires = dueDate
+    ? endOfLocalDay(dueDate)
+    : endOfNextLocalDay(now)
+  const safeExpires = expires.getTime() > now.getTime() ? expires : endOfNextLocalDay(now)
+
   return {
     assigned_to: lawyerId,
     task_status: 'assignment_pending_acceptance' as TaskStatus,
     assigned_at: now.toISOString(),
-    assignment_expires_at: expires.toISOString(),
+    assignment_expires_at: safeExpires.toISOString(),
     ...(dueDate ? { due_date: dueDate } : {}),
   }
 }
@@ -384,6 +418,7 @@ export async function assignTasksToLawyer(
   taskIds: string[],
   lawyerId: string,
   dueDate?: string,
+  releasedBy?: string,
 ): Promise<{ ok: boolean; error: string | null }> {
   if (!taskIds.length) return { ok: false, error: 'لا مهام محددة' }
 
@@ -417,6 +452,12 @@ export async function assignTasksToLawyer(
       .in('id', taskIds)
       .limit(1)
     if (check?.[0]?.assigned_to === lawyerId) {
+      if (releasedBy) {
+        const feeResult = await releasePreviousTaskFeesOnAssignment(supabase, taskIds, releasedBy)
+        if (!feeResult.ok) {
+          return { ok: false, error: feeResult.error }
+        }
+      }
       return { ok: true, error: null }
     }
   }
@@ -448,7 +489,7 @@ export async function fetchLawyerAssignedTasks(
   const debtorIds = [...new Set(tasks.map(t => t.debtor_id))]
   const { data: debtors } = await supabase
     .from('debtors')
-    .select('id, full_name, governorate, remaining_amount, phone')
+    .select('id, full_name, governorate, remaining_amount, phone, receipt_number')
     .in('id', debtorIds)
 
   const debtorMap = new Map((debtors ?? []).map(d => [d.id, d]))
@@ -480,6 +521,7 @@ export interface LawyerTaskRow {
     governorate?: string | null
     remaining_amount?: number | null
     phone?: string | null
+    receipt_number?: string | null
   } | null
 }
 
@@ -500,16 +542,17 @@ export async function autoAcceptExpiredAssignments(
   const { data: expired } = await q
   if (!expired?.length) return 0
 
-  for (const task of expired) {
-    await supabase
-      .from('tasks')
-      .update({
-        task_status: 'assigned',
-        accepted_at: task.assignment_expires_at ?? now,
-        acceptance_method: 'auto',
-      } as any)
-      .eq('id', task.id)
-  }
+  const ids = expired.map(t => t.id)
+  await supabase
+    .from('tasks')
+    .update({
+      task_status: 'assigned',
+      accepted_at: now,
+      acceptance_method: 'auto',
+    } as any)
+    .in('id', ids)
+    .eq('task_status', 'assignment_pending_acceptance')
+
   return expired.length
 }
 

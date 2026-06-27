@@ -12,7 +12,9 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtMoney, fmtDate } from '@/lib/utils'
+import { debtorSearchOrFilter, DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
 import { RECEIPT_TYPE_LABEL } from '@/lib/ui-labels'
+import DebtorImportModal from '@/components/DebtorImportModal'
 
 const PAGE_SIZE = 50
 const COLS = 'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status'
@@ -42,6 +44,7 @@ export default function DebtorsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Server-side fetch with optional search
@@ -61,9 +64,7 @@ export default function DebtorsPage() {
     if (searchTerm.trim()) {
       const s = searchTerm.trim()
       // ilike uses the trigram index for fast Arabic search
-      q = (q as any).or(
-        `full_name.ilike.%${s}%,phone.ilike.%${s}%,id_number.ilike.%${s}%,receipt_number.ilike.%${s}%`
-      )
+      q = (q as any).or(debtorSearchOrFilter(s))
     }
 
     const { data, count } = await q
@@ -115,9 +116,14 @@ export default function DebtorsPage() {
         title="المدينون"
         subtitle={`${total} مدين مسجّل في النظام`}
         actions={
-          <Link href="/admin/debtors/new">
-            <Button variant="primary" size="sm">+ إضافة مدين</Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setImportOpen(true)} disabled={!branchId}>
+              استيراد من Excel
+            </Button>
+            <Link href="/admin/debtors/new">
+              <Button variant="primary" size="sm">+ إضافة مدين</Button>
+            </Link>
+          </div>
         }
       />
 
@@ -131,7 +137,7 @@ export default function DebtorsPage() {
             type="text"
             value={search}
             onChange={e => handleSearch(e.target.value)}
-            placeholder="بحث بالاسم، رقم الهوية، الهاتف، أو رقم الوصل..."
+            placeholder={DEBTOR_SEARCH_PLACEHOLDER}
             className={INP}
           />
           {search && (
@@ -295,6 +301,11 @@ export default function DebtorsPage() {
           )}
         </div>
       )}
+      <DebtorImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onComplete={() => fetchDebtors(search)}
+      />
     </div>
   )
 }

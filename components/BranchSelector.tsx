@@ -1,14 +1,10 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useBranch } from '@/context/branch'
-import {
-  filterSelectableBranches,
-  isMainBranchName,
-  pickDefaultBranch,
-} from '@/lib/branch-constants'
+import { fetchSelectableBranches } from '@/lib/branches-cache'
+import { isMainBranchName, pickDefaultBranch } from '@/lib/branch-constants'
 
 interface Branch {
   id: string
@@ -41,7 +37,6 @@ function CheckIcon({ className }: { className?: string }) {
 
 export default function BranchSelector({ userRole, userBranchId, initialBranchId, initialBranchName }: Props) {
   const isAdmin = userRole === 'admin'
-  const router = useRouter()
   const { branchId, branchName, setBranch } = useBranch()
 
   const [open, setOpen] = useState(false)
@@ -51,25 +46,19 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
   const ref = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
-  // Load branches list
+  // Load branches list (cached module-wide — one request per session)
   useEffect(() => {
-    createClient()
-      .from('branches')
-      .select('id, name')
-      .eq('is_active', true)
-      .order('name')
-      .then(({ data }) => {
-        const list = filterSelectableBranches(data ?? [])
-        setBranches(list)
-        const currentIsInvalid =
-          !branchId ||
-          isMainBranchName(branchName ?? initialBranchName) ||
-          isMainBranchName(list.find(b => b.id === branchId)?.name)
-        if (isAdmin && currentIsInvalid && list.length > 0) {
-          const def = pickDefaultBranch(list)
-          if (def) handleSelect(def.id, def.name)
-        }
-      })
+    fetchSelectableBranches(createClient()).then(list => {
+      setBranches(list)
+      const currentIsInvalid =
+        !branchId ||
+        isMainBranchName(branchName ?? initialBranchName) ||
+        isMainBranchName(list.find(b => b.id === branchId)?.name)
+      if (isAdmin && currentIsInvalid && list.length > 0) {
+        const def = pickDefaultBranch(list)
+        if (def) handleSelect(def.id, def.name)
+      }
+    })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -104,7 +93,6 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
         setBranch(id, name)
         setOpen(false)
         setSearch('')
-        router.refresh()
       }
     } finally {
       setSwitching(false)

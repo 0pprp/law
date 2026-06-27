@@ -1,9 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { logActivity } from '@/lib/activity-log'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { DatePicker } from '@/components/ui/date-picker'
+import { localTodayYmd } from '@/lib/local-date'
 
 interface ExpenseTypeDef {
   id: string
@@ -30,6 +33,7 @@ interface Props {
   caseId: string | null
   branchId: string | null
   expenses: Expense[]
+  taskDueDate?: string | null
 }
 
 function fmt(n: number) { return Number(n).toLocaleString('ar-IQ') }
@@ -42,7 +46,7 @@ const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   rejected:         { label: 'مرفوضة',           cls: 'bg-red-100 text-red-700' },
 }
 
-export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, expenses: initialExpenses }: Props) {
+export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, expenses: initialExpenses, taskDueDate }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -55,8 +59,14 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
 
   const [form, setForm] = useState({
     expense_type_id: '',
-    expense_date: new Date().toISOString().split('T')[0],
+    expense_date: localTodayYmd(),
   })
+
+  const expenseMaxDate = useMemo(() => {
+    const today = localTodayYmd()
+    if (!taskDueDate) return today
+    return taskDueDate < today ? today : taskDueDate
+  }, [taskDueDate])
 
   useEffect(() => {
     let q = createClient()
@@ -71,7 +81,7 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
   const selectedType = expenseTypes.find(t => t.id === form.expense_type_id) ?? null
 
   function resetForm() {
-    setForm({ expense_type_id: '', expense_date: new Date().toISOString().split('T')[0] })
+    setForm({ expense_type_id: '', expense_date: localTodayYmd() })
     setAttachmentFile(null)
     setGpsCoords('')
     setNoteText('')
@@ -119,6 +129,7 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
       expense_date: form.expense_date,
       created_by: user.id,
       status: 'pending_approval',
+      branch_id: branchId,
       gps_coords: gpsCoords || null,
       attachment_path: attachmentPath,
     })
@@ -220,18 +231,19 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
 
           {/* Expense type dropdown */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">نوع الصرف <span className="text-red-500">*</span></label>
-            <select
+            <PremiumSelect
               value={form.expense_type_id}
-              onChange={e => { setForm(f => ({ ...f, expense_type_id: e.target.value })); setError('') }}
-              className={INP}
-              required
-            >
-              <option value="">— اختر نوع الصرفية —</option>
-              {expenseTypes.map(t => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
+              onChange={v => { setForm(f => ({ ...f, expense_type_id: v })); setError('') }}
+              options={[
+                { value: '', label: '— اختر نوع الصرفية —' },
+                ...expenseTypes.map(t => ({ value: t.id, label: t.name })),
+              ]}
+              fieldLabel="نوع الصرف"
+              placeholder="— اختر نوع الصرفية —"
+              headerTitle="نوع الصرف"
+              searchPlaceholder="بحث في أنواع الصرف..."
+              searchable={expenseTypes.length > 4}
+            />
           </div>
 
           {/* Locked amount display */}
@@ -286,13 +298,13 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
             </div>
           )}
 
-          {/* Date */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">التاريخ</label>
-            <input type="date" value={form.expense_date}
-              onChange={e => setForm(f => ({ ...f, expense_date: e.target.value }))}
-              className={INP} dir="ltr" />
-          </div>
+          <DatePicker
+            value={form.expense_date}
+            onChange={v => setForm(f => ({ ...f, expense_date: v }))}
+            fieldLabel="التاريخ"
+            headerTitle="تاريخ الصرفية"
+            maxDate={expenseMaxDate}
+          />
 
           {error && (
             <p className="text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>

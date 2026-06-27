@@ -6,6 +6,7 @@ export interface ClosedDebtorRow {
   id: string
   full_name: string
   phone: string | null
+  receipt_number: string | null
   id_number: string | null
   required_amount: number
   closed_at: string | null
@@ -88,6 +89,7 @@ function normalizeDebtor(raw: Record<string, unknown>): ClosedDebtorRow {
     id: String(raw.id),
     full_name: String(raw.full_name ?? '—'),
     phone: (raw.phone as string | null) ?? null,
+    receipt_number: (raw.receipt_number as string | null) ?? null,
     id_number: (raw.id_number as string | null) ?? null,
     required_amount: Number(raw.required_amount ?? raw.receipt_amount ?? 0),
     closed_at: (raw.closed_at as string | null) ?? null,

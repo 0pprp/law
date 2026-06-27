@@ -1,10 +1,14 @@
 import { createClient } from '@/lib/supabase/server'
-import { notFound } from 'next/navigation'
-import { TASK_STATUS_LABELS, TASK_TYPE_LABELS, RECEIPT_TYPE_LABELS } from '@/lib/types'
+import { TASK_TYPE_LABELS, RECEIPT_TYPE_LABELS } from '@/lib/types'
 import type { TaskStatus, TaskType } from '@/lib/types'
+import { checkLawyerTaskAccess } from '@/lib/lawyer-task-access'
+import { lawyerTaskStatusLabel, isLawyerAchievedTask } from '@/lib/lawyer-task-display'
+import { isTaskOverdue, isTaskDueToday } from '@/lib/local-date'
 import TaskUpdateForm from '@/components/TaskUpdateForm'
 import TaskExpenseForm from '@/components/TaskExpenseForm'
 import TaskAcceptanceActions from '@/components/TaskAcceptanceActions'
+import LawyerAccessDenied from '@/components/LawyerAccessDenied'
+import LawyerDebtorGPS from '@/components/LawyerDebtorGPS'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
@@ -36,20 +40,31 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) notFound()
+  if (!user) return <LawyerAccessDenied />
 
-  const { data: task } = await supabase
-    .from('tasks')
-    .select('*, task_definition_id')
-    .eq('id', id)
-    .eq('assigned_to', user.id)
-    .single()
+  const access = await checkLawyerTaskAccess(supabase, user.id, id)
+  if (!access.ok) return <LawyerAccessDenied />
 
-  if (!task) notFound()
+  const task = access.task as Record<string, unknown> & {
+    id: string
+    debtor_id: string
+    task_type: string
+    task_status: TaskStatus
+    due_date?: string | null
+    admin_notes?: string | null
+    lawyer_notes?: string | null
+    legal_result?: string | null
+    governorate?: string | null
+    court_name?: string | null
+    branch_id?: string | null
+    case_id?: string | null
+    assignment_expires_at?: string | null
+    task_definition_id?: string | null
+  }
 
   const { data: debtor } = await supabase
     .from('debtors')
-    .select('full_name, phone, governorate, notes, receipt_type, receipt_number, receipt_amount, remaining_amount, required_amount')
+    .select('full_name, phone, address, governorate, receipt_type, receipt_number, receipt_amount, remaining_amount, required_amount, latitude, longitude, location_captured_at')
     .eq('id', task.debtor_id)
     .single()
 
@@ -75,16 +90,32 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     })
   )
 
-  const d = taskWithDebtor.debtors as any
-  const status = taskWithDebtor.task_status as TaskStatus
-  const isOverdue = taskWithDebtor.due_date && taskWithDebtor.due_date < new Date().toISOString().split('T')[0] && !['completed', 'closed', 'failed'].includes(status)
+  const d = debtor as {
+    full_name?: string
+    phone?: string | null
+    address?: string | null
+    governorate?: string | null
+    receipt_type?: string
+    receipt_number?: string | null
+    receipt_amount?: number
+    remaining_amount?: number
+    required_amount?: number
+    latitude?: number | null
+    longitude?: number | null
+    location_captured_at?: string | null
+  } | null
+
+  const status = task.task_status
+  const isOverdue = task.due_date && isTaskOverdue(task.due_date) && !['completed', 'closed', 'failed', 'approved'].includes(status)
+  const isLastDay = task.due_date && isTaskDueToday(task.due_date) && !isOverdue
   const awaitingAcceptance = status === 'assignment_pending_acceptance'
+  const taskLabel = TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type
 
   return (
     <div className="max-w-lg mx-auto px-4 pt-4 pb-24 space-y-3">
 
-      {/* Page header */}
-      <div className={`bg-white rounded-2xl border shadow-sm p-4 ${isOverdue ? 'border-red-200' : 'border-slate-200'}`}>
+      {/* Header */}
+      <div className={`bg-white rounded-2xl border shadow-sm p-4 ${isOverdue ? 'border-red-200' : isLastDay ? 'border-amber-300' : 'border-slate-200'}`}>
         <div className="flex items-start gap-3">
           <Link href="/lawyer/tasks"
             className="w-9 h-9 bg-slate-100 hover:bg-slate-200 rounded-xl flex items-center justify-center text-slate-500 shrink-0 transition-colors mt-0.5"
@@ -95,13 +126,14 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
           </Link>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-0.5">
-              <h1 className="font-bold text-slate-800 text-base leading-tight">
-                {TASK_TYPE_LABELS[taskWithDebtor.task_type as TaskType] ?? taskWithDebtor.task_type}
-              </h1>
-              <Badge variant={STATUS_BADGE[status] ?? 'default'}>{TASK_STATUS_LABELS[status]}</Badge>
+              <h1 className="font-bold text-slate-800 text-base leading-tight">{taskLabel}</h1>
+              <Badge variant={isLawyerAchievedTask(status) ? 'success' : (STATUS_BADGE[status] ?? 'default')}>
+                {lawyerTaskStatusLabel(status)}
+              </Badge>
             </div>
             {d?.full_name && <p className="text-xs text-slate-500 truncate">{d.full_name}</p>}
             {isOverdue && <p className="text-xs text-red-500 font-semibold mt-0.5">متأخرة عن الموعد</p>}
+            {isLastDay && !isOverdue && <p className="text-xs text-amber-700 font-semibold mt-0.5">اليوم آخر يوم لإنجاز المهمة</p>}
           </div>
         </div>
       </div>
@@ -109,78 +141,74 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
       {awaitingAcceptance && (
         <TaskAcceptanceActions
           taskId={id}
-          expiresAt={(taskWithDebtor as any).assignment_expires_at}
+          expiresAt={task.assignment_expires_at}
         />
       )}
 
-      {/* Task details */}
-      <Card>
-        <div className="px-4 py-3 bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.1)]">
-          <h2 className="font-bold text-slate-700 text-sm">بيانات المهمة</h2>
-        </div>
-        <div className="px-4 py-0.5">
-          <InfoRow label="نوع المهمة" value={TASK_TYPE_LABELS[taskWithDebtor.task_type as TaskType] ?? taskWithDebtor.task_type} />
-          <InfoRow label="الحالة" value={TASK_STATUS_LABELS[status]} />
-          <InfoRow label="المحافظة" value={taskWithDebtor.governorate} />
-          <InfoRow label="المحكمة" value={taskWithDebtor.court_name} />
-          {taskWithDebtor.due_date && <InfoRow label="تاريخ الاستحقاق" value={fmtDate(taskWithDebtor.due_date)} dir="ltr" />}
-        </div>
-      </Card>
-
-      {/* Admin notes */}
-      {taskWithDebtor.admin_notes && (
-        <div className="bg-[#2C8780]/5 border border-[#2C8780]/20 rounded-2xl px-4 py-3.5">
-          <p className="text-xs font-bold text-[#2C8780] mb-1.5 flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            ملاحظات الإدارة
-          </p>
-          <p className="text-sm text-slate-800 leading-relaxed">{taskWithDebtor.admin_notes}</p>
-        </div>
-      )}
-
-      {/* Previous lawyer notes */}
-      {(taskWithDebtor.lawyer_notes || taskWithDebtor.legal_result) && (
-        <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3.5 space-y-2.5">
-          {taskWithDebtor.lawyer_notes && (
-            <div>
-              <p className="text-xs font-bold text-blue-700 mb-1">ملاحظاتك المسجلة</p>
-              <p className="text-sm text-slate-800 leading-relaxed">{taskWithDebtor.lawyer_notes}</p>
-            </div>
-          )}
-          {taskWithDebtor.legal_result && (
-            <div>
-              <p className="text-xs font-bold text-blue-700 mb-1">نتيجة الإجراء القانوني</p>
-              <p className="text-sm text-slate-800 leading-relaxed">{taskWithDebtor.legal_result}</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Debtor info */}
+      {/* 1. بيانات مختصرة عن المدين */}
       <Card>
         <div className="px-4 py-3 bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.1)]">
           <h2 className="font-bold text-slate-700 text-sm">بيانات المدين</h2>
         </div>
         <div className="px-4 py-0.5">
           <InfoRow label="الاسم" value={d?.full_name} />
-          <InfoRow label="الهاتف" value={d?.phone} href={d?.phone ? `tel:${d.phone}` : undefined} dir="ltr" />
-          <InfoRow label="المحافظة" value={d?.governorate} />
+          {d?.phone && <InfoRow label="الهاتف" value={d.phone} href={`tel:${d.phone}`} dir="ltr" />}
           <InfoRow label={RECEIPT_TYPE_LABEL} value={d ? (RECEIPT_TYPE_LABELS[d.receipt_type as keyof typeof RECEIPT_TYPE_LABELS] ?? d.receipt_type) : null} />
           <InfoRow label={RECEIPT_NUMBER_LABEL} value={d?.receipt_number} dir="ltr" />
-          {Number(d?.receipt_amount) > 0 && <InfoRow label={RECEIPT_AMOUNT_LABEL} value={fmtMoney(d.receipt_amount)} />}
-          {Number(d?.remaining_amount) > 0 && <InfoRow label="المبلغ المتبقي" value={fmtMoney(d.remaining_amount)} />}
-          {Number(d?.required_amount) > 0 && <InfoRow label="المطلوب النهائي" value={fmtMoney(d.required_amount)} />}
-          {d?.notes && <InfoRow label="ملاحظات" value={d.notes} />}
+          {Number(d?.receipt_amount) > 0 && <InfoRow label={RECEIPT_AMOUNT_LABEL} value={fmtMoney(d!.receipt_amount!)} />}
+          {Number(d?.remaining_amount) > 0 && <InfoRow label="المبلغ المتبقي" value={fmtMoney(d!.remaining_amount!)} />}
+          {d?.address && <InfoRow label="العنوان" value={d.address} />}
+          {d?.governorate && <InfoRow label="المحافظة" value={d.governorate} />}
         </div>
       </Card>
 
-      {/* Debtor files */}
+      {/* 2. الموقع GPS */}
+      <LawyerDebtorGPS
+        latitude={d?.latitude ?? null}
+        longitude={d?.longitude ?? null}
+        locationCapturedAt={d?.location_captured_at}
+      />
+
+      {/* 3. المهمة المطلوبة */}
+      <Card>
+        <div className="px-4 py-3 bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.1)]">
+          <h2 className="font-bold text-slate-700 text-sm">المهمة المطلوبة</h2>
+        </div>
+        <div className="px-4 py-0.5">
+          <InfoRow label="نوع المهمة" value={taskLabel} />
+          {task.governorate && <InfoRow label="المحافظة" value={task.governorate} />}
+          {task.court_name && <InfoRow label="المحكمة" value={task.court_name} />}
+          {task.due_date && <InfoRow label="تاريخ الاستحقاق" value={fmtDate(task.due_date)} dir="ltr" />}
+        </div>
+        {task.admin_notes && (
+          <div className="mx-4 mb-4 mt-2 bg-[#2C8780]/5 border border-[#2C8780]/20 rounded-xl px-3.5 py-3">
+            <p className="text-xs font-bold text-[#2C8780] mb-1">ملاحظات الإدارة</p>
+            <p className="text-sm text-slate-800 leading-relaxed">{task.admin_notes}</p>
+          </div>
+        )}
+        {(task.lawyer_notes || task.legal_result) && (
+          <div className="mx-4 mb-4 bg-blue-50 border border-blue-200 rounded-xl px-3.5 py-3 space-y-2">
+            {task.lawyer_notes && (
+              <div>
+                <p className="text-xs font-bold text-blue-700 mb-1">ملاحظاتك المسجلة</p>
+                <p className="text-sm text-slate-800 leading-relaxed">{task.lawyer_notes}</p>
+              </div>
+            )}
+            {task.legal_result && (
+              <div>
+                <p className="text-xs font-bold text-blue-700 mb-1">نتيجة الإجراء القانوني</p>
+                <p className="text-sm text-slate-800 leading-relaxed">{task.legal_result}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
+      {/* ملف PDF المدين */}
       {debtorAttachments.length > 0 && (
         <Card>
           <div className="px-4 py-3 bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.1)]">
-            <h2 className="font-bold text-slate-700 text-sm">ملف المدين / المستمسكات ({debtorAttachments.length})</h2>
+            <h2 className="font-bold text-slate-700 text-sm">ملف المدين ({debtorAttachments.length})</h2>
           </div>
           <div className="px-4 py-0.5">
             {debtorAttachments.map(att => (
@@ -188,12 +216,8 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
                 <span className="text-lg shrink-0">{att.mime_type === 'application/pdf' ? '📄' : '🖼️'}</span>
                 <p className="flex-1 text-sm text-slate-700 font-medium truncate min-w-0">{att.file_name}</p>
                 {att.signedUrl ? (
-                  <div className="flex gap-1.5 shrink-0">
-                    <a href={att.signedUrl} target="_blank" rel="noreferrer"
-                      className="text-xs font-semibold text-[#2C8780] border border-[#2C8780]/30 hover:bg-[#2C8780]/5 px-2.5 py-1 rounded-lg transition-colors">فتح</a>
-                    <a href={att.signedUrl} download={att.file_name}
-                      className="text-xs font-semibold text-slate-600 border border-slate-200 hover:bg-slate-50 px-2.5 py-1 rounded-lg transition-colors">تحميل</a>
-                  </div>
+                  <a href={att.signedUrl} target="_blank" rel="noreferrer"
+                    className="text-xs font-semibold text-[#2C8780] border border-[#2C8780]/30 hover:bg-[#2C8780]/5 px-2.5 py-1 rounded-lg transition-colors shrink-0">فتح</a>
                 ) : <span className="text-xs text-slate-400 shrink-0">غير متاح</span>}
               </div>
             ))}
@@ -201,13 +225,20 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
         </Card>
       )}
 
-      {/* Task update form + completion file uploads */}
+      {/* 4–6. المطلوبات + تم الإنجاز + مرفقات المهمة الحالية */}
       {!awaitingAcceptance && (
         <TaskUpdateForm task={taskWithDebtor} taskAttachments={taskAttachments} />
       )}
 
       {!awaitingAcceptance && (
-        <TaskExpenseForm taskId={id} debtorId={taskWithDebtor.debtor_id} caseId={taskWithDebtor.case_id ?? null} branchId={task.branch_id ?? null} expenses={expenses ?? []} />
+        <TaskExpenseForm
+          taskId={id}
+          debtorId={task.debtor_id}
+          caseId={task.case_id ?? null}
+          branchId={task.branch_id ?? null}
+          expenses={expenses ?? []}
+          taskDueDate={task.due_date}
+        />
       )}
     </div>
   )

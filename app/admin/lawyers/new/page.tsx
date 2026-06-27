@@ -43,7 +43,7 @@ export default function NewLawyerPage() {
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
 
   const [form, setForm] = useState({
-    full_name: '', username: '', email: '', temporary_password: '',
+    full_name: '', username: '', temporary_password: '',
     phone: '', identity_type: '', identity_number: '', identity_category: '', is_active: true,
   })
 
@@ -71,7 +71,6 @@ export default function NewLawyerPage() {
       body: JSON.stringify({
         full_name: form.full_name,
         username: form.username.trim().toLowerCase(),
-        email: form.email,
         temporary_password: form.temporary_password,
         phone: form.phone, is_active: form.is_active,
         identity_type: form.identity_type,
@@ -120,15 +119,12 @@ export default function NewLawyerPage() {
             <Field label="الاسم الكامل" required>
               <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={INP} placeholder="اسم المحامي الكامل" />
             </Field>
-            <Field label="اسم المستخدم" required hint="أحرف إنجليزية صغيرة، أرقام، نقطة، شرطة سفلية فقط">
+            <Field label="اسم المستخدم" required hint="أحرف إنجليزية صغيرة، أرقام، نقطة، شرطة سفلية فقط — يُستخدم لتسجيل الدخول">
               <input type="text" value={form.username}
                 onChange={e => set('username', e.target.value.toLowerCase().replace(/[^a-z0-9._]/g, ''))}
                 required minLength={3} maxLength={50} pattern="[a-z0-9._]{3,50}" className={INP} dir="ltr" placeholder="مثال: ali_lawyer" />
             </Field>
-            <Field label="البريد الإلكتروني" required>
-              <input type="email" value={form.email} onChange={e => set('email', e.target.value)} required className={INP} dir="ltr" placeholder="lawyer@example.com" />
-            </Field>
-            <Field label="كلمة المرور المؤقتة" required hint="6 أحرف على الأقل">
+            <Field label="كلمة المرور" required hint="6 أحرف على الأقل">
               <input type="text" value={form.temporary_password} onChange={e => set('temporary_password', e.target.value)} required minLength={6} className={INP} dir="ltr" />
             </Field>
             <Field label="رقم الهاتف">

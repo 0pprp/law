@@ -13,6 +13,8 @@ import { Card, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { fmtDate } from '@/lib/utils'
 import { useBranchId } from '@/context/branch'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { DatePicker } from '@/components/ui/date-picker'
 
 function formatSize(bytes: number | null) {
   if (!bytes) return ''
@@ -173,16 +175,23 @@ export default function EditTaskPage() {
             {showLawyerEmptyState ? (
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-sm text-yellow-800">لا يوجد محامٍ فعال في هذه المحافظة.</div>
             ) : (
-              <Field label="المحامي">
-                <select value={form.assigned_to} onChange={e => set('assigned_to', e.target.value)} className={INP}>
-                  <option value="">-- بدون تكليف --</option>
-                  {filteredLawyers.map(l => (
-                    <option key={l.id} value={l.id}>
-                      {l.full_name}{l.governorate ? ` | ${l.governorate}` : ''}{l.phone ? ` | ${l.phone}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <PremiumSelect
+                value={form.assigned_to}
+                onChange={v => set('assigned_to', v)}
+                options={[
+                  { value: '', label: '— بدون تكليف —' },
+                  ...filteredLawyers.map(l => ({
+                    value: l.id,
+                    label: l.full_name,
+                    hint: [l.governorate, l.phone].filter(Boolean).join(' · ') || undefined,
+                  })),
+                ]}
+                fieldLabel="المحامي"
+                placeholder="— بدون تكليف —"
+                headerTitle="اختر المحامي"
+                searchPlaceholder="بحث بالاسم..."
+                searchable
+              />
             )}
           </div>
         </Card>
@@ -190,25 +199,37 @@ export default function EditTaskPage() {
         <Card>
           <CardHeader title="تفاصيل المهمة" />
           <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="نوع المهمة">
-              <select value={form.task_type} onChange={e => set('task_type', e.target.value)} className={INP}>
-                {ALL_TASK_TYPES.map(t => <option key={t} value={t}>{TASK_TYPE_LABELS[t]}</option>)}
-              </select>
-            </Field>
-            <Field label="حالة المهمة">
-              <select value={form.task_status} onChange={e => set('task_status', e.target.value as TaskStatus)} className={INP}>
-                {ALL_TASK_STATUSES.map(s => <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>)}
-              </select>
-            </Field>
+            <PremiumSelect
+              value={form.task_type}
+              onChange={v => set('task_type', v)}
+              options={ALL_TASK_TYPES.map(t => ({ value: t, label: TASK_TYPE_LABELS[t] }))}
+              fieldLabel="نوع المهمة"
+              placeholder="— اختر النوع —"
+              headerTitle="نوع المهمة"
+              searchPlaceholder="بحث في أنواع المهام..."
+              searchable={ALL_TASK_TYPES.length > 4}
+            />
+            <PremiumSelect
+              value={form.task_status}
+              onChange={v => set('task_status', v as TaskStatus)}
+              options={ALL_TASK_STATUSES.map(s => ({ value: s, label: TASK_STATUS_LABELS[s] }))}
+              fieldLabel="حالة المهمة"
+              headerTitle="حالة المهمة"
+              searchable={false}
+            />
             <Field label="محافظة المهمة">
               <input type="text" value={form.governorate} onChange={e => set('governorate', e.target.value)} className={INP} />
             </Field>
             <Field label="اسم المحكمة">
               <input type="text" value={form.court_name} onChange={e => set('court_name', e.target.value)} className={INP} placeholder="مثال: محكمة بداءة بغداد" />
             </Field>
-            <Field label="تاريخ الاستحقاق">
-              <input type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} className={INP} dir="ltr" />
-            </Field>
+            <DatePicker
+              value={form.due_date}
+              onChange={v => set('due_date', v)}
+              fieldLabel="تاريخ نهاية التكليف"
+              headerTitle="تاريخ نهاية التكليف"
+              placeholder="اختر التاريخ"
+            />
             <div className="md:col-span-2">
               <Field label="ملاحظات الإدارة">
                 <textarea value={form.admin_notes} onChange={e => set('admin_notes', e.target.value)} className={`${INP} resize-none`} rows={3} placeholder="ملاحظات اختيارية للمحامي..." />

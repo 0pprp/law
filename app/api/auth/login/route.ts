@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import { usernameToInternalEmail } from '@/lib/auth-username'
 import { NextResponse } from 'next/server'
 
 export async function POST(request: Request) {
@@ -82,29 +83,29 @@ export async function POST(request: Request) {
       )
     }
 
-    // ── 5. Get email from auth.users via admin ────────────────────────
-    const { data: authUserData, error: authUserError } = await admin.auth.admin.getUserById(profile.id)
-    console.log('[login] auth email found:', !!authUserData?.user?.email, '| error:', authUserError?.message ?? null)
+    // ── 5. Sign in — internal email for username accounts, then legacy auth email ──
+    const internalEmail = usernameToInternalEmail(trimmed)
+    let signInError = (
+      await supabase.auth.signInWithPassword({ email: internalEmail, password })
+    ).error
 
-    if (authUserError || !authUserData?.user?.email) {
-      return NextResponse.json(
-        { error: 'لا يوجد بريد داخلي مرتبط بهذا الحساب' },
-        { status: 500 },
-      )
+    if (signInError) {
+      const { data: authUserData } = await admin.auth.admin.getUserById(profile.id)
+      const legacyEmail = authUserData?.user?.email
+      if (legacyEmail && legacyEmail !== internalEmail) {
+        const retry = await supabase.auth.signInWithPassword({ email: legacyEmail, password })
+        signInError = retry.error
+      }
     }
-
-    email = authUserData.user.email
-    role = profile.role
-
-    // ── 6. Sign in via SSR client (sets auth cookies) ─────────────────
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
 
     if (signInError) {
       console.log('[login] signInWithPassword failed:', signInError.message)
       return NextResponse.json({ error: 'كلمة المرور غير صحيحة' }, { status: 401 })
     }
 
-    // ── 7. Return redirect ────────────────────────────────────────────
+    role = profile.role
+
+    // ── 6. Return redirect ────────────────────────────────────────────
     const redirectTo = role === 'lawyer' ? '/lawyer' : '/admin/dashboard'
     console.log('[login] success, role:', role, '→', redirectTo)
     return NextResponse.json({ redirectTo })

@@ -3,14 +3,21 @@
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
-import { TASK_FEE_MAP } from '@/lib/constants'
-import type { TaskType } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
 import { StatCard } from '@/components/ui/stat-card'
 import { Button } from '@/components/ui/button'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtMoney, fmtNum, fmtDate } from '@/lib/utils'
 import { STALLED_STATUSES } from '@/lib/stage-config'
+import { DebtorSearchPicker } from '@/components/ui/debtor-search-picker'
+import { DateRangePicker } from '@/components/ui/date-range-picker'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import {
+  filterAchievements,
+  buildAchievementByType,
+  buildAchievementByLawyer,
+  achievementFee,
+} from '@/lib/achievement-report'
 
 interface Filters { dateFrom: string; dateTo: string; debtorId: string; lawyerId: string }
 const EMPTY: Filters = { dateFrom: '', dateTo: '', debtorId: '', lawyerId: '' }
@@ -26,10 +33,10 @@ function IconTask() { return <svg className="w-6 h-6 text-white" fill="none" str
 export default function ReportsPage() {
   const branchId = useBranchId()
   const [lawyers, setLawyers] = useState<any[]>([])
-  const [debtors, setDebtors] = useState<any[]>([])
   const [tasks, setTasks] = useState<any[]>([])
   const [taskDefs, setTaskDefs] = useState<any[]>([])
   const [activeDebtors, setActiveDebtors] = useState<any[]>([])
+  const [debtors, setDebtors] = useState<{ id: string; required_amount: number | null }[]>([])
   const [closedCount, setClosedCount] = useState(0)
   const [expenses, setExpenses] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
@@ -44,12 +51,10 @@ export default function ReportsPage() {
     const oneYearAgo = new Date(Date.now() - 365 * 86400 * 1000).toISOString().split('T')[0]
 
     let lq = supabase.from('profiles').select('id, full_name, governorate').eq('role', 'lawyer').eq('is_active', true).order('full_name')
-    // Debtors: only id+name for filter dropdown (no full scan)
-    let dq = supabase.from('debtors').select('id, full_name, required_amount').order('full_name').limit(500)
     // Tasks: limited to recent 1000, only needed columns
     let tq = supabase
       .from('tasks')
-      .select('id, task_type, task_status, assigned_to, debtor_id, completed_at, due_date, created_at, task_definition_id, task_definitions(label)')
+      .select('id, task_type, task_status, assigned_to, debtor_id, completed_at, due_date, created_at, task_definition_id, reward_amount, task_definitions(label)')
       .gte('created_at', oneYearAgo)
       .limit(1000)
     let tdq = supabase.from('task_definitions').select('id, label, sort_order').eq('is_active', true).order('sort_order')
@@ -58,6 +63,7 @@ export default function ReportsPage() {
       .select('id, case_status, current_task_id, current_task:tasks!current_task_id(id, task_status, task_definition_id)')
       .or('case_status.is.null,case_status.neq.closed')
       .limit(1000)
+    let dq = supabase.from('debtors').select('id, required_amount').limit(5000)
     let ccq = supabase.from('debtors').select('id', { count: 'exact', head: true }).eq('case_status', 'closed')
     // Expenses and payments: limited to last year
     let eq = supabase.from('expenses').select('id, debtor_id, amount, expense_date').gte('expense_date', oneYearAgo).limit(2000)
@@ -65,24 +71,40 @@ export default function ReportsPage() {
 
     if (branchId) {
       lq = (lq as any).eq('branch_id', branchId)
-      dq = (dq as any).eq('branch_id', branchId)
       tq = (tq as any).eq('branch_id', branchId)
       tdq = (tdq as any).eq('branch_id', branchId)
       adq = (adq as any).eq('branch_id', branchId)
+      dq = (dq as any).eq('branch_id', branchId)
       ccq = (ccq as any).eq('branch_id', branchId)
       eq = (eq as any).eq('branch_id', branchId)
       pq = (pq as any).eq('branch_id', branchId)
     }
-    Promise.all([lq, dq, tq, eq, pq, tdq, adq, ccq]).then(([
-      { data: l }, { data: d }, { data: t }, { data: e }, { data: p },
-      { data: td }, { data: ad }, { count: cc },
+    Promise.all([lq, tq, eq, pq, tdq, adq, ccq, dq]).then(([
+      { data: l }, { data: t }, { data: e }, { data: p },
+      { data: td }, { data: ad }, { count: cc }, { data: d },
     ]) => {
-      setLawyers(l ?? []); setDebtors(d ?? []); setTasks(t ?? [])
+      setLawyers(l ?? []); setTasks(t ?? [])
       setExpenses(e ?? []); setPayments(p ?? [])
       setTaskDefs(td ?? []); setActiveDebtors(ad ?? []); setClosedCount(cc ?? 0)
+      setDebtors(d ?? [])
       setLoading(false)
     })
   }, [branchId])
+
+  const achievements = useMemo(
+    () => filterAchievements(tasks, applied),
+    [tasks, applied],
+  )
+
+  const achievementByType = useMemo(
+    () => buildAchievementByType(achievements),
+    [achievements],
+  )
+
+  const achievementByLawyer = useMemo(
+    () => buildAchievementByLawyer(achievements, lawyers),
+    [achievements, lawyers],
+  )
 
   const summary = useMemo(() => {
     const { dateFrom, dateTo, debtorId, lawyerId } = applied
@@ -104,33 +126,19 @@ export default function ReportsPage() {
       if (lawyerId && t.assigned_to !== lawyerId) return false
       return true
     })
-    const completed = ft.filter(t => t.task_status === 'completed')
     const open = ft.filter(t => OPEN_STATUSES.includes(t.task_status))
     const totalRequired = (debtorId ? debtors.filter(d => d.id === debtorId) : debtors)
       .reduce((s, d) => s + Number(d.required_amount ?? 0), 0)
+    const achievementFees = achievements.reduce((s, t) => s + achievementFee(t), 0)
     return {
       totalPayments: fp.reduce((s, p) => s + Number(p.amount), 0),
       totalExpenses: fe.reduce((s, e) => s + Number(e.amount), 0),
-      lawyerFees: completed.reduce((s, t) => s + (TASK_FEE_MAP[t.task_type as TaskType] ?? 0), 0),
+      lawyerFees: achievementFees,
       totalRequired,
-      completedCount: completed.length,
+      achievementCount: achievements.length,
       openCount: open.length,
     }
-  }, [applied, payments, expenses, tasks, debtors])
-
-  const lawyerStats = useMemo(() => {
-    const { lawyerId } = applied
-    const list = lawyerId ? lawyers.filter(l => l.id === lawyerId) : lawyers
-    return list.map(lawyer => {
-      const lt = tasks.filter(t => t.assigned_to === lawyer.id && t.task_status === 'completed')
-      const feeBalance = lt.reduce((s, t) => s + (TASK_FEE_MAP[t.task_type as TaskType] ?? 0), 0)
-      const lp = payments.filter(p => p.lawyer_id === lawyer.id)
-      const collections = lp.reduce((s, p) => s + Number(p.amount), 0)
-      const lastPayment = lp[0]?.payment_date ?? null
-      const lastDone = lt.sort((a, b) => (b.completed_at ?? b.updated_at ?? '').localeCompare(a.completed_at ?? a.updated_at ?? ''))[0]?.completed_at ?? null
-      return { ...lawyer, completedCount: lt.length, feeBalance, collections, lastPayment, lastDone }
-    }).sort((a, b) => b.completedCount - a.completedCount)
-  }, [applied, lawyers, tasks, payments])
+  }, [applied, payments, expenses, tasks, debtors, achievements])
 
   const stageReports = useMemo(() => {
     const stageCounts = new Map<string, { id: string; label: string; active: number; stalled: number }>()
@@ -146,10 +154,10 @@ export default function ReportsPage() {
       if (STALLED_STATUSES.includes(task.task_status)) entry.stalled++
     }
 
-    const approvedTasks = tasks.filter(t => t.task_status === 'approved' && t.completed_at)
+    const approvedTasks = achievements
     const taskExecCount = new Map<string, { label: string; count: number }>()
     for (const t of approvedTasks) {
-      const defId = t.task_definition_id ?? t.task_type
+      const defId = t.task_definition_id ?? t.task_type ?? t.id
       const label = t.task_definitions?.label ?? t.task_type ?? '—'
       const cur = taskExecCount.get(defId) ?? { label, count: 0 }
       cur.count++
@@ -173,20 +181,14 @@ export default function ReportsPage() {
     }
     const avgTransitionDays = gaps.length > 0 ? Math.round(gaps.reduce((s, d) => s + d, 0) / gaps.length) : null
 
-    const lawyerTaskStats = lawyers.map(lawyer => {
-      const approved = tasks.filter(t => t.assigned_to === lawyer.id && t.task_status === 'approved')
-      return { id: lawyer.id, name: lawyer.full_name, approvedCount: approved.length }
-    }).filter(l => l.approvedCount > 0).sort((a, b) => b.approvedCount - a.approvedCount)
-
     return {
       stageCounts: Array.from(stageCounts.values()),
       closedCount,
       avgTransitionDays,
       topTasks,
-      lawyerTaskStats,
       totalActive: activeDebtors.filter(d => d.current_task_id).length,
     }
-  }, [taskDefs, activeDebtors, tasks, lawyers, closedCount])
+  }, [taskDefs, activeDebtors, achievements, closedCount])
 
   function d(k: keyof Filters, v: string) { setDraft(prev => ({ ...prev, [k]: v })) }
   const hasApplied = Object.values(applied).some(Boolean)
@@ -198,28 +200,41 @@ export default function ReportsPage() {
       {/* Filters */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-5">
         <p className="text-xs font-bold text-[#767676] uppercase tracking-wider mb-3">معايير التقرير</p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-          <div>
-            <label className="block text-[10px] text-[#767676] mb-1">من تاريخ</label>
-            <input type="date" value={draft.dateFrom} onChange={e => d('dateFrom', e.target.value)} className={SEL} dir="ltr" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          <div className="md:col-span-1">
+            <DateRangePicker
+              dateFrom={draft.dateFrom}
+              dateTo={draft.dateTo}
+              onChange={({ dateFrom, dateTo }) => setDraft(prev => ({ ...prev, dateFrom, dateTo }))}
+              fieldLabel="فترة التقرير"
+              headerTitle="اختر فترة التقرير"
+              placeholder="اختر فترة التقرير"
+            />
           </div>
           <div>
-            <label className="block text-[10px] text-[#767676] mb-1">إلى تاريخ</label>
-            <input type="date" value={draft.dateTo} onChange={e => d('dateTo', e.target.value)} className={SEL} dir="ltr" />
+            <label className="block text-[10px] text-[#767676] mb-1">المدين (بحث)</label>
+            <DebtorSearchPicker
+              value={draft.debtorId}
+              onChange={(id) => d('debtorId', id)}
+              branchId={branchId}
+              allowClear
+              clearLabel="كل المدينين"
+            />
           </div>
           <div>
-            <label className="block text-[10px] text-[#767676] mb-1">المدين</label>
-            <select value={draft.debtorId} onChange={e => d('debtorId', e.target.value)} className={SEL}>
-              <option value="">كل المدينين</option>
-              {debtors.map(x => <option key={x.id} value={x.id}>{x.full_name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-[10px] text-[#767676] mb-1">المحامي</label>
-            <select value={draft.lawyerId} onChange={e => d('lawyerId', e.target.value)} className={SEL}>
-              <option value="">كل المحامين</option>
-              {lawyers.map(x => <option key={x.id} value={x.id}>{x.full_name}</option>)}
-            </select>
+            <PremiumSelect
+              value={draft.lawyerId}
+              onChange={v => d('lawyerId', v)}
+              options={[
+                { value: '', label: 'كل المحامين' },
+                ...lawyers.map(x => ({ value: x.id, label: x.full_name })),
+              ]}
+              fieldLabel="المحامي"
+              placeholder="كل المحامين"
+              headerTitle="تصفية حسب المحامي"
+              searchPlaceholder="بحث بالاسم..."
+              searchable
+            />
           </div>
         </div>
         <div className="flex gap-3">
@@ -241,10 +256,10 @@ export default function ReportsPage() {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <StatCard label="إجمالي التسديدات" value={fmtMoney(summary.totalPayments)} icon={<IconMoney />} iconBg="bg-green-600" accent="green" />
               <StatCard label="إجمالي الصرفيات" value={fmtMoney(summary.totalExpenses)} icon={<IconExpense />} iconBg="bg-red-500" accent="red" />
-              <StatCard label="أتعاب المحامين" value={fmtMoney(summary.lawyerFees)} icon={<IconFee />} accent="teal" />
+              <StatCard label="أتعاب الإنجازات" value={fmtMoney(summary.lawyerFees)} icon={<IconFee />} accent="teal" />
               <StatCard label="إجمالي المطلوب" value={fmtMoney(summary.totalRequired)} icon={<IconMoney />} iconBg="bg-blue-600" accent="blue" />
-              <StatCard label="المهام المنجزة" value={fmtNum(summary.completedCount)} icon={<IconTask />} iconBg="bg-green-600" accent="green" />
-              <StatCard label="المهام المفتوحة" value={fmtNum(summary.openCount)} icon={<IconTask />} iconBg="bg-[#767676]" />
+              <StatCard label="إجمالي الإنجازات" value={fmtNum(summary.achievementCount)} icon={<IconTask />} iconBg="bg-green-600" accent="green" sub="مهام اعتمدها الأدمن" />
+              <StatCard label="مهام قيد التنفيذ" value={fmtNum(summary.openCount)} icon={<IconTask />} iconBg="bg-[#767676]" />
             </div>
           </div>
 
@@ -269,9 +284,9 @@ export default function ReportsPage() {
                 accent="blue"
               />
               <StatCard
-                label="أكثر مهمة تنفيذاً"
-                value={stageReports.topTasks[0]?.count ?? 0}
-                sub={stageReports.topTasks[0]?.label ?? '—'}
+                label="أكثر إنجاز تنفيذاً"
+                value={achievementByType[0]?.count ?? 0}
+                sub={achievementByType[0]?.label ?? '—'}
                 accent="orange"
               />
             </div>
@@ -311,23 +326,94 @@ export default function ReportsPage() {
               </div>
             )}
 
-            {stageReports.lawyerTaskStats.length > 0 && (
+          </div>
+
+          {/* Achievement report */}
+          <div>
+            <p className="text-xs font-bold text-[#767676] uppercase tracking-wider mb-1">تقرير الإنجازات</p>
+            <p className="text-xs text-[#767676] mb-3">المهام التي سلّمها المحامي واعتمدها الأدمن — مرتبة من الأكثر إلى الأقل</p>
+
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+              <StatCard label="إجمالي الإنجازات" value={fmtNum(achievements.length)} accent="teal" />
+              <StatCard label="أتعاب الإنجازات" value={fmtMoney(summary.lawyerFees)} accent="green" />
+              <StatCard
+                label="أنواع الإنجازات"
+                value={fmtNum(achievementByType.length)}
+                sub="أنواع مهام مختلفة"
+                accent="blue"
+              />
+            </div>
+
+            {achievementByType.length > 0 ? (
+              <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden mb-4">
+                <p className="text-xs font-bold text-[#767676] uppercase tracking-wider px-5 pt-4 pb-2">الإنجازات حسب نوع المهمة</p>
+                <Table>
+                  <THead>
+                    <tr>
+                      <TH>#</TH>
+                      <TH>نوع المهمة / الإنجاز</TH>
+                      <TH>عدد الإنجازات</TH>
+                      <TH>أتعاب محسوبة</TH>
+                      <TH>النسبة</TH>
+                    </tr>
+                  </THead>
+                  <TBody>
+                    {achievementByType.map((row, i) => {
+                      const pct = achievements.length > 0 ? Math.round((row.count / achievements.length) * 100) : 0
+                      return (
+                        <TR key={row.key}>
+                          <TD className="text-[#767676] font-mono text-xs w-8">{i + 1}</TD>
+                          <TD className="font-semibold text-[#231F20]">{row.label}</TD>
+                          <TD><span className="font-bold tabular-nums text-[#2C8780]">{fmtNum(row.count)}</span></TD>
+                          <TD><span className="font-semibold tabular-nums" dir="ltr">{fmtMoney(row.fees)}</span></TD>
+                          <TD>
+                            <div className="flex items-center gap-2">
+                              <div className="w-20 h-1.5 bg-[rgba(118,118,118,0.1)] rounded-full overflow-hidden">
+                                <div className="h-full bg-[#2C8780] rounded-full" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="text-xs font-bold text-[#767676]">{pct}%</span>
+                            </div>
+                          </TD>
+                        </TR>
+                      )
+                    })}
+                  </TBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-8 text-center mb-4">
+                <p className="text-sm text-[#767676]">لا توجد إنجازات معتمدة ضمن الفترة المحددة</p>
+              </div>
+            )}
+
+            {achievementByLawyer.length > 0 && (
               <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
-                <p className="text-xs font-bold text-[#767676] uppercase tracking-wider px-5 pt-4 pb-2">أداء المحامين حسب المهام المعتمدة</p>
+                <p className="text-xs font-bold text-[#767676] uppercase tracking-wider px-5 pt-4 pb-2">الإنجازات حسب المحامي</p>
                 <Table>
                   <THead>
                     <tr>
                       <TH>#</TH>
                       <TH>المحامي</TH>
-                      <TH>مهام معتمدة</TH>
+                      <TH>المحافظة</TH>
+                      <TH>عدد الإنجازات</TH>
+                      <TH>أكثر إنجاز</TH>
+                      <TH>أتعاب الإنجازات</TH>
+                      <TH>آخر إنجاز</TH>
                     </tr>
                   </THead>
                   <TBody>
-                    {stageReports.lawyerTaskStats.map((l, i) => (
+                    {achievementByLawyer.map((l, i) => (
                       <TR key={l.id}>
                         <TD className="text-[#767676] font-mono text-xs w-8">{i + 1}</TD>
                         <TD className="font-semibold text-[#231F20]">{l.name}</TD>
-                        <TD><span className="font-bold tabular-nums">{fmtNum(l.approvedCount)}</span></TD>
+                        <TD className="text-[#767676] text-xs">{l.governorate ?? '—'}</TD>
+                        <TD><span className="font-bold tabular-nums text-[#2C8780]">{fmtNum(l.count)}</span></TD>
+                        <TD className="text-xs">
+                          <span className="font-semibold text-[#231F20]">{l.topLabel}</span>
+                          <span className="text-[#767676]"> ({fmtNum(l.topCount)})</span>
+                        </TD>
+                        <TD><span className="font-semibold text-[#2C8780] tabular-nums" dir="ltr">{fmtMoney(l.fees)}</span></TD>
+                        <TD><span className="text-xs text-[#767676] font-mono" dir="ltr">{fmtDate(l.lastDate)}</span></TD>
                       </TR>
                     ))}
                   </TBody>
@@ -335,45 +421,6 @@ export default function ReportsPage() {
               </div>
             )}
           </div>
-
-          {/* Lawyer performance table */}
-          {lawyerStats.length > 0 && (
-            <div>
-              <p className="text-xs font-bold text-[#767676] uppercase tracking-wider mb-3">أداء المحامين</p>
-              <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
-                <Table>
-                  <THead>
-                    <tr>
-                      <TH>#</TH>
-                      <TH>اسم المحامي</TH>
-                      <TH>المحافظة</TH>
-                      <TH>المهام المنجزة</TH>
-                      <TH>رصيد الأتعاب</TH>
-                      <TH>المبالغ المحصّلة</TH>
-                      <TH>آخر تحصيل</TH>
-                      <TH>آخر إنجاز</TH>
-                    </tr>
-                  </THead>
-                  <TBody>
-                    {lawyerStats.map((l: any, i: number) => (
-                      <TR key={l.id}>
-                        <TD className="text-[#767676] font-mono text-xs w-8">{i + 1}</TD>
-                        <TD className="font-semibold text-[#231F20]">{l.full_name}</TD>
-                        <TD className="text-[#767676] text-xs">{l.governorate ?? '—'}</TD>
-                        <TD>
-                          <span className="font-bold text-[#231F20] tabular-nums">{fmtNum(l.completedCount)}</span>
-                        </TD>
-                        <TD><span className="font-semibold text-[#2C8780] tabular-nums" dir="ltr">{fmtMoney(l.feeBalance)}</span></TD>
-                        <TD><span className="font-semibold text-emerald-700 tabular-nums" dir="ltr">{fmtMoney(l.collections)}</span></TD>
-                        <TD><span className="text-xs text-[#767676] font-mono" dir="ltr">{fmtDate(l.lastPayment)}</span></TD>
-                        <TD><span className="text-xs text-[#767676] font-mono" dir="ltr">{l.lastDone ? l.lastDone.split('T')[0] : '—'}</span></TD>
-                      </TR>
-                    ))}
-                  </TBody>
-                </Table>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>

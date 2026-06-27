@@ -28,50 +28,13 @@ export async function fetchLawyerWalletBalance(
   supabase: SupabaseClient,
   lawyerId: string,
 ): Promise<number> {
-  // PostgREST aggregate: returns [{ sum: "value" }] or null
-  const { data } = await (supabase as any)
-    .from('lawyer_wallet_transactions')
-    .select('amount.sum()')
-    .eq('lawyer_id', lawyerId)
-    .single()
-  const raw = (data as any)?.sum
-  if (raw != null) return Number(raw)
-
-  // Fallback: manual sum with limit
-  const { data: rows } = await supabase
-    .from('lawyer_wallet_transactions')
-    .select('amount')
-    .eq('lawyer_id', lawyerId)
-    .limit(500)
-  return (rows ?? []).reduce((s, r) => s + Number(r.amount ?? 0), 0)
-}
-
-async function approvePendingReceiptsOnly(
-  supabase: SupabaseClient,
-  taskId: string,
-  reviewerId: string,
-) {
-  const { data: receipts } = await supabase
-    .from('task_payment_receipts')
-    .select('id')
-    .eq('task_id', taskId)
-    .eq('status', 'pending')
-
-  for (const receipt of receipts ?? []) {
-    await supabase
-      .from('task_payment_receipts')
-      .update({
-        status: 'approved',
-        reviewed_by: reviewerId,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq('id', receipt.id)
-  }
+  const { fetchLawyerWalletBalance: getBalance } = await import('@/lib/lawyer-wallet')
+  return getBalance(supabase, lawyerId)
 }
 
 /**
- * Credit lawyer wallet on task approval (next task or closed case).
- * Idempotent: one approved_task_payment per task + lawyer.
+ * Credit lawyer wallet when the case advances (next task assigned) or closes.
+ * Idempotent: fee_status + one approved_task_payment per task + lawyer.
  */
 export async function releaseLawyerFee(
   supabase: SupabaseClient,
@@ -85,6 +48,7 @@ export async function releaseLawyerFee(
       assigned_to,
       reward_amount,
       fee_status,
+      task_status,
       task_definition_id,
       task_type,
       debtor_id,
@@ -98,13 +62,16 @@ export async function releaseLawyerFee(
     return { ok: false, amount: 0, error: taskErr?.message ?? 'المهمة غير موجودة' }
   }
 
+  if (task.task_status !== 'approved') {
+    return { ok: false, amount: 0, error: 'لا تُصرف الأتعاب إلا بعد اعتماد المهمة' }
+  }
+
   const lawyerId = task.assigned_to
   if (!lawyerId) {
     return { ok: false, amount: 0, error: 'المهمة غير مكلفة لمحامٍ' }
   }
 
   if (task.fee_status === 'released' || task.fee_status === 'paid') {
-    await approvePendingReceiptsOnly(supabase, taskId, reviewerId)
     return { ok: true, amount: 0 }
   }
 
@@ -118,7 +85,6 @@ export async function releaseLawyerFee(
 
   if (existingTx) {
     await supabase.from('tasks').update({ fee_status: 'released' } as any).eq('id', taskId)
-    await approvePendingReceiptsOnly(supabase, taskId, reviewerId)
     return { ok: true, amount: 0 }
   }
 
@@ -146,9 +112,76 @@ export async function releaseLawyerFee(
   }
 
   await supabase.from('tasks').update({ fee_status: 'released' } as any).eq('id', taskId)
-  await approvePendingReceiptsOnly(supabase, taskId, reviewerId)
 
   return { ok: true, amount }
+}
+
+/** Release fees for the approved task that preceded this assignment (same debtor). */
+export async function releasePreviousTaskFeeOnAssignment(
+  supabase: SupabaseClient,
+  debtorId: string,
+  assigningTaskId: string,
+  releasedBy: string,
+): Promise<{ ok: boolean; amount: number; error?: string }> {
+  const { data: debtor } = await supabase
+    .from('debtors')
+    .select('last_task_id')
+    .eq('id', debtorId)
+    .single()
+
+  let previousTaskId = (debtor?.last_task_id as string | null) ?? null
+  if (previousTaskId === assigningTaskId) previousTaskId = null
+
+  if (!previousTaskId) {
+    const { data: candidates } = await supabase
+      .from('tasks')
+      .select('id, fee_status, completed_at')
+      .eq('debtor_id', debtorId)
+      .eq('task_status', 'approved')
+      .neq('id', assigningTaskId)
+      .order('completed_at', { ascending: false })
+      .limit(5)
+
+    const prev = (candidates ?? []).find(
+      t => t.fee_status !== 'released' && t.fee_status !== 'paid',
+    )
+    previousTaskId = prev?.id ?? null
+  }
+
+  if (!previousTaskId) {
+    return { ok: true, amount: 0 }
+  }
+
+  return releaseLawyerFee(supabase, previousTaskId, releasedBy)
+}
+
+export async function releasePreviousTaskFeesOnAssignment(
+  supabase: SupabaseClient,
+  assignedTaskIds: string[],
+  releasedBy: string,
+): Promise<{ ok: boolean; error: string | null }> {
+  if (!assignedTaskIds.length) return { ok: true, error: null }
+
+  const { data: tasks } = await supabase
+    .from('tasks')
+    .select('id, debtor_id')
+    .in('id', assignedTaskIds)
+
+  const debtorToAssigningTask = new Map<string, string>()
+  for (const t of tasks ?? []) {
+    if (!debtorToAssigningTask.has(t.debtor_id)) {
+      debtorToAssigningTask.set(t.debtor_id, t.id)
+    }
+  }
+
+  for (const [debtorId, taskId] of debtorToAssigningTask) {
+    const result = await releasePreviousTaskFeeOnAssignment(supabase, debtorId, taskId, releasedBy)
+    if (!result.ok) {
+      return { ok: false, error: result.error ?? 'فشل صرف أتعاب المهمة السابقة' }
+    }
+  }
+
+  return { ok: true, error: null }
 }
 
 /** @deprecated Use releaseLawyerFee — kept for compatibility */

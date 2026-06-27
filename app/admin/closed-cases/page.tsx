@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
 import {
@@ -9,11 +9,13 @@ import {
 } from '@/lib/fetch-closed-debtors'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import Link from 'next/link'
+import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
 
 interface ClosedCase {
   id: string
   full_name: string
   phone: string | null
+  receipt_number: string | null
   required_amount: number
   closed_at: string | null
   branch_name: string
@@ -26,6 +28,9 @@ export default function ClosedCasesPage() {
   const [cases, setCases] = useState<ClosedCase[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [matchingIds, setMatchingIds] = useState<string[] | null>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [loadError, setLoadError] = useState('')
 
   useEffect(() => {
@@ -76,6 +81,7 @@ export default function ClosedCasesPage() {
           id: d.id,
           full_name: d.full_name,
           phone: d.phone,
+          receipt_number: d.receipt_number,
           required_amount: d.required_amount,
           closed_at: d.closed_at,
           branch_name: (d.branch_id && branchMap.get(d.branch_id)) || '—',
@@ -89,13 +95,27 @@ export default function ClosedCasesPage() {
     load()
   }, [branchId])
 
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [search])
+
+  useEffect(() => {
+    if (!debouncedSearch.trim()) {
+      setMatchingIds(null)
+      return
+    }
+    let cancelled = false
+    resolveDebtorIdsBySearch(createClient(), debouncedSearch, branchId).then(ids => {
+      if (!cancelled) setMatchingIds(ids ?? [])
+    })
+    return () => { cancelled = true }
+  }, [debouncedSearch, branchId])
+
   const filtered = cases.filter(c => {
-    if (!search.trim()) return true
-    const q = search.trim().toLowerCase()
-    return (
-      c.full_name.toLowerCase().includes(q) ||
-      (c.phone ?? '').includes(q)
-    )
+    if (matchingIds !== null) return matchingIds.includes(c.id)
+    return true
   })
 
   return (
@@ -107,7 +127,7 @@ export default function ClosedCasesPage() {
         </div>
         <input
           type="search"
-          placeholder="بحث بالاسم أو الهاتف..."
+          placeholder={DEBTOR_SEARCH_PLACEHOLDER}
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="px-4 py-2 border border-slate-200 rounded-lg text-sm w-full sm:w-64"

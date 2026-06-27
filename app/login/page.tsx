@@ -2,11 +2,10 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 
 export default function LoginPage() {
   const router = useRouter()
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPass, setShowPass] = useState(false)
   const [error, setError] = useState('')
@@ -14,44 +13,38 @@ export default function LoginPage() {
 
   async function handleLogin(e: { preventDefault(): void }) {
     e.preventDefault()
-    if (!email.trim()) { setError('يرجى إدخال البريد الإلكتروني'); return }
+    if (!username.trim()) { setError('يرجى إدخال اسم المستخدم'); return }
     if (!password) { setError('يرجى إدخال كلمة المرور'); return }
 
     setLoading(true)
     setError('')
 
     try {
-      const supabase = createClient()
-
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: username.trim().toLowerCase(),
+          password,
+        }),
       })
 
-      if (authError) {
-        setError('البريد الإلكتروني أو كلمة المرور غير صحيحة')
+      let data: { error?: string; redirectTo?: string } = {}
+      try {
+        data = await res.json()
+      } catch {
+        setError('استجابة غير صالحة من الخادم')
         setLoading(false)
         return
       }
 
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { setError('حدث خطأ أثناء تسجيل الدخول'); setLoading(false); return }
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role, is_active')
-        .eq('id', user.id)
-        .single()
-
-      if (profile?.is_active === false) {
-        await supabase.auth.signOut()
-        setError('الحساب غير فعال، يرجى التواصل مع الإدارة')
+      if (!res.ok) {
+        setError(data.error ?? 'اسم المستخدم أو كلمة المرور غير صحيحة')
         setLoading(false)
         return
       }
 
-      router.replace(profile?.role === 'lawyer' ? '/lawyer' : '/admin/dashboard')
-      router.refresh()
+      router.replace(data.redirectTo ?? '/admin/dashboard')
     } catch {
       setError('حدث خطأ في الاتصال، يرجى المحاولة مرة أخرى')
       setLoading(false)
@@ -60,14 +53,12 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-[#F3F1F2] flex items-center justify-center p-4" dir="rtl">
-      {/* Subtle background blobs */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 right-1/4 w-96 h-96 bg-[#2C8780]/6 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 left-1/4 w-64 h-64 bg-[#1D6365]/4 rounded-full blur-3xl" />
       </div>
 
       <div className="relative w-full max-w-md">
-        {/* Brand */}
         <div className="text-center mb-8">
           <div
             className="inline-flex w-20 h-20 rounded-3xl items-center justify-center mb-5 shadow-xl"
@@ -81,36 +72,33 @@ export default function LoginPage() {
           <p className="text-[#767676] text-sm mt-2">النظام الإداري والقانوني للتحصيل والمتابعة</p>
         </div>
 
-        {/* Card */}
         <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.12)] p-8 shadow-lg shadow-black/5">
           <h2 className="text-[#231F20] font-bold text-lg mb-6">تسجيل الدخول</h2>
 
           <form onSubmit={handleLogin} className="space-y-5">
-            {/* Email */}
             <div>
               <label className="block text-sm font-semibold text-[#231F20] mb-2">
-                البريد الإلكتروني
+                اسم المستخدم
               </label>
               <div className="relative">
                 <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#767676]">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                   </svg>
                 </div>
                 <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
+                  type="text"
+                  value={username}
+                  onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9._@]/g, ''))}
                   required
-                  autoComplete="email"
+                  autoComplete="username"
                   dir="ltr"
-                  placeholder="example@domain.com"
+                  placeholder="ali_lawyer"
                   className="w-full bg-white border border-[rgba(118,118,118,0.2)] rounded-lg pr-10 pl-4 py-3 text-[#231F20] placeholder:text-[#767676]/60 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all"
                 />
               </div>
             </div>
 
-            {/* Password */}
             <div>
               <label className="block text-sm font-semibold text-[#231F20] mb-2">
                 كلمة المرور
@@ -151,7 +139,6 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Error */}
             {error && (
               <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-2.5">
                 <svg className="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -161,7 +148,6 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Submit */}
             <button
               type="submit"
               disabled={loading}

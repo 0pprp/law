@@ -28,10 +28,11 @@ export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   const isLoginPage = pathname === '/login'
+  const isPublicAuthApi = pathname.startsWith('/api/auth/')
   const isAdminRoute = pathname.startsWith('/admin')
   const isLawyerRoute = pathname.startsWith('/lawyer')
 
-  if (!user && !isLoginPage) {
+  if (!user && !isLoginPage && !isPublicAuthApi) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 

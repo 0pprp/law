@@ -1,14 +1,21 @@
 'use client'
 
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { BranchProvider } from '@/context/branch'
+import { BranchProvider, useBranchId } from '@/context/branch'
 import BranchSelector from '@/components/BranchSelector'
+import {
+  ADMIN_NOTIFICATIONS_REFRESH,
+  fetchAdminNotificationCounts,
+  pendingFinanceRequests,
+  totalAdminNotifications,
+  type AdminNotificationCounts,
+} from '@/lib/admin-notifications'
 
 interface AdminShellProps {
   userName: string
@@ -50,6 +57,9 @@ const sections = [
       { label: 'التسديدات', href: '/admin/payments', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       )},
+      { label: 'أتعاب المحامين', href: '/admin/finance', icon: (
+        <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+      )},
       { label: 'الصرفيات', href: '/admin/expenses', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
       )},
@@ -76,9 +86,26 @@ function isActive(href: string, pathname: string, exact?: boolean) {
   return pathname === href || pathname.startsWith(href + '/')
 }
 
-function NavLink({ item, pathname, onClick }: {
+function CountBadge({ count, active }: { count: number; active?: boolean }) {
+  if (!count) return null
+  const label = count > 99 ? '99+' : String(count)
+  return (
+    <span
+      className={cn(
+        'mr-auto min-w-5 h-5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0',
+        active ? 'bg-white text-[#2C8780]' : 'bg-red-500 text-white',
+      )}
+      aria-label={`${label} إشعار`}
+    >
+      {label}
+    </span>
+  )
+}
+
+function NavLink({ item, pathname, badge, onClick }: {
   item: { label: string; href: string; exact?: boolean; icon: ReactNode }
   pathname: string
+  badge?: number
   onClick?: () => void
 }) {
   const active = isActive(item.href, pathname, item.exact)
@@ -93,16 +120,209 @@ function NavLink({ item, pathname, onClick }: {
       style={active ? { background: 'linear-gradient(135deg, #2C8780, #1D6365)' } : undefined}
     >
       <span className={active ? 'text-white' : 'text-white/50'}>{item.icon}</span>
-      {item.label}
+      <span className="flex-1 min-w-0">{item.label}</span>
+      <CountBadge count={badge ?? 0} active={active} />
     </Link>
   )
+}
+
+function HeaderNotifications({
+  counts,
+  open,
+  onToggle,
+  onClose,
+}: {
+  counts: AdminNotificationCounts
+  open: boolean
+  onToggle: () => void
+  onClose: () => void
+}) {
+  const total = totalAdminNotifications(counts)
+  if (!total) return null
+
+  const financePending = pendingFinanceRequests(counts)
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="relative w-9 h-9 flex items-center justify-center text-[#767676] hover:text-[#231F20] hover:bg-[rgba(118,118,118,0.08)] rounded-lg transition-colors"
+        aria-label={`${total} إشعارات`}
+      >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+        </svg>
+        <span className="absolute -top-0.5 -left-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+          {total > 99 ? '99+' : total}
+        </span>
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden />
+          <div className="absolute left-0 top-full mt-2 w-72 bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-lg z-50 overflow-hidden">
+            <div className="px-4 py-3 border-b border-[rgba(118,118,118,0.1)]">
+              <p className="text-sm font-bold text-[#231F20]">الإشعارات</p>
+              <p className="text-[11px] text-[#767676] mt-0.5">{total} بانتظار الإجراء</p>
+            </div>
+            <div className="py-1">
+              {counts.pendingReview > 0 && (
+                <Link
+                  href="/admin/tasks/review"
+                  onClick={onClose}
+                  className="flex items-center gap-3 px-4 py-3 hover:bg-[#F8F7F8] transition-colors"
+                >
+                  <span className="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[#231F20]">مراجعة الإنجازات</p>
+                    <p className="text-[11px] text-[#767676]">مهام بانتظار الاعتماد</p>
+                  </div>
+                  <span className="min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                    {counts.pendingReview}
+                  </span>
+                </Link>
+              )}
+              {financePending > 0 && (
+                <Link
+                  href="/admin/finance"
+                  onClick={onClose}
+                  className="flex items-center gap-3 px-4 py-3 hover:bg-[#F8F7F8] transition-colors"
+                >
+                  <span className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[#231F20]">أتعاب المحامين</p>
+                    <p className="text-[11px] text-[#767676]">
+                      {counts.pendingPayoutRequests > 0 && counts.pendingTaskFeeReceipts > 0
+                        ? 'طلبات صرف + أتعاب مهام'
+                        : counts.pendingPayoutRequests > 0
+                          ? 'طلبات صرف بانتظار الموافقة'
+                          : 'أتعاب مهام بانتظار الاعتماد'}
+                    </p>
+                  </div>
+                  <span className="min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                    {financePending}
+                  </span>
+                </Link>
+              )}
+              {counts.pendingExpenses > 0 && (
+                <Link
+                  href="/admin/expenses?status=pending_approval"
+                  onClick={onClose}
+                  className="flex items-center gap-3 px-4 py-3 hover:bg-[#F8F7F8] transition-colors"
+                >
+                  <span className="w-8 h-8 rounded-lg bg-orange-100 text-orange-700 flex items-center justify-center shrink-0">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
+                    </svg>
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[#231F20]">الصرفيات</p>
+                    <p className="text-[11px] text-[#767676]">صرفيات بانتظار الاعتماد</p>
+                  </div>
+                  <span className="min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                    {counts.pendingExpenses}
+                  </span>
+                </Link>
+              )}
+              {counts.pendingExpensesByType.map(item => (
+                <Link
+                  key={item.type}
+                  href={`/admin/expenses?status=pending_approval&type=${encodeURIComponent(item.type)}`}
+                  onClick={onClose}
+                  className="flex items-center gap-3 px-4 py-2.5 pr-8 hover:bg-[#F8F7F8] transition-colors border-t border-[rgba(118,118,118,0.06)]"
+                >
+                  <span className="w-6 h-6 rounded-md bg-orange-50 text-orange-600 flex items-center justify-center shrink-0 text-[10px] font-black">
+                    •
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-[#231F20] truncate">{item.type}</p>
+                  </div>
+                  <span className="min-w-5 h-5 px-1.5 rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center">
+                    {item.count}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function useAdminNotifications(branchId: string | null, pathname: string) {
+  const [counts, setCounts] = useState<AdminNotificationCounts>({
+    pendingReview: 0,
+    pendingPayoutRequests: 0,
+    pendingTaskFeeReceipts: 0,
+    pendingExpenses: 0,
+    pendingExpensesByType: [],
+  })
+
+  const load = useCallback(async () => {
+    if (!branchId) {
+      setCounts({
+        pendingReview: 0,
+        pendingPayoutRequests: 0,
+        pendingTaskFeeReceipts: 0,
+        pendingExpenses: 0,
+        pendingExpensesByType: [],
+      })
+      return
+    }
+    const next = await fetchAdminNotificationCounts()
+    setCounts(next)
+  }, [branchId])
+
+  useEffect(() => { load() }, [load, pathname])
+
+  useEffect(() => {
+    const onRefresh = () => { load() }
+    window.addEventListener(ADMIN_NOTIFICATIONS_REFRESH, onRefresh)
+    window.addEventListener('focus', onRefresh)
+    const timer = setInterval(load, 45000)
+    return () => {
+      window.removeEventListener(ADMIN_NOTIFICATIONS_REFRESH, onRefresh)
+      window.removeEventListener('focus', onRefresh)
+      clearInterval(timer)
+    }
+  }, [load])
+
+  return counts
+}
+
+function badgeForHref(href: string, counts: AdminNotificationCounts): number {
+  if (href === '/admin/tasks/review') return counts.pendingReview
+  if (href === '/admin/finance') return pendingFinanceRequests(counts)
+  if (href === '/admin/expenses') return counts.pendingExpenses
+  return 0
 }
 
 function getArabicDate() {
   return new Date().toLocaleDateString('ar-IQ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 }
 
-export default function AdminShell({
+export default function AdminShell(props: AdminShellProps) {
+  return (
+    <BranchProvider
+      initialBranchId={props.initialBranchId ?? null}
+      initialBranchName={props.initialBranchName ?? null}
+    >
+      <AdminShellInner {...props} />
+    </BranchProvider>
+  )
+}
+
+function AdminShellInner({
   userName,
   userRole,
   userBranchId,
@@ -112,12 +332,15 @@ export default function AdminShell({
 }: AdminShellProps) {
   const pathname = usePathname()
   const router = useRouter()
+  const branchId = useBranchId()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const [arabicDate, setArabicDate] = useState('')
+  const [notifOpen, setNotifOpen] = useState(false)
+  const counts = useAdminNotifications(branchId, pathname)
 
   useEffect(() => { setArabicDate(getArabicDate()) }, [])
-  useEffect(() => { setDrawerOpen(false) }, [pathname])
+  useEffect(() => { setDrawerOpen(false); setNotifOpen(false) }, [pathname])
 
   async function handleLogout() {
     setLoggingOut(true)
@@ -153,7 +376,13 @@ export default function AdminShell({
             )}
             <div className="space-y-0.5">
               {section.items.map(item => (
-                <NavLink key={item.href} item={item} pathname={pathname} onClick={() => setDrawerOpen(false)} />
+                <NavLink
+                  key={item.href}
+                  item={item}
+                  pathname={pathname}
+                  badge={badgeForHref(item.href, counts)}
+                  onClick={() => setDrawerOpen(false)}
+                />
               ))}
             </div>
           </div>
@@ -183,12 +412,9 @@ export default function AdminShell({
   )
 
   return (
-    <BranchProvider
-      initialBranchId={initialBranchId ?? null}
-      initialBranchName={initialBranchName ?? null}
-    >
-      <div className="flex h-full min-h-screen" dir="rtl">
-        <aside className="hidden lg:flex flex-col w-60 shrink-0 sticky top-0 h-screen bg-[#231F20] z-30">
+    <div className="h-screen overflow-hidden" dir="rtl">
+        {/* Desktop sidebar — fixed full height, does not scroll with content */}
+        <aside className="hidden lg:flex fixed top-0 right-0 bottom-0 w-60 z-30 bg-[#231F20] flex-col">
           {SidebarContent}
         </aside>
 
@@ -206,8 +432,9 @@ export default function AdminShell({
           {SidebarContent}
         </aside>
 
-        <div className="flex-1 flex flex-col min-w-0 min-h-screen">
-          <header className="sticky top-0 z-30 bg-white border-b border-[rgba(118,118,118,0.1)] h-14 flex items-center px-4 lg:px-6 gap-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+        {/* Main column — scrolls independently */}
+        <div className="h-screen overflow-y-auto flex flex-col lg:mr-60 min-w-0">
+          <header className="sticky top-0 z-20 bg-white border-b border-[rgba(118,118,118,0.1)] h-14 flex items-center px-4 lg:px-6 gap-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] shrink-0">
             <button onClick={() => setDrawerOpen(true)} className="lg:hidden w-9 h-9 flex items-center justify-center text-[#767676] hover:text-[#231F20] hover:bg-[rgba(118,118,118,0.08)] rounded-lg transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
@@ -237,6 +464,12 @@ export default function AdminShell({
             </div>
 
             <div className="flex items-center gap-2 mr-auto">
+              <HeaderNotifications
+                counts={counts}
+                open={notifOpen}
+                onToggle={() => setNotifOpen(v => !v)}
+                onClose={() => setNotifOpen(false)}
+              />
               <div className="hidden sm:flex flex-col items-end">
                 <p className="text-xs font-semibold text-[#231F20] leading-none">{userName}</p>
                 <p className="text-[10px] text-[#767676] mt-0.5">{USER_ROLE_LABELS[userRole as UserRole] ?? userRole}</p>
@@ -251,7 +484,6 @@ export default function AdminShell({
             {children}
           </main>
         </div>
-      </div>
-    </BranchProvider>
+    </div>
   )
 }

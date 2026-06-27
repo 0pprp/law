@@ -10,7 +10,7 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { useBranchId, useBranch } from '@/context/branch'
 import { isMainBranchName } from '@/lib/branch-constants'
-import { LEGAL_ISSUE_DATE_LABEL, PDF_REQUIRED_MESSAGE, RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { LEGAL_ISSUE_DATE_LABEL, RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { FormFlow, FormFlowHero, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { cn } from '@/lib/utils'
@@ -82,8 +82,8 @@ export default function NewDebtorPage() {
       return
     }
 
-    if (!pdfFile || pdfFile.type !== 'application/pdf') {
-      setError(PDF_REQUIRED_MESSAGE)
+    if (pdfFile && pdfFile.type !== 'application/pdf') {
+      setError('يجب أن يكون الملف بصيغة PDF فقط')
       setSaving(false)
       return
     }
@@ -146,34 +146,37 @@ export default function NewDebtorPage() {
 
     const safeFileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
     const filePath = `${newDebtor.id}/${safeFileName}`
-    const { error: uploadError } = await supabase.storage
-      .from('debtor-files')
-      .upload(filePath, pdfFile, { contentType: 'application/pdf' })
 
-    if (uploadError) {
-      await supabase.from('tasks').delete().eq('id', newTask.id)
-      await supabase.from('debtors').delete().eq('id', newDebtor.id)
-      setError(`فشل رفع ملف PDF: ${uploadError.message}`)
-      setSaving(false)
-      return
-    }
+    if (pdfFile) {
+      const { error: uploadError } = await supabase.storage
+        .from('debtor-files')
+        .upload(filePath, pdfFile, { contentType: 'application/pdf' })
 
-    const { error: attachErr } = await supabase.from('debtor_attachments').insert({
-      debtor_id: newDebtor.id,
-      file_name: pdfFile.name,
-      file_path: filePath,
-      file_size: pdfFile.size,
-      mime_type: pdfFile.type,
-      uploaded_by: user.id,
-    })
+      if (uploadError) {
+        await supabase.from('tasks').delete().eq('id', newTask.id)
+        await supabase.from('debtors').delete().eq('id', newDebtor.id)
+        setError(`فشل رفع ملف PDF: ${uploadError.message}`)
+        setSaving(false)
+        return
+      }
 
-    if (attachErr) {
-      await supabase.storage.from('debtor-files').remove([filePath])
-      await supabase.from('tasks').delete().eq('id', newTask.id)
-      await supabase.from('debtors').delete().eq('id', newDebtor.id)
-      setError(`فشل حفظ سجل الملف: ${attachErr.message}`)
-      setSaving(false)
-      return
+      const { error: attachErr } = await supabase.from('debtor_attachments').insert({
+        debtor_id: newDebtor.id,
+        file_name: pdfFile.name,
+        file_path: filePath,
+        file_size: pdfFile.size,
+        mime_type: pdfFile.type,
+        uploaded_by: user.id,
+      })
+
+      if (attachErr) {
+        await supabase.storage.from('debtor-files').remove([filePath])
+        await supabase.from('tasks').delete().eq('id', newTask.id)
+        await supabase.from('debtors').delete().eq('id', newDebtor.id)
+        setError(`فشل حفظ سجل الملف: ${attachErr.message}`)
+        setSaving(false)
+        return
+      }
     }
 
     router.push('/admin/debtors')
@@ -315,18 +318,18 @@ export default function NewDebtorPage() {
           <FormFlowStep
             step={4}
             title="ملف المدين والملاحظات"
-            subtitle="ارفع ملف PDF الرسمي — إلزامي قبل الحفظ"
+            subtitle="ارفع ملف PDF إن وُجد — اختياري"
             isLast
           >
             <div className="space-y-4">
-              <FormField label="ملف PDF" required hint="PDF فقط — يُحفظ ضمن مستمسكات المدين">
+              <FormField label="ملف PDF" hint="اختياري — PDF فقط">
                 <label className={cn(
                   'flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed cursor-pointer transition-all',
                   pdfFile
                     ? 'border-[#2C8780]/40 bg-[#2C8780]/5'
                     : 'border-[rgba(118,118,118,0.2)] bg-[#FAFAFA] hover:border-[#2C8780]/35 hover:bg-[#2C8780]/3',
                 )}>
-                  <input type="file" accept="application/pdf" onChange={handleFileChange} required className="hidden" />
+                  <input type="file" accept="application/pdf" onChange={handleFileChange} className="hidden" />
                   <div className="w-12 h-12 rounded-2xl bg-[#2C8780]/10 flex items-center justify-center">
                     <svg className="w-6 h-6 text-[#2C8780]" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

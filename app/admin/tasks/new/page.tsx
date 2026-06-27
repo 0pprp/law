@@ -13,8 +13,11 @@ import { fmtMoney } from '@/lib/utils'
 import { useBranchId } from '@/context/branch'
 import { ACTIVE_CASE_BLOCK_MSG, hasActiveCurrentTask } from '@/lib/debtor-current-task'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { DebtorSearchPicker } from '@/components/ui/debtor-search-picker'
 import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
+import { DatePicker } from '@/components/ui/date-picker'
 import { cn } from '@/lib/utils'
+import { DEBTOR_TASK_SELECT, type DebtorSearchRow } from '@/lib/debtor-search'
 
 const ALL_TASK_TYPES: TaskType[] = [
   'file_lawsuit', 'notification', 'pleading', 'decision_ratification',
@@ -28,9 +31,8 @@ const ALL_TASK_STATUSES: TaskStatus[] = ['new', 'in_progress', 'completed', 'fai
 export default function NewTaskPage() {
   const router = useRouter()
   const branchId = useBranchId()
-  const [debtors, setDebtors] = useState<any[]>([])
   const [lawyers, setLawyers] = useState<any[]>([])
-  const [selectedDebtor, setSelectedDebtor] = useState<any>(null)
+  const [selectedDebtor, setSelectedDebtor] = useState<DebtorSearchRow | null>(null)
   const [showAllLawyers, setShowAllLawyers] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -48,19 +50,14 @@ export default function NewTaskPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    let dq = supabase.from('debtors').select('id, full_name, phone, governorate, receipt_type, receipt_number, remaining_amount, required_amount, has_contract, case_status, current_task_id').order('full_name')
     let lq = supabase.from('profiles').select('id, full_name, phone, governorate').eq('role', 'lawyer').eq('is_active', true).order('full_name')
-    if (branchId) {
-      dq = (dq as any).eq('branch_id', branchId)
-      lq = (lq as any).eq('branch_id', branchId)
-    }
-    Promise.all([dq, lq]).then(([{ data: d }, { data: l }]) => { setDebtors(d ?? []); setLawyers(l ?? []) })
+    if (branchId) lq = (lq as any).eq('branch_id', branchId)
+    lq.then(({ data: l }) => setLawyers(l ?? []))
   }, [branchId])
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
 
-  function handleDebtorChange(id: string) {
-    const debtor = debtors.find(d => d.id === id) ?? null
+  function handleDebtorChange(id: string, debtor: DebtorSearchRow | null) {
     setSelectedDebtor(debtor)
     setForm(prev => ({ ...prev, debtor_id: id, governorate: debtor?.governorate ?? '', assigned_to: '' }))
   }
@@ -76,7 +73,7 @@ export default function NewTaskPage() {
     e.preventDefault()
     if (!form.debtor_id || !form.task_type) { setError('يرجى اختيار المدين ونوع المهمة'); return }
 
-    const debtor = debtors.find(d => d.id === form.debtor_id)
+    const debtor = selectedDebtor
     if (debtor && hasActiveCurrentTask(debtor)) {
       setError(ACTIVE_CASE_BLOCK_MSG)
       return
@@ -111,20 +108,14 @@ export default function NewTaskPage() {
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <FormFlow>
-          <FormFlowStep step={1} title="المدين / الزبون" subtitle="اختر المدين المراد تكليفه">
-            <FormField label="اختر المدين" required>
-              <PremiumSelect
+          <FormFlowStep step={1} title="المدين / الزبون" subtitle="ابحث بالاسم أو الهاتف أو رقم الوصل">
+            <FormField label="اختر المدين" required hint="اكتب للبحث — لا تُحمّل كل المدينين">
+              <DebtorSearchPicker
                 value={form.debtor_id}
                 onChange={handleDebtorChange}
-                options={debtors.map(d => ({
-                  value: d.id,
-                  label: d.full_name,
-                  hint: [d.governorate, d.receipt_number].filter(Boolean).join(' · ') || undefined,
-                }))}
-                placeholder="— اختر المدين —"
-                headerTitle="اختر المدين"
-                headerSubtitle={`${debtors.length} مدين في هذا الفرع`}
-                searchPlaceholder="بحث بالاسم أو رقم الوصل..."
+                branchId={branchId}
+                select={DEBTOR_TASK_SELECT}
+                disabled={!branchId}
               />
             </FormField>
             {selectedDebtor && (
@@ -204,8 +195,14 @@ export default function NewTaskPage() {
               <FormField label="اسم المحكمة">
                 <input type="text" value={form.court_name} onChange={e => set('court_name', e.target.value)} className={formInputClass} placeholder="مثال: محكمة بداءة بغداد" />
               </FormField>
-              <FormField label="تاريخ الاستحقاق">
-                <input type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} className={formInputClass} dir="ltr" />
+              <FormField label="تاريخ نهاية التكليف">
+                <DatePicker
+                  value={form.due_date}
+                  onChange={v => set('due_date', v)}
+                  headerTitle="تاريخ نهاية التكليف"
+                  placeholder="اختر التاريخ"
+                  minDate={new Date().toISOString().split('T')[0]}
+                />
               </FormField>
               <FormField label="ملاحظات الإدارة" className="md:col-span-2">
                 <textarea value={form.admin_notes} onChange={e => set('admin_notes', e.target.value)} className={cn(formInputClass, 'resize-none')} rows={3} placeholder="ملاحظات اختيارية للمحامي..." />

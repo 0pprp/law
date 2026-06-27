@@ -4,15 +4,24 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
 import Link from 'next/link'
+import { activityActionLabel } from '@/lib/activity-labels'
 import { StatCard } from '@/components/ui/stat-card'
 import { stageAccent, stageIconBg } from '@/lib/stage-config'
-import { batchBackfillDebtorCurrentTasks } from '@/lib/debtor-current-task'
+import { scheduleBranchMaintenance } from '@/lib/branch-maintenance'
+import { cacheGet, cacheSet } from '@/lib/query-cache'
 import {
   fetchDashboardData,
   fetchPendingReviewCount,
-  autoAcceptExpiredAssignments,
   type UnassignedStageCount,
 } from '@/lib/task-assignment'
+
+interface DashboardCache {
+  stages: UnassignedStageCount[]
+  unassigned: number
+  assigned: number
+  pendingReview: number
+  recentActivity: { action: string; created_at: string }[]
+}
 
 function TaskStageIcon() {
   return (
@@ -32,31 +41,39 @@ export default function DashboardPage() {
   const [recentActivity, setRecentActivity] = useState<{ action: string; created_at: string }[]>([])
 
   const loadData = useCallback(async () => {
-    setLoading(true)
     const supabase = createClient()
 
+    if (!branchId) {
+      setStages([])
+      setTotalWaiting(0)
+      setTotalAssigned(0)
+      setTotalPendingReview(0)
+      setRecentActivity([])
+      setLoading(false)
+      return
+    }
+
+    const cacheKey = `dashboard:${branchId}`
+    const cached = cacheGet<DashboardCache>(cacheKey)
+    if (cached) {
+      setStages(cached.stages)
+      setTotalWaiting(cached.unassigned)
+      setTotalAssigned(cached.assigned)
+      setTotalPendingReview(cached.pendingReview)
+      setRecentActivity(cached.recentActivity)
+      setLoading(false)
+    } else {
+      setLoading(true)
+      setStages([])
+      setTotalWaiting(0)
+      setTotalAssigned(0)
+      setTotalPendingReview(0)
+      setRecentActivity([])
+    }
+
+    scheduleBranchMaintenance(supabase, branchId)
+
     try {
-      if (!branchId) {
-        setStages([])
-        setTotalWaiting(0)
-        setTotalAssigned(0)
-        setTotalPendingReview(0)
-        setRecentActivity([])
-        setLoading(false)
-        return
-      }
-
-      let staleQ = supabase
-        .from('debtors')
-        .select('id')
-        .not('case_status', 'eq', 'closed')
-        .is('current_task_id', null)
-        .eq('branch_id', branchId)
-        .limit(50)
-      const { data: staleDebtors } = await staleQ
-      await batchBackfillDebtorCurrentTasks(supabase, (staleDebtors ?? []).map(d => d.id))
-      await autoAcceptExpiredAssignments(supabase, { branchId })
-
       let aq = supabase
         .from('activity_logs')
         .select('action, created_at')
@@ -64,18 +81,26 @@ export default function DashboardPage() {
         .limit(5)
       aq = (aq as any).eq('branch_id', branchId)
 
-      // fetchDashboardData runs fetchCurrentBranchTaskRows once for both stages + hero counts
       const [dashData, pendingReview, activityRes] = await Promise.all([
         fetchDashboardData(supabase, branchId),
         fetchPendingReviewCount(supabase, branchId),
         aq,
       ])
 
-      setStages(dashData.stages)
-      setTotalWaiting(dashData.unassigned)
-      setTotalAssigned(dashData.assigned)
-      setTotalPendingReview(pendingReview)
-      setRecentActivity(activityRes.data ?? [])
+      const next: DashboardCache = {
+        stages: dashData.stages,
+        unassigned: dashData.unassigned,
+        assigned: dashData.assigned,
+        pendingReview,
+        recentActivity: activityRes.data ?? [],
+      }
+      cacheSet(cacheKey, next)
+
+      setStages(next.stages)
+      setTotalWaiting(next.unassigned)
+      setTotalAssigned(next.assigned)
+      setTotalPendingReview(next.pendingReview)
+      setRecentActivity(next.recentActivity)
     } catch (e: unknown) {
       console.error('[admin/dashboard] load error:', e)
     }
@@ -212,7 +237,7 @@ export default function DashboardPage() {
           <div className="divide-y divide-[rgba(118,118,118,0.06)]">
             {recentActivity.map((a, i) => (
               <div key={i} className="flex items-start gap-3 px-5 py-3">
-                <p className="text-xs text-[#231F20] flex-1">{a.action}</p>
+                <p className="text-xs text-[#231F20] flex-1">{activityActionLabel(a.action)}</p>
                 <span className="text-[10px] text-[#767676] shrink-0 tabular-nums" dir="ltr">
                   {a.created_at ? new Date(a.created_at).toLocaleDateString('ar-IQ') : '—'}
                 </span>

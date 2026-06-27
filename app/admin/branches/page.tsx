@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Branch, Court, ExecutionDepartment } from '@/lib/types'
 import { filterSelectableBranches, isMainBranchName } from '@/lib/branch-constants'
+import { PremiumSelect } from '@/components/ui/premium-select'
 
 // ─── shared styles ────────────────────────────────────────────────────────────
 const INP = 'w-full bg-[#F3F1F2] border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
@@ -250,13 +251,19 @@ function CourtsSection({ branches }: { branches: Branch[] }) {
                 placeholder="مثال: محكمة الكرخ الابتدائية" className={INP} />
             </div>
             <div>
-              <label className="block text-xs text-[#767676] mb-1.5 font-semibold">الفرع</label>
-              <select value={form.branch_id} onChange={e => setForm(p => ({ ...p, branch_id: e.target.value }))} className={SEL}>
-                <option value="">— بدون فرع —</option>
-                {branches.filter(b => b.is_active).map(b => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
+              <PremiumSelect
+                value={form.branch_id}
+                onChange={v => setForm(p => ({ ...p, branch_id: v }))}
+                options={[
+                  { value: '', label: '— بدون فرع —' },
+                  ...branches.filter(b => b.is_active).map(b => ({ value: b.id, label: b.name })),
+                ]}
+                fieldLabel="الفرع"
+                placeholder="— بدون فرع —"
+                headerTitle="اختر الفرع"
+                searchPlaceholder="بحث في الفروع..."
+                searchable
+              />
             </div>
           </div>
           <ModalFooter onCancel={() => setModal(false)} onSave={save} saving={saving} disabled={!form.name.trim()} />
@@ -364,13 +371,19 @@ function ExecDeptsSection({ courts }: { courts: Court[] }) {
                 placeholder="مثال: دائرة تنفيذ الكرخ" className={INP} />
             </div>
             <div>
-              <label className="block text-xs text-[#767676] mb-1.5 font-semibold">المحكمة</label>
-              <select value={form.court_id} onChange={e => setForm(p => ({ ...p, court_id: e.target.value }))} className={SEL}>
-                <option value="">— بدون محكمة —</option>
-                {courts.filter(c => c.is_active).map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+              <PremiumSelect
+                value={form.court_id}
+                onChange={v => setForm(p => ({ ...p, court_id: v }))}
+                options={[
+                  { value: '', label: '— بدون محكمة —' },
+                  ...courts.filter(c => c.is_active).map(c => ({ value: c.id, label: c.name })),
+                ]}
+                fieldLabel="المحكمة"
+                placeholder="— بدون محكمة —"
+                headerTitle="اختر المحكمة"
+                searchPlaceholder="بحث في المحاكم..."
+                searchable={courts.filter(c => c.is_active).length > 4}
+              />
             </div>
           </div>
           <ModalFooter onCancel={() => setModal(false)} onSave={save} saving={saving} disabled={!form.name.trim()} />

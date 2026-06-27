@@ -8,10 +8,14 @@ import { fmtDate, fmtMoney } from '@/lib/utils'
 import { logActivity } from '@/lib/activity-log'
 import { extractGpsFromCompletion, releaseLawyerFee } from '@/lib/task-approval'
 import { fetchPendingReviewTasks, fetchBranchLawyers } from '@/lib/task-assignment'
+import { cacheGet, cacheSet, cacheDelete } from '@/lib/query-cache'
+import { refreshAdminNotifications } from '@/lib/admin-notifications'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/ui/page-header'
 import { useBranchId } from '@/context/branch'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { fetchActiveTaskDefinitions } from '@/lib/task-definitions'
+import { buildCompletionFieldLabelMap, resolveCompletionFieldLabel } from '@/lib/completion-field-labels'
 
 interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number }
 
@@ -27,21 +31,26 @@ function parseGps(val: string): { lat: number; lng: number } | null {
 }
 
 /* ─── Completion Data viewer ──────────────────────────────────────────── */
-function CompletionDataCard({ data, gpsKeys }: { data: Record<string, string>; gpsKeys: string[] }) {
+function CompletionDataCard({ data, gpsKeys, fieldLabels }: {
+  data: Record<string, string>
+  gpsKeys: string[]
+  fieldLabels?: Record<string, string>
+}) {
   const entries = Object.entries(data).filter(([, v]) => v)
   if (!entries.length) return null
   return (
     <div className="border border-[rgba(118,118,118,0.15)] rounded-xl overflow-hidden">
-      <div className="bg-[#F3F1F2] px-4 py-2.5 text-xs font-bold text-[#767676] uppercase tracking-wide">
+      <div className="bg-[#F3F1F2] px-4 py-2.5 text-xs font-bold text-[#767676]">
         بيانات الإنجاز
       </div>
       <div className="divide-y divide-[rgba(118,118,118,0.08)]">
         {entries.map(([key, val]) => {
           const isGps = gpsKeys.includes(key)
           const gpsCoords = isGps ? parseGps(val) : null
+          const label = resolveCompletionFieldLabel(key, fieldLabels)
           return (
             <div key={key} className="px-4 py-2.5 flex items-start gap-3">
-              <span className="text-xs text-[#767676] shrink-0 min-w-[100px]">{key.replace(/_/g, ' ')}</span>
+              <span className="text-xs text-[#767676] shrink-0 min-w-[100px]">{label}</span>
               {isGps && gpsCoords ? (
                 <a href={`https://www.google.com/maps?q=${gpsCoords.lat},${gpsCoords.lng}`}
                   target="_blank" rel="noreferrer"
@@ -127,13 +136,6 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
       .eq('id', task.id)
     if (approveErr) { setError(approveErr.message); setSaving(false); return }
 
-    const feeResult = await releaseLawyerFee(supabase, task.id, user.id)
-    if (!feeResult.ok) {
-      setError(feeResult.error ?? 'فشل صرف أتعاب المحامي')
-      setSaving(false)
-      return
-    }
-
     const branchId = task.branch_id ?? debtor?.branch_id ?? null
 
     if (newGps && (!hasExistingGps || updateGps)) {
@@ -163,6 +165,12 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
         setSaving(false)
         return
       }
+      const feeResult = await releaseLawyerFee(supabase, task.id, user.id)
+      if (!feeResult.ok) {
+        setError(feeResult.error ?? 'فشل صرف أتعاب المحامي')
+        setSaving(false)
+        return
+      }
       await logActivity({
         action: 'close_case', entity_type: 'debtor', entity_id: task.debtor_id,
         description: `إغلاق قضية ${debtor?.full_name ?? '—'} — آخر مهمة: ${taskLabel}`,
@@ -187,7 +195,7 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
 
       const { error: linkErr } = await supabase
         .from('debtors')
-        .update({ current_task_id: newTask.id, case_status: 'active' } as any)
+        .update({ current_task_id: newTask.id, last_task_id: task.id, case_status: 'active' } as any)
         .eq('id', task.debtor_id)
       if (linkErr) {
         setError(linkErr.message)
@@ -373,7 +381,11 @@ function ReviewModal({ task, taskDefs, onClose, onDone }: {
             </div>
 
             {Object.keys(completionData).length > 0 && (
-              <CompletionDataCard data={completionData} gpsKeys={gpsKeys} />
+              <CompletionDataCard
+                data={completionData}
+                gpsKeys={gpsKeys}
+                fieldLabels={(task._fieldLabels ?? {}) as Record<string, string>}
+              />
             )}
 
             <div className="border border-[rgba(118,118,118,0.15)] rounded-xl overflow-hidden">
@@ -439,7 +451,6 @@ export default function TaskReviewPage() {
   const [lawyers, setLawyers] = useState<any[]>([])
 
   const load = useCallback(async () => {
-    setLoading(true)
     const supabase = createClient()
 
     if (!branchId) {
@@ -449,6 +460,18 @@ export default function TaskReviewPage() {
       return
     }
 
+    const cacheKey = `tasks:review:${branchId}`
+    const cached = cacheGet<{ tasks: any[]; lawyers: any[] }>(cacheKey)
+    if (cached) {
+      setTasks(cached.tasks)
+      setLawyers(cached.lawyers)
+      setLoading(false)
+    } else {
+      setLoading(true)
+      setTasks([])
+      setLawyers([])
+    }
+
     const [rawTasks, l] = await Promise.all([
       fetchPendingReviewTasks(supabase, branchId),
       fetchBranchLawyers(supabase, branchId),
@@ -456,22 +479,31 @@ export default function TaskReviewPage() {
 
     const defIds = [...new Set(rawTasks.map(x => x.task_definition_id).filter(Boolean))]
     const gpsMap: Record<string, string[]> = {}
+    const labelMapByDef: Record<string, Record<string, string>> = {}
     if (defIds.length > 0) {
       const { data: rfs } = await supabase
         .from('task_required_fields')
-        .select('task_definition_id, field_key')
+        .select('task_definition_id, field_key, field_label, field_type')
         .in('task_definition_id', defIds as string[])
-        .eq('field_type', 'gps')
-      ;(rfs ?? []).forEach((f: { task_definition_id: string; field_key: string }) => {
-        if (!gpsMap[f.task_definition_id]) gpsMap[f.task_definition_id] = []
-        gpsMap[f.task_definition_id].push(f.field_key)
-      })
+      for (const f of rfs ?? []) {
+        if (f.field_type === 'gps') {
+          if (!gpsMap[f.task_definition_id]) gpsMap[f.task_definition_id] = []
+          gpsMap[f.task_definition_id].push(f.field_key)
+        }
+      }
+      for (const defId of defIds) {
+        const fields = (rfs ?? []).filter(r => r.task_definition_id === defId)
+        labelMapByDef[defId as string] = buildCompletionFieldLabelMap(fields)
+      }
     }
 
-    setTasks(rawTasks.map(task => ({
+    const nextTasks = rawTasks.map(task => ({
       ...task,
       _gpsKeys: gpsMap[task.task_definition_id ?? ''] ?? [],
-    })))
+      _fieldLabels: labelMapByDef[task.task_definition_id ?? ''] ?? {},
+    }))
+    cacheSet(cacheKey, { tasks: nextTasks, lawyers: l ?? [] })
+    setTasks(nextTasks)
     setLawyers(l ?? [])
     setLoading(false)
   }, [branchId])
@@ -481,10 +513,8 @@ export default function TaskReviewPage() {
     // Load task defs for next-task selection
     const loadDefs = async () => {
       const supabase = createClient()
-      let q = supabase.from('task_definitions').select('id, label, sort_order, fee_amount').eq('is_active', true).order('sort_order')
-      if (branchId) q = (q as any).eq('branch_id', branchId)
-      const { data } = await q
-      setTaskDefs((data ?? []) as TaskDef[])
+      const data = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, sort_order, fee_amount')
+      setTaskDefs(data as TaskDef[])
     }
     loadDefs()
   }, [load, branchId])
@@ -565,7 +595,9 @@ export default function TaskReviewPage() {
                       <p className="text-[10px] text-[#767676] font-bold mb-1">بيانات الإنجاز</p>
                       {Object.entries(completionData).slice(0, 2).map(([k, v]) => (
                         <p key={k} className="text-xs text-[#231F20] truncate">
-                          <span className="text-[#767676]">{k.replace(/_/g, ' ')}:</span> {v}
+                          <span className="text-[#767676]">
+                            {resolveCompletionFieldLabel(k, task._fieldLabels as Record<string, string> | undefined)}:
+                          </span>{' '}{v}
                         </p>
                       ))}
                       {Object.keys(completionData).length > 2 && (
@@ -593,7 +625,15 @@ export default function TaskReviewPage() {
           task={reviewing}
           taskDefs={taskDefs}
           onClose={() => setReviewing(null)}
-          onDone={() => { setReviewing(null); load() }}
+          onDone={() => {
+            setReviewing(null)
+            if (branchId) {
+              cacheDelete(`tasks:review:${branchId}`)
+              cacheDelete(`dashboard:${branchId}`)
+            }
+            load()
+            refreshAdminNotifications()
+          }}
         />
       )}
     </div>

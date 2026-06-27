@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { cacheClear } from '@/lib/query-cache'
 
 interface BranchCtxValue {
   branchId: string | null
@@ -29,6 +30,7 @@ export function BranchProvider({
   const setBranch = useCallback((id: string, name: string) => {
     setBranchId(id)
     setBranchName(name)
+    cacheClear()
   }, [])
 
   return (

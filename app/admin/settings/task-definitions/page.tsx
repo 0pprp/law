@@ -5,12 +5,13 @@ import { createClient } from '@/lib/supabase/client'
 import { TASK_TYPE_LABELS, REQUIRED_FIELD_LABELS } from '@/lib/types'
 import type { TaskType, RequiredField } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
+import { useBranchId } from '@/context/branch'
 
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
 
 const ALL_FIELDS: RequiredField[] = [
   'note', 'image', 'pdf', 'decision_number', 'case_number',
-  'date', 'gps', 'receipt', 'legal_result',
+  'date', 'gps', 'receipt', 'legal_result', 'court_decision', 'team',
 ]
 
 interface TaskDef {
@@ -173,6 +174,7 @@ function EditModal({ def, reqFields, onClose, onSaved }: {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function TaskDefinitionsPage() {
+  const branchId = useBranchId()
   const [defs, setDefs] = useState<TaskDef[]>([])
   const [reqFields, setReqFields] = useState<ReqField[]>([])
   const [loading, setLoading] = useState(true)
@@ -181,14 +183,22 @@ export default function TaskDefinitionsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     const supabase = createClient()
+    if (!branchId) {
+      setDefs([])
+      setReqFields([])
+      setLoading(false)
+      return
+    }
     const [{ data: defData }, { data: fieldData }] = await Promise.all([
-      (supabase as any).from('task_definitions').select('*').order('sort_order'),
+      (supabase as any).from('task_definitions').select('*').eq('branch_id', branchId).order('sort_order'),
       (supabase as any).from('task_required_fields').select('*').order('sort_order'),
     ])
-    setDefs(defData ?? [])
-    setReqFields(fieldData ?? [])
+    const branchDefs = (defData ?? []) as TaskDef[]
+    const defIds = new Set(branchDefs.map(d => d.id))
+    setDefs(branchDefs)
+    setReqFields(((fieldData ?? []) as ReqField[]).filter(f => defIds.has(f.task_definition_id)))
     setLoading(false)
-  }, [])
+  }, [branchId])
 
   useEffect(() => { load() }, [load])
 

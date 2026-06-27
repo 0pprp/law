@@ -3,6 +3,7 @@ import { getBranchContext } from '@/lib/branch-context'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { isMainBranchName } from '@/lib/branch-constants'
+import { usernameToInternalEmail } from '@/lib/auth-username'
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
 
   const {
-    email, temporary_password, full_name, phone, is_active,
+    temporary_password, full_name, phone, is_active,
     governorate, identity_type, identity_number, identity_category,
     username, branch_id: bodyBranchId,
   } = await request.json()
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
 
   const branchGovernorate = branchRow.name
 
-  if (!email || !full_name || !temporary_password)
+  if (!full_name || !temporary_password)
     return NextResponse.json({ error: 'الحقول المطلوبة غير مكتملة' }, { status: 400 })
   if (temporary_password.length < 6)
     return NextResponse.json({ error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' }, { status: 400 })
@@ -57,8 +58,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'اسم المستخدم مستخدم مسبقاً' }, { status: 409 })
   }
 
+  const internalEmail = usernameToInternalEmail(cleanUsername)
+
   const { data: authData, error: authError } = await admin.auth.admin.createUser({
-    email,
+    email: internalEmail,
     password: temporary_password,
     email_confirm: true,
     user_metadata: { full_name, role: 'lawyer' },

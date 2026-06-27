@@ -10,6 +10,8 @@ import { logActivity } from '@/lib/activity-log'
 import { useBranchId } from '@/context/branch'
 import { buildAssignPayload } from '@/lib/task-assignment'
 import { ACTIVE_CASE_BLOCK_MSG, hasActiveCurrentTask } from '@/lib/debtor-current-task'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { DatePicker } from '@/components/ui/date-picker'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   draft: 'gray',
@@ -125,13 +127,19 @@ function CreateTaskModal({ debtorId, defs, courts, execDepts, onClose, onCreated
 
           {/* Task type */}
           <div>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">نوع المهمة <span className="text-red-500">*</span></label>
-            <select value={taskType} onChange={e => setTaskType(e.target.value as TaskType)} className={SEL}>
-              <option value="">— اختر نوع المهمة —</option>
-              {defs.filter(d => d.is_active).map(d => (
-                <option key={d.task_type} value={d.task_type}>{d.label}</option>
-              ))}
-            </select>
+            <PremiumSelect
+              value={taskType}
+              onChange={v => setTaskType(v as TaskType)}
+              options={[
+                { value: '', label: '— اختر نوع المهمة —' },
+                ...defs.filter(d => d.is_active).map(d => ({ value: d.task_type, label: d.label })),
+              ]}
+              fieldLabel="نوع المهمة"
+              placeholder="— اختر نوع المهمة —"
+              headerTitle="نوع المهمة"
+              searchPlaceholder="بحث في أنواع المهام..."
+              searchable={defs.filter(d => d.is_active).length > 4}
+            />
           </div>
 
           {/* Fee preview */}
@@ -144,32 +152,47 @@ function CreateTaskModal({ debtorId, defs, courts, execDepts, onClose, onCreated
 
           {/* Court */}
           <div>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">المحكمة</label>
-            <select value={courtId} onChange={e => { setCourtId(e.target.value); setExecDeptId('') }} className={SEL}>
-              <option value="">— اختر المحكمة —</option>
-              {courts.filter(c => c.is_active).map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+            <PremiumSelect
+              value={courtId}
+              onChange={v => { setCourtId(v); setExecDeptId('') }}
+              options={[
+                { value: '', label: '— اختر المحكمة —' },
+                ...courts.filter(c => c.is_active).map(c => ({ value: c.id, label: c.name })),
+              ]}
+              fieldLabel="المحكمة"
+              placeholder="— اختر المحكمة —"
+              headerTitle="اختر المحكمة"
+              searchPlaceholder="بحث في المحاكم..."
+              searchable={courts.filter(c => c.is_active).length > 4}
+            />
           </div>
 
           {/* Execution department (filtered by court) */}
           <div>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">دائرة التنفيذ</label>
-            <select value={execDeptId} onChange={e => setExecDeptId(e.target.value)} className={SEL}
-              disabled={filteredExecDepts.length === 0}>
-              <option value="">— اختر دائرة التنفيذ —</option>
-              {filteredExecDepts.filter(d => d.is_active).map(d => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
+            <PremiumSelect
+              value={execDeptId}
+              onChange={setExecDeptId}
+              disabled={filteredExecDepts.length === 0}
+              options={[
+                { value: '', label: '— اختر دائرة التنفيذ —' },
+                ...filteredExecDepts.filter(d => d.is_active).map(d => ({ value: d.id, label: d.name })),
+              ]}
+              fieldLabel="دائرة التنفيذ"
+              placeholder="— اختر دائرة التنفيذ —"
+              headerTitle="اختر دائرة التنفيذ"
+              searchPlaceholder="بحث في الدوائر..."
+              searchable={filteredExecDepts.filter(d => d.is_active).length > 4}
+            />
           </div>
 
-          {/* Due date */}
-          <div>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">تاريخ الاستحقاق</label>
-            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={INP} dir="ltr" />
-          </div>
+          <DatePicker
+            value={dueDate}
+            onChange={setDueDate}
+            fieldLabel="تاريخ نهاية التكليف"
+            headerTitle="تاريخ نهاية التكليف"
+            placeholder="اختر التاريخ"
+            minDate={new Date().toISOString().split('T')[0]}
+          />
 
           {/* Admin notes */}
           <div>
@@ -254,15 +277,23 @@ function AssignModal({ taskId, taskLabel, onClose, onAssigned }: {
 
         <div className="px-5 py-4 space-y-3">
           <div>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">اختر المحامي <span className="text-red-500">*</span></label>
-            <select value={lawyerId} onChange={e => setLawyerId(e.target.value)} className={SEL}>
-              <option value="">— اختر محامياً —</option>
-              {lawyers.map(l => (
-                <option key={l.id} value={l.id}>
-                  {l.full_name}{l.governorate ? ` (${l.governorate})` : ''}
-                </option>
-              ))}
-            </select>
+            <PremiumSelect
+              value={lawyerId}
+              onChange={setLawyerId}
+              options={[
+                { value: '', label: '— اختر محامياً —' },
+                ...lawyers.map(l => ({
+                  value: l.id,
+                  label: l.full_name,
+                  hint: l.governorate || undefined,
+                })),
+              ]}
+              fieldLabel="اختر المحامي"
+              placeholder="— اختر محامياً —"
+              headerTitle="اختر المحامي"
+              searchPlaceholder="بحث بالاسم..."
+              searchable
+            />
           </div>
           {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
         </div>

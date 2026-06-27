@@ -1,15 +1,21 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { TASK_TYPE_LABELS, TASK_STATUS_LABELS } from '@/lib/types'
+import { TASK_TYPE_LABELS } from '@/lib/types'
+import type { TaskStatus, TaskType } from '@/lib/types'
 import { fetchLawyerAssignedTasks } from '@/lib/task-assignment'
 import { fetchLawyerWalletBalance } from '@/lib/task-approval'
-import type { TaskStatus, TaskType } from '@/lib/types'
+import {
+  isLawyerAchievedTask,
+  lawyerTaskStatusLabel,
+} from '@/lib/lawyer-task-display'
+import { isTaskOverdue } from '@/lib/local-date'
 import { Badge } from '@/components/ui/badge'
 import { fmtMoney, fmtDate } from '@/lib/utils'
+import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
 
 // Statuses visible to lawyer (draft is excluded — lawyer never sees unassigned tasks)
 const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
@@ -18,7 +24,6 @@ const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
   { key: 'assigned', label: 'مكلفة' },
   { key: 'in_progress', label: 'قيد التنفيذ' },
   { key: 'submitted', label: 'بانتظار الاعتماد' },
-  { key: 'approved', label: 'معتمدة' },
   { key: 'rejected', label: 'مرفوضة' },
   { key: 'completed', label: 'منجزة' },
 ]
@@ -40,7 +45,8 @@ const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 
 
 export default function LawyerTasksPage() {
   const searchParams = useSearchParams()
-  const initialFilter = searchParams.get('f') as TaskStatus | 'all' | null
+  const rawFilter = searchParams.get('f') as TaskStatus | 'all' | null
+  const initialFilter = rawFilter === 'approved' ? 'completed' : rawFilter
 
   const [tasks, setTasks] = useState<any[]>([])
   const [walletBalance, setWalletBalance] = useState(0)
@@ -49,6 +55,29 @@ export default function LawyerTasksPage() {
     FILTERS.some(f => f.key === initialFilter) ? (initialFilter as TaskStatus | 'all') : 'all'
   )
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [matchingDebtorIds, setMatchingDebtorIds] = useState<string[] | null>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [search])
+
+  useEffect(() => {
+    if (!debouncedSearch.trim()) {
+      setMatchingDebtorIds(null)
+      return
+    }
+    let cancelled = false
+    createClient().auth.getUser().then(async ({ data: { user } }) => {
+      if (!user || cancelled) return
+      const ids = await resolveDebtorIdsBySearch(createClient(), debouncedSearch)
+      if (!cancelled) setMatchingDebtorIds(ids ?? [])
+    })
+    return () => { cancelled = true }
+  }, [debouncedSearch])
 
   useEffect(() => {
     const supabase = createClient()
@@ -64,23 +93,25 @@ export default function LawyerTasksPage() {
     })
   }, [])
 
-  const today = new Date().toISOString().split('T')[0]
-
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: tasks.length }
     tasks.forEach(t => { c[t.task_status] = (c[t.task_status] ?? 0) + 1 })
+    c.completed = tasks.filter(t => isLawyerAchievedTask(t.task_status)).length
     return c
   }, [tasks])
 
   const filtered = useMemo(() => {
     let list = tasks
-    if (filter !== 'all') list = list.filter(t => t.task_status === filter)
-    if (search.trim()) {
-      const q = search.trim().toLowerCase()
-      list = list.filter(t => (t.debtors?.full_name ?? '').toLowerCase().includes(q))
+    if (filter === 'completed') {
+      list = list.filter(t => isLawyerAchievedTask(t.task_status))
+    } else if (filter !== 'all') {
+      list = list.filter(t => t.task_status === filter)
+    }
+    if (matchingDebtorIds !== null) {
+      list = list.filter(t => matchingDebtorIds.includes(t.debtor_id))
     }
     return list
-  }, [tasks, filter, search])
+  }, [tasks, filter, matchingDebtorIds])
 
   const feeBalance = walletBalance
 
@@ -94,7 +125,7 @@ export default function LawyerTasksPage() {
             type="search"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="بحث باسم المدين..."
+            placeholder={DEBTOR_SEARCH_PLACEHOLDER}
             className="w-full bg-[#F3F1F2] border border-slate-200 rounded-xl px-4 py-2.5 pr-10 text-sm font-semibold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780]"
           />
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
@@ -154,15 +185,15 @@ export default function LawyerTasksPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filtered.map((task: any) => {
               const remaining = Number(task.debtors?.remaining_amount ?? 0)
-              const isOverdue = task.due_date && task.due_date < today && !['completed', 'closed', 'failed', 'approved'].includes(task.task_status)
+              const isOverdue = task.due_date && isTaskOverdue(task.due_date) && !['completed', 'closed', 'failed', 'approved'].includes(task.task_status)
               const fee = Number(task.reward_amount ?? 0)
               return (
                 <Link key={task.id} href={`/lawyer/tasks/${task.id}`} className="block">
                   <div className={`bg-white rounded-2xl border shadow-sm active:scale-[0.99] transition-all p-4 h-full flex flex-col ${isOverdue ? 'border-red-200' : 'border-slate-200'}`}>
                     <div className="flex items-start gap-2 mb-1.5">
                       <p className="flex-1 font-bold text-slate-800 text-sm leading-snug truncate">{task.debtors?.full_name ?? '—'}</p>
-                      <Badge variant={STATUS_BADGE[task.task_status as TaskStatus] ?? 'default'}>
-                        {TASK_STATUS_LABELS[task.task_status as TaskStatus] ?? task.task_status}
+                      <Badge variant={isLawyerAchievedTask(task.task_status) ? 'success' : (STATUS_BADGE[task.task_status as TaskStatus] ?? 'default')}>
+                        {lawyerTaskStatusLabel(task.task_status)}
                       </Badge>
                     </div>
                     <p className="text-xs text-slate-400 mb-2.5">{TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type}</p>

@@ -5,45 +5,19 @@ import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
 import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
+import {
+  ACTIVITY_ACTION_BADGE,
+  activityActionLabel,
+  activityEntityLabel,
+  activityLogDescription,
+  fmtActivityDateTime,
+} from '@/lib/activity-labels'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
-import { fmtDateTime } from '@/lib/utils'
-
-const ACTION_LABELS: Record<string, string> = {
-  assign_task: 'تكليف مهمة',
-  update_task: 'تعديل مهمة',
-  complete_task: 'إنجاز مهمة',
-  upload_task_file: 'رفع ملف مهمة',
-  add_expense: 'إضافة صرفية',
-  add_payment: 'تسجيل تسديد',
-  create_debtor: 'إضافة مدين',
-  update_debtor: 'تعديل مدين',
-  delete_debtor: 'حذف مدين',
-  upload_debtor_file: 'رفع ملف مدين',
-  create_lawyer: 'إضافة محامي',
-  update_payment: 'تعديل تسديد',
-  delete_payment: 'حذف تسديد',
-  delete_task: 'حذف مهمة',
-  login: 'تسجيل دخول',
-}
-const ENTITY_LABELS: Record<string, string> = {
-  task: 'مهمة', debtor: 'مدين', expense: 'صرفية', payment: 'تسديد', lawyer: 'محامي', file: 'ملف',
-}
-
-const ACTION_BADGE_MAP: Record<string, 'success' | 'info' | 'warning' | 'danger' | 'orange' | 'navy'> = {
-  complete_task: 'success',
-  assign_task: 'info',
-  update_task: 'warning',
-  delete_debtor: 'danger',
-  delete_payment: 'danger',
-  delete_task: 'danger',
-  add_payment: 'success',
-  add_expense: 'warning',
-}
-
-const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { DateRangePicker } from '@/components/ui/date-range-picker'
 
 export default function ActivityPage() {
   const branchId = useBranchId()
@@ -58,7 +32,11 @@ export default function ActivityPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    let lq = supabase.from('activity_logs').select(`*, user:profiles!activity_logs_user_id_fkey(full_name, role)`).order('created_at', { ascending: false }).limit(1000)
+    let lq = supabase
+      .from('activity_logs')
+      .select(`*, user:profiles!activity_logs_user_id_fkey(full_name, role)`)
+      .order('created_at', { ascending: false })
+      .limit(1000)
     let uq = supabase.from('profiles').select('id, full_name').order('full_name')
     if (branchId) {
       lq = (lq as any).eq('branch_id', branchId)
@@ -84,39 +62,75 @@ export default function ActivityPage() {
   const uniqueActions = useMemo(() => [...new Set(logs.map(l => l.action))].sort(), [logs])
   const uniqueEntities = useMemo(() => [...new Set(logs.map(l => l.entity_type).filter(Boolean))].sort(), [logs])
   const hasFilters = filterUser || filterAction || filterEntity || dateFrom || dateTo
-  function resetFilters() { setFilterUser(''); setFilterAction(''); setFilterEntity(''); setDateFrom(''); setDateTo('') }
+
+  function resetFilters() {
+    setFilterUser('')
+    setFilterAction('')
+    setFilterEntity('')
+    setDateFrom('')
+    setDateTo('')
+  }
 
   return (
     <div className="space-y-5">
       <PageHeader title="سجل النشاط" subtitle={`${filtered.length} إجراء مسجّل`} />
 
-      {/* Filters */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={SEL} dir="ltr" title="من تاريخ" />
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className={SEL} dir="ltr" title="إلى تاريخ" />
-          <select value={filterUser} onChange={e => setFilterUser(e.target.value)} className={SEL}>
-            <option value="">كل المستخدمين</option>
-            {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-          </select>
-          <select value={filterAction} onChange={e => setFilterAction(e.target.value)} className={SEL}>
-            <option value="">كل الإجراءات</option>
-            {uniqueActions.map(a => <option key={a} value={a}>{ACTION_LABELS[a] ?? a}</option>)}
-          </select>
-          <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} className={SEL}>
-            <option value="">كل الكيانات</option>
-            {uniqueEntities.map(e => <option key={e as string} value={e as string}>{ENTITY_LABELS[e as string] ?? e}</option>)}
-          </select>
+        <p className="text-xs font-bold text-[#767676] uppercase tracking-wider mb-3">تصفية السجل</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          <DateRangePicker
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            onChange={({ dateFrom: f, dateTo: t }) => { setDateFrom(f); setDateTo(t) }}
+          />
+          <PremiumSelect
+            value={filterUser}
+            onChange={setFilterUser}
+            options={[
+              { value: '', label: 'كل المستخدمين' },
+              ...users.map(u => ({ value: u.id, label: u.full_name })),
+            ]}
+            fieldLabel="المستخدم"
+            placeholder="كل المستخدمين"
+            headerTitle="تصفية حسب المستخدم"
+            searchPlaceholder="بحث بالاسم..."
+            searchable={users.length > 1}
+          />
+          <PremiumSelect
+            value={filterAction}
+            onChange={setFilterAction}
+            options={[
+              { value: '', label: 'كل الإجراءات' },
+              ...uniqueActions.map(a => ({ value: a, label: activityActionLabel(a) })),
+            ]}
+            fieldLabel="الإجراء"
+            placeholder="كل الإجراءات"
+            headerTitle="تصفية حسب الإجراء"
+            searchPlaceholder="بحث في الإجراءات..."
+            searchable={uniqueActions.length > 1}
+          />
+          <PremiumSelect
+            value={filterEntity}
+            onChange={setFilterEntity}
+            options={[
+              { value: '', label: 'كل الكيانات' },
+              ...uniqueEntities.map(e => ({ value: e as string, label: activityEntityLabel(e as string) })),
+            ]}
+            fieldLabel="الكيان"
+            placeholder="كل الكيانات"
+            headerTitle="تصفية حسب الكيان"
+            searchPlaceholder="بحث في الكيانات..."
+            searchable={uniqueEntities.length > 1}
+          />
         </div>
         {hasFilters && (
           <div className="mt-3 flex items-center justify-between">
             <p className="text-xs text-[#767676]">تصفية نشطة — {filtered.length} من {logs.length}</p>
-            <button onClick={resetFilters} className="text-xs text-[#2C8780] hover:underline">إلغاء التصفية</button>
+            <button type="button" onClick={resetFilters} className="text-xs text-[#2C8780] hover:underline">إلغاء التصفية</button>
           </div>
         )}
       </div>
 
-      {/* Table */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
         {loading ? (
           <div className="flex flex-col items-center gap-3 py-16">
@@ -127,7 +141,6 @@ export default function ActivityPage() {
           <EmptyState title="لا توجد سجلات نشاط" description="ستظهر هنا جميع العمليات التي يجريها المستخدمون" />
         ) : (
           <>
-            {/* Desktop table */}
             <div className="hidden md:block">
               <Table>
                 <THead>
@@ -143,22 +156,27 @@ export default function ActivityPage() {
                 <TBody>
                   {filtered.map((log: any) => (
                     <TR key={log.id}>
-                      <TD><span className="text-xs font-mono text-[#767676]" dir="ltr">{fmtDateTime(log.created_at)}</span></TD>
-                      <TD className="font-semibold text-[#231F20] whitespace-nowrap">{log.user?.full_name ?? '—'}</TD>
+                      <TD>
+                        <span className="text-xs font-mono text-[#767676]" dir="ltr">
+                          {fmtActivityDateTime(log.created_at)}
+                        </span>
+                      </TD>
+                      <TD className="font-semibold text-[#231F20] whitespace-nowrap">
+                        {log.user?.full_name ?? 'مستخدم غير معروف'}
+                      </TD>
                       <TD className="text-[#767676] text-xs whitespace-nowrap">
-                        {log.user?.role ? (USER_ROLE_LABELS[log.user.role as UserRole] ?? log.user.role) : '—'}
+                        {log.user?.role ? (USER_ROLE_LABELS[log.user.role as UserRole] ?? '—') : '—'}
                       </TD>
                       <TD>
-                        <Badge variant={ACTION_BADGE_MAP[log.action] ?? 'orange'}>
-                          {ACTION_LABELS[log.action] ?? log.action}
+                        <Badge variant={ACTIVITY_ACTION_BADGE[log.action] ?? 'orange'}>
+                          {activityActionLabel(log.action)}
                         </Badge>
                       </TD>
-                      <TD className="text-[#767676] text-xs max-w-[200px]">
-                        <span className="line-clamp-2">{log.new_data?.description ?? '—'}</span>
+                      <TD className="text-[#767676] text-xs max-w-[240px]">
+                        <span className="line-clamp-2">{activityLogDescription(log)}</span>
                       </TD>
                       <TD className="text-[#767676] text-xs whitespace-nowrap">
-                        {log.entity_type ? (ENTITY_LABELS[log.entity_type] ?? log.entity_type) : '—'}
-                        {log.entity_id && <span className="text-[rgba(118,118,118,0.4)] mr-1">#{log.entity_id.slice(0, 6)}</span>}
+                        {activityEntityLabel(log.entity_type)}
                       </TD>
                     </TR>
                   ))}
@@ -166,7 +184,6 @@ export default function ActivityPage() {
               </Table>
             </div>
 
-            {/* Mobile timeline */}
             <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
               {filtered.map((log: any) => (
                 <div key={log.id} className="px-4 py-3 flex gap-3">
@@ -175,11 +192,19 @@ export default function ActivityPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2 mb-1">
-                      <Badge variant={ACTION_BADGE_MAP[log.action] ?? 'orange'}>{ACTION_LABELS[log.action] ?? log.action}</Badge>
-                      <span className="text-[10px] text-[#767676] font-mono shrink-0" dir="ltr">{log.created_at?.split('T')[0] ?? '—'}</span>
+                      <Badge variant={ACTIVITY_ACTION_BADGE[log.action] ?? 'orange'}>
+                        {activityActionLabel(log.action)}
+                      </Badge>
+                      <span className="text-[10px] text-[#767676] font-mono shrink-0" dir="ltr">
+                        {fmtActivityDateTime(log.created_at)}
+                      </span>
                     </div>
-                    <p className="text-sm text-[#231F20]">{log.new_data?.description ?? '—'}</p>
-                    <p className="text-xs text-[#767676] mt-0.5">{log.user?.full_name ?? '—'}</p>
+                    <p className="text-sm text-[#231F20]">{activityLogDescription(log)}</p>
+                    <p className="text-xs text-[#767676] mt-0.5">
+                      {log.user?.full_name ?? 'مستخدم غير معروف'}
+                      {' · '}
+                      {activityEntityLabel(log.entity_type)}
+                    </p>
                   </div>
                 </div>
               ))}

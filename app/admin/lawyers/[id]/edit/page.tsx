@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { fmtDate } from '@/lib/utils'
 import { useBranchId, useBranch } from '@/context/branch'
+import { PremiumSelect } from '@/components/ui/premium-select'
 
 const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer']
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
@@ -177,11 +178,14 @@ export default function EditLawyerPage() {
             <Field label="رقم الهاتف">
               <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} className={INP} dir="ltr" />
             </Field>
-            <Field label="الدور">
-              <select value={form.role} onChange={e => set('role', e.target.value)} className={INP}>
-                {ROLES.map(r => <option key={r} value={r}>{USER_ROLE_LABELS[r]}</option>)}
-              </select>
-            </Field>
+            <PremiumSelect
+              value={form.role}
+              onChange={v => set('role', v)}
+              options={ROLES.map(r => ({ value: r, label: USER_ROLE_LABELS[r] }))}
+              fieldLabel="الدور"
+              headerTitle="اختر الدور"
+              searchable={false}
+            />
             <div className="flex items-center gap-2.5">
               <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => set('is_active', e.target.checked)} className="w-4 h-4 rounded accent-[#2C8780]" />
               <label htmlFor="is_active" className="text-sm font-semibold text-slate-700 select-none cursor-pointer">الحساب فعال</label>

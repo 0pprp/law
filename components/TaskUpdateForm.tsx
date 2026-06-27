@@ -6,6 +6,8 @@ import { createClient } from '@/lib/supabase/client'
 import { REQUIRED_FIELD_LABELS } from '@/lib/types'
 import type { RequiredField, Task } from '@/lib/types'
 import { logActivity } from '@/lib/activity-log'
+import { DatePicker } from '@/components/ui/date-picker'
+import { PremiumSelect } from '@/components/ui/premium-select'
 
 interface Attachment {
   id: string
@@ -44,6 +46,23 @@ function CompletionModal({ task, reqFields, fee, onClose, onSubmitted }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [generalNotes, setGeneralNotes] = useState('')
+  const [teamOptions, setTeamOptions] = useState<{ value: string; label: string }[]>([])
+
+  useEffect(() => {
+    const branchId = (task as { branch_id?: string | null }).branch_id
+    if (!branchId) return
+    const supabase = createClient()
+    Promise.all([
+      supabase.from('execution_departments').select('name').eq('branch_id', branchId).eq('is_active', true).order('name'),
+      supabase.from('courts').select('name').eq('branch_id', branchId).eq('is_active', true).order('name'),
+    ]).then(([depts, courts]) => {
+      const names = [...new Set([
+        ...(depts.data ?? []).map((d: { name: string }) => d.name),
+        ...(courts.data ?? []).map((c: { name: string }) => c.name),
+      ])].filter(Boolean)
+      setTeamOptions(names.map(n => ({ value: n, label: n })))
+    })
+  }, [task])
 
   function set(key: string, val: string) {
     setValues(prev => ({ ...prev, [key]: val }))
@@ -131,17 +150,6 @@ function CompletionModal({ task, reqFields, fee, onClose, onSubmitted }: {
 
     if (updateErr) { setError(updateErr.message ?? 'خطأ في التحديث'); setSaving(false); return }
 
-    // Create fee receipt if fee > 0
-    if (fee > 0 && user) {
-      await (supabase as any).from('task_payment_receipts').insert({
-        task_id: task.id,
-        lawyer_id: user.id,
-        amount: fee,
-        notes: `أتعاب مهمة: ${task.task_type}`,
-        status: 'pending',
-      })
-    }
-
     await logActivity({
       action: 'submit_task',
       entity_type: 'task',
@@ -185,6 +193,34 @@ function CompletionModal({ task, reqFields, fee, onClose, onSubmitted }: {
           </div>
         )
 
+      case 'court_decision':
+        return (
+          <div key={f.id}>
+            <label className="block text-xs font-bold text-[#231F20] mb-1.5">{label} {req && <span className="text-red-500">*</span>}</label>
+            <textarea rows={3} value={values[f.field_key] ?? ''} onChange={e => set(f.field_key, e.target.value)}
+              className={INP + ' resize-none'} placeholder="اكتب قرار المحكمة..." />
+          </div>
+        )
+
+      case 'team':
+        return (
+          <div key={f.id}>
+            <PremiumSelect
+              value={values[f.field_key] ?? ''}
+              onChange={v => set(f.field_key, v)}
+              options={[
+                { value: '', label: '— اختر الفريق —' },
+                ...teamOptions,
+              ]}
+              fieldLabel={label + (req ? ' *' : '')}
+              placeholder="— اختر من القائمة —"
+              headerTitle="الفريق"
+              searchPlaceholder="بحث..."
+              searchable={teamOptions.length > 6}
+            />
+          </div>
+        )
+
       case 'decision_number':
         return (
           <div key={f.id}>
@@ -206,9 +242,12 @@ function CompletionModal({ task, reqFields, fee, onClose, onSubmitted }: {
       case 'date':
         return (
           <div key={f.id}>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">{label} {req && <span className="text-red-500">*</span>}</label>
-            <input type="date" value={values[f.field_key] ?? ''} onChange={e => set(f.field_key, e.target.value)}
-              className={INP} dir="ltr" />
+            <DatePicker
+              value={values[f.field_key] ?? ''}
+              onChange={v => set(f.field_key, v)}
+              fieldLabel={label + (req ? ' *' : '')}
+              headerTitle={label}
+            />
           </div>
         )
 
@@ -306,7 +345,7 @@ function CompletionModal({ task, reqFields, fee, onClose, onSubmitted }: {
             <h2 className="font-black text-[#231F20] text-base">تأكيد الإنجاز</h2>
             {fee > 0 && (
               <p className="text-xs text-[#2C8780] font-bold mt-1">
-                الأتعاب: {fee.toLocaleString('en-US')} د.ع — بانتظار اعتماد الإدارة
+                الأتعاب: {fee.toLocaleString('en-US')} د.ع — تُضاف للرصيد عند تكليف المرحلة التالية أو حسم القضية
               </p>
             )}
           </div>

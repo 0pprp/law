@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { fmtDate } from '@/lib/utils'
+import { formatLocalDeadlineFromIso } from '@/lib/local-date'
 import { formatErrorMessage } from '@/lib/format-error'
 
 interface Props {
@@ -46,8 +46,8 @@ export default function TaskAcceptanceActions({ taskId, expiresAt }: Props) {
   }
 
   const deadlineLabel = expiresAt
-    ? fmtDate(expiresAt.split('T')[0]) + ' ' + (expiresAt.split('T')[1]?.slice(0, 5) ?? '')
-    : 'خلال 24 ساعة'
+    ? formatLocalDeadlineFromIso(expiresAt)
+    : 'نهاية اليوم التالي'
 
   return (
     <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-3 shadow-sm">

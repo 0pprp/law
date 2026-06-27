@@ -1,7 +1,7 @@
 export type UserRole = 'admin' | 'employee' | 'accountant' | 'lawyer'
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent'
 export type ReceiptStatus = 'pending' | 'approved' | 'rejected'
-export type WalletTransactionType = 'accountant_transfer' | 'approved_task_payment' | 'manual_adjustment'
+export type WalletTransactionType = 'accountant_transfer' | 'approved_task_payment' | 'manual_adjustment' | 'fee_payout'
 export type TaskStatus =
   | 'draft' | 'assigned' | 'in_progress' | 'submitted' | 'approved' | 'rejected' | 'completed'
   | 'new' | 'failed' | 'postponed' | 'needs_info' | 'closed' | 'waiting_assignment'
@@ -10,7 +10,7 @@ export type TaskStatus =
 export type RequiredField =
   | 'note' | 'image' | 'pdf' | 'decision_number' | 'case_number'
   | 'date' | 'gps' | 'receipt' | 'legal_result'
-  | 'text' | 'number'
+  | 'text' | 'number' | 'court_decision' | 'team'
 
 export const REQUIRED_FIELD_LABELS: Record<RequiredField, string> = {
   note: 'ملاحظة',
@@ -22,6 +22,8 @@ export const REQUIRED_FIELD_LABELS: Record<RequiredField, string> = {
   gps: 'موقع GPS',
   receipt: 'وصل الصرف',
   legal_result: 'النتيجة القانونية',
+  court_decision: 'قرار المحكمة',
+  team: 'الفريق',
   text: 'نص',
   number: 'رقم',
 }
@@ -316,7 +318,8 @@ export const RECEIPT_STATUS_LABELS: Record<ReceiptStatus, string> = {
 }
 
 export const WALLET_TRANSACTION_LABELS: Record<WalletTransactionType, string> = {
-  accountant_transfer: 'تحويل من المحاسب',
+  accountant_transfer: 'إيداع في المحفظة',
   approved_task_payment: 'أتعاب مهمة معتمدة',
   manual_adjustment: 'تعديل يدوي',
+  fee_payout: 'صرف أتعاب',
 }

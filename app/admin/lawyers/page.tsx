@@ -1,5 +1,4 @@
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { getBranchContext } from '@/lib/branch-context'
 import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
@@ -21,19 +20,15 @@ const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange
 
 export default async function LawyersPage() {
   const supabase = await createClient()
-  const admin = createAdminClient()
   const { branchId } = await getBranchContext()
 
   let profilesQ = supabase.from('profiles').select('*').order('created_at', { ascending: false })
   if (branchId) profilesQ = (profilesQ as any).eq('branch_id', branchId)
 
-  const [{ data: profiles }, { data: authList }, { data: attachmentRows }] = await Promise.all([
+  const [{ data: profiles }, { data: attachmentRows }] = await Promise.all([
     profilesQ,
-    admin.auth.admin.listUsers({ perPage: 1000 }),
     supabase.from('lawyer_attachments').select('lawyer_id'),
   ])
-
-  const emailMap = new Map((authList?.users ?? []).map(u => [u.id, u.email ?? '']))
   const attachCountMap = new Map<string, number>()
   for (const row of attachmentRows ?? []) {
     attachCountMap.set(row.lawyer_id, (attachCountMap.get(row.lawyer_id) ?? 0) + 1)
@@ -69,7 +64,6 @@ export default async function LawyersPage() {
                   <tr>
                     <TH>الاسم</TH>
                     <TH>اسم المستخدم</TH>
-                    <TH>البريد الإلكتروني</TH>
                     <TH>الدور</TH>
                     <TH>الهاتف</TH>
                     <TH>الحالة</TH>
@@ -98,7 +92,6 @@ export default async function LawyersPage() {
                           ? <span className="font-mono text-xs text-[#767676] bg-[rgba(118,118,118,0.06)] px-2 py-1 rounded-lg" dir="ltr">{user.username}</span>
                           : <Badge variant="warning">لا يوجد</Badge>}
                       </TD>
-                      <TD><span className="text-xs text-[#767676] font-mono" dir="ltr">{emailMap.get(user.id) ?? '—'}</span></TD>
                       <TD>
                         <Badge variant={ROLE_BADGE[user.role as UserRole] ?? 'default'}>
                           {USER_ROLE_LABELS[user.role as UserRole] ?? user.role}

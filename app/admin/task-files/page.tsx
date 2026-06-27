@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { TASK_TYPE_LABELS, TASK_STATUS_LABELS } from '@/lib/types'
 import type { TaskType, TaskStatus } from '@/lib/types'
@@ -10,6 +10,9 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtDate } from '@/lib/utils'
 import { useBranchId } from '@/context/branch'
+import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { DateRangePicker } from '@/components/ui/date-range-picker'
 
 function formatSize(bytes: number | null) {
   if (!bytes) return '—'
@@ -42,6 +45,8 @@ export default function TaskFilesPage() {
   const [openingId, setOpeningId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [filterLawyer, setFilterLawyer] = useState('')
   const [filterType, setFilterType] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
@@ -49,25 +54,48 @@ export default function TaskFilesPage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
 
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [search])
+
   const load = useCallback(async () => {
+    setLoading(true)
     const supabase = createClient()
     let lq = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
     if (branchId) lq = (lq as any).eq('branch_id', branchId)
-    const [{ data: f }, { data: l }] = await Promise.all([
-      supabase.from('task_attachments').select(`*, task:tasks!task_attachments_task_id_fkey(task_type, task_status, governorate, branch_id, assigned_to, debtor:debtors!tasks_debtor_id_fkey(full_name, governorate), lawyer:profiles!tasks_assigned_to_fkey(id, full_name))`).order('created_at', { ascending: false }),
-      lq,
-    ])
-    const fileRows = branchId
+
+    let debtorIds: string[] | null = null
+    if (debouncedSearch.trim()) {
+      debtorIds = await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId)
+      if (!debtorIds.length) {
+        setFiles([])
+        const { data: l } = await lq
+        setLawyers(l ?? [])
+        setLoading(false)
+        return
+      }
+    }
+
+    let fq = supabase.from('task_attachments').select(`*, task:tasks!task_attachments_task_id_fkey(task_type, task_status, governorate, branch_id, assigned_to, debtor_id, debtor:debtors!tasks_debtor_id_fkey(full_name, governorate, phone, receipt_number), lawyer:profiles!tasks_assigned_to_fkey(id, full_name))`).order('created_at', { ascending: false }).limit(500)
+
+    const [{ data: f }, { data: l }] = await Promise.all([fq, lq])
+    let fileRows = branchId
       ? (f ?? []).filter((row: any) => row.task?.branch_id === branchId)
       : (f ?? [])
-    setFiles(fileRows); setLawyers(l ?? [])
+    if (debtorIds) {
+      const idSet = new Set(debtorIds)
+      fileRows = fileRows.filter((row: any) => idSet.has(row.task?.debtor_id))
+    }
+    setFiles(fileRows)
+    setLawyers(l ?? [])
     setLoading(false)
-  }, [branchId])
+  }, [branchId, debouncedSearch])
 
   useEffect(() => { load() }, [load])
 
   const filtered = useMemo(() => files.filter(f => {
-    if (search && !f.task?.debtor?.full_name?.includes(search)) return false
     if (filterLawyer && f.task?.lawyer?.id !== filterLawyer) return false
     if (filterType && f.task?.task_type !== filterType) return false
     if (filterStatus && f.task?.task_status !== filterStatus) return false
@@ -77,7 +105,7 @@ export default function TaskFilesPage() {
     if (dateFrom && date < dateFrom) return false
     if (dateTo && date > dateTo) return false
     return true
-  }), [files, search, filterLawyer, filterType, filterStatus, filterMime, dateFrom, dateTo])
+  }), [files, filterLawyer, filterType, filterStatus, filterMime, dateFrom, dateTo])
 
   async function openFile(fileId: string, filePath: string) {
     setOpeningId(fileId)
@@ -111,26 +139,62 @@ export default function TaskFilesPage() {
       {/* Filters */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <input type="text" placeholder="بحث باسم المدين..." value={search} onChange={e => setSearch(e.target.value)} className={SEL} />
-          <select value={filterLawyer} onChange={e => setFilterLawyer(e.target.value)} className={SEL}>
-            <option value="">كل المحامين</option>
-            {lawyers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-          </select>
-          <select value={filterType} onChange={e => setFilterType(e.target.value)} className={SEL}>
-            <option value="">كل أنواع المهام</option>
-            {ALL_TYPES.map(t => <option key={t} value={t}>{TASK_TYPE_LABELS[t]}</option>)}
-          </select>
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className={SEL}>
-            <option value="">كل الحالات</option>
-            {ALL_STATUSES.map(s => <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>)}
-          </select>
-          <select value={filterMime} onChange={e => setFilterMime(e.target.value)} className={SEL}>
-            <option value="">كل أنواع الملفات</option>
-            <option value="pdf">PDF فقط</option>
-            <option value="image">صور فقط</option>
-          </select>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={SEL} dir="ltr" title="من تاريخ" />
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className={SEL} dir="ltr" title="إلى تاريخ" />
+          <input type="search" placeholder={DEBTOR_SEARCH_PLACEHOLDER} value={search} onChange={e => setSearch(e.target.value)} className={SEL} />
+          <PremiumSelect
+            value={filterLawyer}
+            onChange={setFilterLawyer}
+            options={[
+              { value: '', label: 'كل المحامين' },
+              ...lawyers.map(l => ({ value: l.id, label: l.full_name })),
+            ]}
+            placeholder="كل المحامين"
+            headerTitle="تصفية حسب المحامي"
+            searchPlaceholder="بحث بالاسم..."
+            searchable
+          />
+          <PremiumSelect
+            value={filterType}
+            onChange={setFilterType}
+            options={[
+              { value: '', label: 'كل أنواع المهام' },
+              ...ALL_TYPES.map(t => ({ value: t, label: TASK_TYPE_LABELS[t] })),
+            ]}
+            placeholder="كل أنواع المهام"
+            headerTitle="تصفية حسب نوع المهمة"
+            searchPlaceholder="بحث في أنواع المهام..."
+            searchable={ALL_TYPES.length > 4}
+          />
+          <PremiumSelect
+            value={filterStatus}
+            onChange={setFilterStatus}
+            options={[
+              { value: '', label: 'كل الحالات' },
+              ...ALL_STATUSES.map(s => ({ value: s, label: TASK_STATUS_LABELS[s] })),
+            ]}
+            placeholder="كل الحالات"
+            headerTitle="تصفية حسب الحالة"
+            searchPlaceholder="بحث في الحالات..."
+            searchable={ALL_STATUSES.length > 4}
+          />
+          <PremiumSelect
+            value={filterMime}
+            onChange={setFilterMime}
+            options={[
+              { value: '', label: 'كل أنواع الملفات' },
+              { value: 'pdf', label: 'PDF فقط' },
+              { value: 'image', label: 'صور فقط' },
+            ]}
+            placeholder="كل أنواع الملفات"
+            headerTitle="تصفية حسب نوع الملف"
+            searchable={false}
+          />
+          <div className="col-span-2 md:col-span-2">
+            <DateRangePicker
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              onChange={({ dateFrom: f, dateTo: t }) => { setDateFrom(f); setDateTo(t) }}
+            />
+          </div>
         </div>
         {hasFilters && (
           <div className="mt-3 flex items-center justify-between">

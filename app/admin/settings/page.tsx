@@ -6,6 +6,7 @@ import { useBranchId } from '@/context/branch'
 import { REQUIRED_FIELD_LABELS } from '@/lib/types'
 import type { RequiredField } from '@/lib/types'
 import { filterSelectableBranches } from '@/lib/branch-constants'
+import { PremiumSelect } from '@/components/ui/premium-select'
 
 // ── Shared styles ──────────────────────────────────────────────
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/20 focus:border-[#2C8780] transition-all'
@@ -367,11 +368,19 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
             <input value={form.name} onChange={e => setForm(f => f ? { ...f, name: e.target.value } : f)} className={INP} placeholder="مثال: دائرة تنفيذ الرصافة" />
           </div>
           <div>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">المحكمة المرتبطة</label>
-            <select value={form.court_id} onChange={e => setForm(f => f ? { ...f, court_id: e.target.value } : f)} className={SEL}>
-              <option value="">— اختر محكمة —</option>
-              {courts.filter(c => c.is_active).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <PremiumSelect
+              value={form.court_id}
+              onChange={v => setForm(f => f ? { ...f, court_id: v } : f)}
+              options={[
+                { value: '', label: '— اختر محكمة —' },
+                ...courts.filter(c => c.is_active).map(c => ({ value: c.id, label: c.name })),
+              ]}
+              fieldLabel="المحكمة المرتبطة"
+              placeholder="— اختر محكمة —"
+              headerTitle="اختر المحكمة"
+              searchPlaceholder="بحث في المحاكم..."
+              searchable={courts.filter(c => c.is_active).length > 4}
+            />
           </div>
           <ErrMsg msg={err} />
         </Modal>
@@ -402,6 +411,8 @@ const FIELD_TYPE_OPTIONS = [
   { value: 'decision_number', label: 'رقم قرار' },
   { value: 'case_number',     label: 'رقم دعوى' },
   { value: 'legal_result',    label: 'نتيجة قانونية' },
+  { value: 'court_decision',  label: 'قرار المحكمة' },
+  { value: 'team',            label: 'الفريق (قائمة)' },
 ]
 
 interface TaskDef {
@@ -667,13 +678,15 @@ function TaskDefsTab() {
                       </button>
                     </div>
                     <div className="flex items-center gap-2">
-                      <select
+                      <PremiumSelect
                         value={f.field_type}
-                        onChange={e => setEditDynField(i, 'field_type', e.target.value)}
-                        className={`${SEL} flex-1`}
-                      >
-                        {FIELD_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
+                        onChange={v => setEditDynField(i, 'field_type', v)}
+                        options={FIELD_TYPE_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+                        headerTitle="نوع الحقل"
+                        searchPlaceholder="بحث في أنواع الحقول..."
+                        searchable={FIELD_TYPE_OPTIONS.length > 4}
+                        className="flex-1"
+                      />
                       <label className="flex items-center gap-1.5 text-xs font-semibold text-[#231F20] cursor-pointer shrink-0">
                         <input
                           type="checkbox"
@@ -741,13 +754,15 @@ function TaskDefsTab() {
                       </button>
                     </div>
                     <div className="flex items-center gap-2">
-                      <select
+                      <PremiumSelect
                         value={f.field_type}
-                        onChange={e => setDynField(i, 'field_type', e.target.value)}
-                        className={`${SEL} flex-1`}
-                      >
-                        {FIELD_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
+                        onChange={v => setDynField(i, 'field_type', v)}
+                        options={FIELD_TYPE_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+                        headerTitle="نوع الحقل"
+                        searchPlaceholder="بحث في أنواع الحقول..."
+                        searchable={FIELD_TYPE_OPTIONS.length > 4}
+                        className="flex-1"
+                      />
                       <label className="flex items-center gap-1.5 text-xs font-semibold text-[#231F20] cursor-pointer shrink-0">
                         <input
                           type="checkbox"

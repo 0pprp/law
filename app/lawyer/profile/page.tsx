@@ -4,7 +4,16 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { fetchLawyerWalletBalance } from '@/lib/task-approval'
-import { fmtMoney } from '@/lib/utils'
+import { fetchLawyerWalletTransactions, type LawyerWalletRow } from '@/lib/lawyer-wallet'
+import {
+  fetchLawyerAvailablePayoutBalance,
+  fetchLawyerPayoutRequests,
+  type LawyerPayoutRequest,
+} from '@/lib/lawyer-payout-requests'
+import LawyerPayoutRequestForm from '@/components/LawyerPayoutRequestForm'
+import { WALLET_TRANSACTION_LABELS } from '@/lib/types'
+import type { WalletTransactionType } from '@/lib/types'
+import { fmtMoney, fmtDate } from '@/lib/utils'
 
 function InfoRow({ label, value, dir }: { label: string; value?: string | null; dir?: 'ltr' }) {
   if (!value) return null
@@ -19,36 +28,39 @@ function InfoRow({ label, value, dir }: { label: string; value?: string | null; 
 export default function LawyerProfilePage() {
   const router = useRouter()
   const [profile, setProfile] = useState<any>(null)
-  const [stats, setStats] = useState({ completed: 0, total: 0, feeBalance: 0, collections: 0, attachmentCount: 0 })
+  const [stats, setStats] = useState({ completed: 0, total: 0, feeBalance: 0 })
+  const [walletTxs, setWalletTxs] = useState<LawyerWalletRow[]>([])
+  const [payoutRequests, setPayoutRequests] = useState<LawyerPayoutRequest[]>([])
+  const [availablePayout, setAvailablePayout] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loggingOut, setLoggingOut] = useState(false)
 
-  useEffect(() => {
-    async function load() {
+  async function load() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/login'); return }
-      const [{ data: p }, { count }, { data: tasks }, { data: payments }, walletBalance] = await Promise.all([
+      const [{ data: p }, { data: tasks }, walletBalance, txs, available, requests] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
-        supabase.from('lawyer_attachments').select('*', { count: 'exact', head: true }).eq('lawyer_id', user.id),
         supabase.from('tasks').select('task_type, task_status').eq('assigned_to', user.id),
-        supabase.from('debtor_payments').select('amount').eq('lawyer_id', user.id),
         fetchLawyerWalletBalance(supabase, user.id),
+        fetchLawyerWalletTransactions(supabase, user.id, 30),
+        fetchLawyerAvailablePayoutBalance(supabase, user.id),
+        fetchLawyerPayoutRequests(supabase, user.id),
       ])
       setProfile(p)
+      setWalletTxs(txs)
+      setAvailablePayout(available)
+      setPayoutRequests(requests)
       const allTasks = tasks ?? []
       const completed = allTasks.filter(t => t.task_status === 'approved' || t.task_status === 'completed')
       setStats({
         completed: completed.length,
         total: allTasks.length,
         feeBalance: walletBalance,
-        collections: (payments ?? []).reduce((s, pay) => s + Number(pay.amount), 0),
-        attachmentCount: count ?? 0,
       })
       setLoading(false)
-    }
-    load()
-  }, [router])
+  }
+  useEffect(() => { void load() }, [router])
 
   async function handleLogout() {
     setLoggingOut(true)
@@ -108,18 +120,13 @@ export default function LawyerProfilePage() {
           <p className="text-[10px] font-semibold text-slate-400 mb-1">رصيد الأتعاب</p>
           <p className="text-lg font-black text-[#2C8780] tabular-nums leading-tight">{fmtMoney(stats.feeBalance)}</p>
         </div>
-        <div className="bg-white rounded-2xl border border-green-200 shadow-sm p-4">
-          <p className="text-[10px] font-semibold text-slate-400 mb-1">مجموع التحصيلات</p>
-          <p className="text-lg font-black text-green-700 tabular-nums leading-tight">{fmtMoney(stats.collections)}</p>
-        </div>
-        {stats.attachmentCount > 0 && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-            <p className="text-[10px] font-semibold text-slate-400 mb-1">المستمسكات</p>
-            <p className="text-2xl font-black text-slate-800 tabular-nums">{stats.attachmentCount}</p>
-            <p className="text-xs text-slate-400 mt-0.5">ملف مرفوع</p>
-          </div>
-        )}
       </div>
+
+      <LawyerPayoutRequestForm
+        availableBalance={availablePayout}
+        requests={payoutRequests}
+        onSubmitted={load}
+      />
 
       {/* Contact info */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-4">
@@ -142,6 +149,40 @@ export default function LawyerProfilePage() {
           <InfoRow label="فئة الهوية" value={profile.identity_category} />
         </div>
       )}
+
+      {/* Wallet history */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-4 pt-4 pb-2 border-b border-slate-100">
+          <p className="text-xs font-bold text-slate-400">سجل الأتعاب</p>
+        </div>
+        {walletTxs.length === 0 ? (
+          <p className="text-sm text-slate-400 text-center py-8">لا توجد حركات بعد</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {walletTxs.map(tx => {
+              const amt = Number(tx.amount)
+              const isCredit = amt > 0
+              return (
+                <div key={tx.id} className="px-4 py-3 flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold ${isCredit ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                    {isCredit ? '+' : '−'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-black tabular-nums ${isCredit ? 'text-emerald-700' : 'text-red-600'}`} dir="ltr">
+                      {isCredit ? '+' : ''}{fmtMoney(amt)}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {WALLET_TRANSACTION_LABELS[tx.type as WalletTransactionType] ?? tx.type}
+                    </p>
+                    {tx.notes && <p className="text-[10px] text-slate-400 truncate">{tx.notes}</p>}
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono shrink-0" dir="ltr">{fmtDate(tx.created_at)}</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Logout */}
       <button onClick={handleLogout} disabled={loggingOut}

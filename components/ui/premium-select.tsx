@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 export interface PremiumSelectOption {
@@ -15,6 +15,8 @@ interface PremiumSelectProps {
   onChange: (value: string) => void
   options: PremiumSelectOption[]
   placeholder?: string
+  /** Small caption above trigger — same as branch selector */
+  fieldLabel?: string
   disabled?: boolean
   searchable?: boolean
   searchPlaceholder?: string
@@ -22,12 +24,17 @@ interface PremiumSelectProps {
   headerSubtitle?: string
   className?: string
   error?: boolean
+  icon?: ReactNode
 }
 
-function ChevronIcon({ open }: { open: boolean }) {
+function ChevronIcon({ open, inverted }: { open: boolean; inverted?: boolean }) {
   return (
     <svg
-      className={cn('w-3.5 h-3.5 shrink-0 transition-transform duration-200', open && 'rotate-180')}
+      className={cn(
+        'w-3.5 h-3.5 shrink-0 transition-all duration-200',
+        open && 'rotate-180',
+        inverted ? 'text-white/80' : 'text-[#767676] group-hover:text-[#2C8780]',
+      )}
       fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24"
     >
       <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -43,11 +50,20 @@ function CheckIcon() {
   )
 }
 
+function DefaultIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
+    </svg>
+  )
+}
+
 export function PremiumSelect({
   value,
   onChange,
   options,
   placeholder = '— اختر —',
+  fieldLabel,
   disabled = false,
   searchable = true,
   searchPlaceholder = 'بحث...',
@@ -55,6 +71,7 @@ export function PremiumSelect({
   headerSubtitle,
   className,
   error,
+  icon,
 }: PremiumSelectProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -84,14 +101,16 @@ export function PremiumSelect({
   }, [open])
 
   useEffect(() => {
-    if (open) setTimeout(() => searchRef.current?.focus(), 50)
-  }, [open])
+    if (open && searchable) setTimeout(() => searchRef.current?.focus(), 50)
+  }, [open, searchable])
 
   function pick(val: string) {
     onChange(val)
     setOpen(false)
     setSearch('')
   }
+
+  const showSearch = searchable && options.length > 1
 
   return (
     <div ref={ref} className={cn('relative', className)} dir="rtl">
@@ -100,36 +119,48 @@ export function PremiumSelect({
         disabled={disabled}
         onClick={() => !disabled && setOpen(v => !v)}
         className={cn(
-          'group w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border transition-all duration-200 text-right',
+          'group w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border transition-all duration-200 text-right select-none',
           open
-            ? 'bg-[#2C8780]/5 border-[#2C8780]/40 ring-2 ring-[#2C8780]/15'
-            : 'bg-white border-[rgba(118,118,118,0.18)] hover:border-[#2C8780]/35 hover:shadow-sm',
-          error && 'border-red-400 ring-red-100',
+            ? 'bg-[#2C8780] border-[#1D6365] shadow-lg shadow-[#2C8780]/25 text-white'
+            : 'bg-white border-[rgba(118,118,118,0.18)] hover:border-[#2C8780]/40 hover:shadow-sm text-[#231F20]',
+          error && !open && 'border-red-400 ring-red-100',
           disabled && 'opacity-50 cursor-not-allowed',
         )}
       >
         <div className={cn(
-          'w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors',
-          open ? 'bg-[#2C8780]/15' : 'bg-[#2C8780]/8 group-hover:bg-[#2C8780]/12',
+          'w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-all duration-200',
+          open ? 'bg-white/15' : 'bg-[#2C8780]/8 group-hover:bg-[#2C8780]/12',
         )}>
-          <svg className="w-3.5 h-3.5 text-[#2C8780]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
-          </svg>
+          {icon ?? (
+            <DefaultIcon className={cn('w-3.5 h-3.5', open ? 'text-white' : 'text-[#2C8780]')} />
+          )}
         </div>
         <div className="flex-1 min-w-0 text-right">
-          <span className={cn('block text-sm truncate', selected ? 'font-bold text-[#231F20]' : 'font-medium text-[#767676]')}>
+          {fieldLabel && (
+            <span className={cn(
+              'block text-[9px] font-bold uppercase tracking-wide leading-none mb-0.5',
+              open ? 'text-white/60' : 'text-[#767676]',
+            )}>
+              {fieldLabel}
+            </span>
+          )}
+          <span className={cn(
+            'block text-xs font-bold truncate leading-tight',
+            !selected && !open && 'text-[#767676] font-medium',
+            open && 'text-white',
+          )}>
             {selected?.label ?? placeholder}
           </span>
-          {selected?.hint && (
+          {selected?.hint && !open && (
             <span className="block text-[10px] text-[#2C8780] font-semibold mt-0.5 truncate">{selected.hint}</span>
           )}
         </div>
-        <ChevronIcon open={open} />
+        <ChevronIcon open={open} inverted={open} />
       </button>
 
       {open && (
         <div
-          className="absolute z-[100] left-0 right-0 top-full mt-2 rounded-2xl overflow-hidden"
+          className="absolute z-[200] left-0 right-0 top-full mt-2 rounded-2xl overflow-hidden"
           style={{
             background: 'white',
             border: '1px solid rgba(118,118,118,0.12)',
@@ -137,20 +168,18 @@ export function PremiumSelect({
           }}
         >
           <div
-            className="px-4 py-3 flex items-center justify-between gap-2"
+            className="px-4 py-3 flex items-center gap-2"
             style={{ background: 'linear-gradient(135deg, #2C8780 0%, #1D6365 100%)' }}
           >
             <div className="min-w-0">
               <p className="text-xs font-bold text-white leading-none">{headerTitle}</p>
-              {(headerSubtitle ?? options.length > 0) && (
-                <p className="text-[10px] text-white/55 mt-0.5">
-                  {headerSubtitle ?? `${options.length} خيار متاح`}
-                </p>
-              )}
+              <p className="text-[10px] text-white/55 mt-0.5">
+                {headerSubtitle ?? `${options.length} خيار متاح`}
+              </p>
             </div>
           </div>
 
-          {searchable && options.length > 4 && (
+          {showSearch && (
             <div className="p-3 border-b border-[rgba(118,118,118,0.08)]">
               <div className="relative">
                 <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#767676] pointer-events-none" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -165,11 +194,22 @@ export function PremiumSelect({
                   className="w-full pr-9 pl-3 py-2 text-xs rounded-xl border-0 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/20 placeholder:text-[#767676] font-medium bg-[#F3F1F2]"
                   dir="rtl"
                 />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[#767676] hover:text-[#231F20]"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
               </div>
             </div>
           )}
 
-          <div className="max-h-56 overflow-y-auto overscroll-contain py-1">
+          <div className="max-h-60 overflow-y-auto overscroll-contain py-1">
             {filtered.length === 0 ? (
               <div className="py-8 text-center text-xs text-[#767676]">لا توجد نتائج</div>
             ) : (
@@ -177,7 +217,7 @@ export function PremiumSelect({
                 const isActive = option.value === value
                 return (
                   <button
-                    key={option.value}
+                    key={option.value || '__empty__'}
                     type="button"
                     disabled={option.disabled}
                     onClick={() => !option.disabled && pick(option.value)}

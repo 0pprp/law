@@ -81,6 +81,7 @@ UPDATE debtors SET current_task_id = NULL, last_task_id = NULL;
 
 -- Wallet & receipts
 DELETE FROM lawyer_wallet_transactions;
+DELETE FROM lawyer_payout_requests;
 DELETE FROM task_payment_receipts;
 
 -- Attachments & notes

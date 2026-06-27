@@ -1,16 +1,22 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
 import { TASK_TYPE_LABELS } from '@/lib/types'
 import type { TaskType } from '@/lib/types'
 import { logActivity } from '@/lib/activity-log'
+import { refreshAdminNotifications } from '@/lib/admin-notifications'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtMoney, fmtDate } from '@/lib/utils'
+import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { DateRangePicker } from '@/components/ui/date-range-picker'
+import { DatePicker } from '@/components/ui/date-picker'
 
 const INP = 'w-full border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2.5 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
@@ -33,16 +39,24 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
 
 export default function ExpensesPage() {
   const branchId = useBranchId()
+  const searchParams = useSearchParams()
+  const initialStatus = searchParams.get('status') as StatusFilter | null
+  const initialType = searchParams.get('type')
   const [expenses, setExpenses] = useState<any[]>([])
   const [lawyers, setLawyers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    initialStatus && STATUS_TABS.some(t => t.key === initialStatus) ? initialStatus : 'all',
+  )
+  const [typeFilter, setTypeFilter] = useState(initialType ?? '')
   const [editingExpense, setEditingExpense] = useState<any | null>(null)
   const [editForm, setEditForm] = useState({ amount: '', expense_type: '', description: '', expense_date: '' })
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [editError, setEditError] = useState('')
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [filterLawyer, setFilterLawyer] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -51,30 +65,48 @@ export default function ExpensesPage() {
   const [rejectSaving, setRejectSaving] = useState(false)
   const [actionId, setActionId] = useState<string | null>(null)
 
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [search])
+
   const load = useCallback(async () => {
+    setLoading(true)
     const supabase = createClient()
-    let eq = supabase.from('expenses').select(`*, debtors(full_name, governorate), profiles!expenses_created_by_fkey(full_name), tasks!expenses_task_id_fkey(task_type)`).order('expense_date', { ascending: false })
+    let eq = supabase.from('expenses').select(`*, debtors(full_name, governorate, phone, receipt_number), profiles!expenses_created_by_fkey(full_name), tasks!expenses_task_id_fkey(task_type)`).order('expense_date', { ascending: false }).limit(500)
     let lq = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
     if (branchId) {
       eq = (eq as any).eq('branch_id', branchId)
       lq = (lq as any).eq('branch_id', branchId)
     }
+    if (debouncedSearch.trim()) {
+      const ids = await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId)
+      if (!ids?.length) {
+        setExpenses([])
+        const { data: l } = await lq
+        setLawyers(l ?? [])
+        setLoading(false)
+        return
+      }
+      eq = (eq as any).in('debtor_id', ids)
+    }
     const [{ data: e }, { data: l }] = await Promise.all([eq, lq])
     setExpenses(e ?? []); setLawyers(l ?? [])
     setLoading(false)
-  }, [branchId])
+  }, [branchId, debouncedSearch])
 
   useEffect(() => { load() }, [load])
 
   const filtered = useMemo(() => expenses.filter(exp => {
     const s = exp.status ?? 'approved'
     if (statusFilter !== 'all' && s !== statusFilter) return false
-    if (search && !exp.debtors?.full_name?.includes(search)) return false
+    if (typeFilter && (exp.expense_type ?? '') !== typeFilter) return false
     if (filterLawyer && exp.created_by !== filterLawyer) return false
     if (dateFrom && exp.expense_date < dateFrom) return false
     if (dateTo && exp.expense_date > dateTo) return false
     return true
-  }), [expenses, search, filterLawyer, dateFrom, dateTo, statusFilter])
+  }), [expenses, filterLawyer, dateFrom, dateTo, statusFilter, typeFilter])
 
   const total = filtered.filter(e => (e.status ?? 'approved') === 'approved').reduce((s, e) => s + Number(e.amount ?? 0), 0)
 
@@ -119,7 +151,7 @@ export default function ExpensesPage() {
     }).eq('id', id)
     if (error) { alert(error.message); setActionId(null); return }
     await logActivity({ action: 'approve_expense', entity_type: 'expense', entity_id: id, description: `اعتماد صرفية: ${expTypeName} — ${amount.toLocaleString('en-US')} د.ع — ${debtorName}` }, supabase)
-    setActionId(null); load()
+    setActionId(null); load(); refreshAdminNotifications()
   }
 
   async function confirmReject() {
@@ -129,7 +161,7 @@ export default function ExpensesPage() {
     const { error } = await (supabase as any).from('expenses').update({ status: 'rejected', rejection_reason: rejectReason || 'مرفوضة من قبل الإدارة' }).eq('id', rejectModal.id)
     if (error) { alert(error.message); setRejectSaving(false); return }
     await logActivity({ action: 'reject_expense', entity_type: 'expense', entity_id: rejectModal.id, description: `رفض صرفية — ${rejectModal.debtorName} — السبب: ${rejectReason || 'لا يوجد سبب'}` }, supabase)
-    setRejectSaving(false); setRejectModal(null); setRejectReason(''); load()
+    setRejectSaving(false); setRejectModal(null); setRejectReason(''); load(); refreshAdminNotifications()
   }
 
   return (
@@ -138,6 +170,13 @@ export default function ExpensesPage() {
         title="الصرفيات"
         subtitle={`${filtered.length} صرف • المعتمدة: ${fmtMoney(total)}`}
       />
+
+      {typeFilter && (
+        <div className="flex items-center justify-between bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5">
+          <span className="text-sm font-bold text-orange-900">تصفية: {typeFilter}</span>
+          <button onClick={() => setTypeFilter('')} className="text-xs font-bold text-orange-700 hover:underline">إلغاء</button>
+        </div>
+      )}
 
       {/* Pending alert */}
       {pendingCount > 0 && statusFilter === 'all' && (
@@ -186,8 +225,12 @@ export default function ExpensesPage() {
               <input type="text" value={editForm.expense_type} onChange={e => setEditForm(f => ({ ...f, expense_type: e.target.value }))} className={INP} /></div>
             <div><label className={lbl}>الوصف</label>
               <input type="text" value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} className={INP} /></div>
-            <div><label className={lbl}>التاريخ</label>
-              <input type="date" value={editForm.expense_date} onChange={e => setEditForm(f => ({ ...f, expense_date: e.target.value }))} className={INP} dir="ltr" /></div>
+            <DatePicker
+              value={editForm.expense_date}
+              onChange={v => setEditForm(f => ({ ...f, expense_date: v }))}
+              fieldLabel="التاريخ"
+              headerTitle="تاريخ الصرفية"
+            />
             {editError && <p className="col-span-4 text-red-600 text-xs">{editError}</p>}
             <div className="col-span-4 flex gap-2 pt-1">
               <Button type="submit" variant="primary" size="sm" loading={saving}>حفظ التعديل</Button>
@@ -200,13 +243,24 @@ export default function ExpensesPage() {
       {/* Filters */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <input type="text" placeholder="بحث باسم المدين..." value={search} onChange={e => setSearch(e.target.value)} className={SEL} />
-          <select value={filterLawyer} onChange={e => setFilterLawyer(e.target.value)} className={SEL}>
-            <option value="">كل المحامين</option>
-            {lawyers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-          </select>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={SEL} dir="ltr" title="من تاريخ" />
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className={SEL} dir="ltr" title="إلى تاريخ" />
+          <input type="search" placeholder={DEBTOR_SEARCH_PLACEHOLDER} value={search} onChange={e => setSearch(e.target.value)} className={SEL} />
+          <PremiumSelect
+            value={filterLawyer}
+            onChange={setFilterLawyer}
+            options={[
+              { value: '', label: 'كل المحامين' },
+              ...lawyers.map(l => ({ value: l.id, label: l.full_name })),
+            ]}
+            placeholder="كل المحامين"
+            headerTitle="تصفية حسب المحامي"
+            searchPlaceholder="بحث بالاسم..."
+            searchable
+          />
+          <DateRangePicker
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            onChange={({ dateFrom: f, dateTo: t }) => { setDateFrom(f); setDateTo(t) }}
+          />
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, use } from 'react'
+import { useState, useEffect, useCallback, useRef, use } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
 import Link from 'next/link'
@@ -9,6 +9,8 @@ import { fmtMoney, fmtDate } from '@/lib/utils'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import type { ReceiptType } from '@/lib/types'
 import { assignTasksToLawyer, fetchBranchLawyers, taskLawyerId } from '@/lib/task-assignment'
+import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
+import { PremiumSelect } from '@/components/ui/premium-select'
 
 interface StageDebtor {
   debtorId: string
@@ -47,6 +49,9 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
   const [debtors, setDebtors] = useState<StageDebtor[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [matchingIds, setMatchingIds] = useState<string[] | null>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [lawyers, setLawyers] = useState<Lawyer[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -113,12 +118,26 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
     fetchBranchLawyers(createClient(), branchId).then(setLawyers)
   }, [branchId])
 
-  const filtered = search.trim()
-    ? debtors.filter(d =>
-        d.debtorName.toLowerCase().includes(search.toLowerCase()) ||
-        d.phone?.includes(search) ||
-        (d.receiptNumber ?? '').includes(search)
-      )
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [search])
+
+  useEffect(() => {
+    if (!debouncedSearch.trim()) {
+      setMatchingIds(null)
+      return
+    }
+    let cancelled = false
+    resolveDebtorIdsBySearch(createClient(), debouncedSearch, branchId).then(ids => {
+      if (!cancelled) setMatchingIds(ids ?? [])
+    })
+    return () => { cancelled = true }
+  }, [debouncedSearch, branchId])
+
+  const filtered = matchingIds !== null
+    ? debtors.filter(d => matchingIds.includes(d.debtorId))
     : debtors
 
   const allSelected = filtered.length > 0 && filtered.every(d => selected.has(d.taskId))
@@ -143,7 +162,9 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
     if (!lawyerId) { setError('اختر محامياً'); return }
     if (taskIds.length === 0) { setError('حدد مديناً واحداً على الأقل'); return }
     setAssigning(true); setError('')
-    const result = await assignTasksToLawyer(createClient(), taskIds, lawyerId)
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    const result = await assignTasksToLawyer(supabase, taskIds, lawyerId, undefined, user?.id)
     if (!result.ok) { setError(result.error ?? 'فشل التكليف'); setAssigning(false); return }
     setAssigning(false)
     setBulkLawyerId('')
@@ -167,8 +188,8 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
         <svg className="w-4 h-4 text-[#767676] shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
-        <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="بحث بالاسم أو الهاتف أو رقم السند..."
+        <input type="search" value={search} onChange={e => setSearch(e.target.value)}
+          placeholder={DEBTOR_SEARCH_PLACEHOLDER}
           className="flex-1 text-sm bg-transparent focus:outline-none" />
       </div>
 
@@ -181,11 +202,20 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
             تحديد الكل ({filtered.length})
           </label>
           <div className="flex-1 flex items-center gap-2">
-            <select value={bulkLawyerId} onChange={e => { setBulkLawyerId(e.target.value); setError('') }}
-              className="flex-1 border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780]">
-              <option value="">— اختر محامياً —</option>
-              {lawyers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-            </select>
+            <PremiumSelect
+              value={bulkLawyerId}
+              onChange={v => { setBulkLawyerId(v); setError('') }}
+              options={[
+                { value: '', label: '— اختر محامياً —' },
+                ...lawyers.map(l => ({ value: l.id, label: l.full_name })),
+              ]}
+              placeholder="— اختر محامياً —"
+              headerTitle="اختر المحامي"
+              headerSubtitle={`${lawyers.length} محامٍ في الفرع`}
+              searchPlaceholder="بحث بالاسم..."
+              searchable
+              className="flex-1"
+            />
             <button
               onClick={() => assignTasks(Array.from(selected), bulkLawyerId)}
               disabled={assigning || selectedCount === 0 || !bulkLawyerId}

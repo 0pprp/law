@@ -14,9 +14,11 @@
   "dependencies": {
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.108.2",
+    "jszip": "^3.10.1",
     "next": "16.2.9",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -39,14 +41,31 @@
       "electron/**/*"
     ],
     "extraResources": [
-      { "from": ".next/standalone", "to": "standalone" },
-      { "from": ".next/static", "to": "standalone/.next/static" },
-      { "from": "public", "to": "standalone/public" },
-      { "from": ".env.local", "to": ".env.local" }
+      {
+        "from": ".next/standalone",
+        "to": "standalone"
+      },
+      {
+        "from": ".next/static",
+        "to": "standalone/.next/static"
+      },
+      {
+        "from": "public",
+        "to": "standalone/public"
+      },
+      {
+        "from": ".env.local",
+        "to": ".env.local"
+      }
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {
