@@ -1,0 +1,3 @@
+-- DEPRECATED: run as two separate queries (PostgreSQL cannot use new enum values in the same transaction).
+-- 1) 20250628180000_criminal_task_type_enum.sql
+-- 2) 20250628180001_criminal_task_definitions.sql
