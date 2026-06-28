@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { BRANCH_COOKIE } from '@/lib/branch-context'
 import { isMainBranchName } from '@/lib/branch-constants'
+import { canReadAllBranches } from '@/lib/permissions'
 
 export async function POST(req: Request) {
   try {
@@ -21,7 +22,7 @@ export async function POST(req: Request) {
       .eq('id', user.id)
       .single()
 
-    if (profile?.role !== 'admin' && profile?.role !== 'viewer') {
+    if (!canReadAllBranches(profile?.role)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 

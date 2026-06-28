@@ -4,7 +4,7 @@ import { HTMLAttributes, ThHTMLAttributes, TdHTMLAttributes } from 'react'
 export function Table({ className, children, ...props }: HTMLAttributes<HTMLTableElement>) {
   return (
     <div className="overflow-x-auto">
-      <table className={cn('w-full text-sm', className)} {...props}>
+      <table className={cn('w-full text-sm min-w-[640px]', className)} {...props}>
         {children}
       </table>
     </div>
@@ -37,7 +37,7 @@ export function TR({ className, children, ...props }: HTMLAttributes<HTMLTableRo
 
 export function TH({ className, children, ...props }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <th className={cn('text-right px-5 py-3 text-xs font-semibold text-[#767676] bg-[rgba(118,118,118,0.04)] whitespace-nowrap', className)} {...props}>
+    <th className={cn('text-right px-5 py-3.5 text-xs font-bold text-[#454042] bg-[rgba(118,118,118,0.05)] whitespace-nowrap', className)} {...props}>
       {children}
     </th>
   )
@@ -45,7 +45,7 @@ export function TH({ className, children, ...props }: ThHTMLAttributes<HTMLTable
 
 export function TD({ className, children, ...props }: TdHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <td className={cn('px-5 py-3.5 text-sm text-[#231F20]', className)} {...props}>
+    <td className={cn('px-5 py-4 text-sm text-[#231F20] font-medium', className)} {...props}>
       {children}
     </td>
   )
@@ -79,7 +79,7 @@ export function DataTable({ columns, rows, loading, empty, className }: DataTabl
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  <p className="text-xs text-[#767676]">جارٍ التحميل...</p>
+                  <p className="text-sm text-[#454042]">جارٍ التحميل...</p>
                 </div>
               </td>
             </tr>

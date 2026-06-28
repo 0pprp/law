@@ -196,7 +196,7 @@ export default function ReportsPage() {
               <StatCard
                 label="متوسط زمن الانتقال"
                 value={stageReports.avgTransitionDays != null ? `${stageReports.avgTransitionDays} يوم` : '—'}
-                sub="بetween المراحل المتتالية"
+                sub="بين المراحل المتتالية"
                 accent="blue"
               />
               <StatCard

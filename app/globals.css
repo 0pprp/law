@@ -3,19 +3,55 @@
 :root {
   --background: #F3F1F2;
   --foreground: #231F20;
+  --text-muted: #454042;
+  --text-subtle: #5a5556;
   --brand-teal: #2C8780;
   --brand-teal-dark: #1D6365;
   --brand-dark: #231F20;
-  --brand-gray: #767676;
+  --brand-gray: #454042;
   --surface: #FFFFFF;
   --border: rgba(118, 118, 118, 0.15);
+  --content-max: 90rem;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-muted: var(--text-muted);
   --font-sans: var(--font-cairo);
   --font-mono: var(--font-cairo);
+  --text-xs: 0.8125rem;
+  --text-sm: 0.9375rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.3125rem;
+  --text-2xl: 1.625rem;
+  --text-3xl: 2rem;
+}
+
+/* Fluid typography — scales gently on larger displays */
+html {
+  font-size: 15px;
+}
+
+@media (min-width: 1280px) {
+  html { font-size: 15.5px; }
+  :root { --content-max: 96rem; }
+}
+
+@media (min-width: 1536px) {
+  html { font-size: 16px; }
+  :root { --content-max: 104rem; }
+}
+
+@media (min-width: 1920px) {
+  html { font-size: 16.5px; }
+  :root { --content-max: 112rem; }
+}
+
+@media (min-width: 2560px) {
+  html { font-size: 17px; }
+  :root { --content-max: 120rem; }
 }
 
 body {
@@ -23,6 +59,9 @@ body {
   color: var(--foreground);
   font-family: var(--font-cairo), 'Cairo', 'Segoe UI', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  line-height: 1.55;
 }
 
 * {
@@ -31,4 +70,44 @@ body {
 
 .teal-gradient {
   background: linear-gradient(135deg, #2C8780, #1D6365);
+}
+
+/* Main content wrapper — balanced width on ultrawide */
+.app-content {
+  width: 100%;
+  max-width: var(--content-max);
+  margin-inline: auto;
+}
+
+/* Improve legacy muted gray used across pages */
+.text-\[\#767676\] {
+  color: var(--text-muted) !important;
+}
+
+/* Slightly larger micro-copy */
+.text-\[10px\] {
+  font-size: 0.6875rem !important;
+  line-height: 1.4;
+}
+
+.text-\[11px\] {
+  font-size: 0.75rem !important;
+  line-height: 1.45;
+}
+
+/* Clearer placeholders */
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 0.9;
+}
+
+/* Smoother horizontal scroll on tables */
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Modal / overlay panels — consistent readable body */
+.modal-panel {
+  font-size: 0.9375rem;
 }

@@ -18,13 +18,13 @@ function DefaultIcon() {
 
 export function EmptyState({ icon, title, description, action, className }: EmptyStateProps) {
   return (
-    <div className={cn('flex flex-col items-center justify-center py-16 px-6 text-center', className)}>
-      <div className="w-20 h-20 bg-[#2C8780]/8 rounded-2xl flex items-center justify-center mb-4">
+    <div className={cn('flex flex-col items-center justify-center py-16 sm:py-20 px-6 text-center', className)}>
+      <div className="w-20 h-20 bg-[#2C8780]/8 rounded-2xl flex items-center justify-center mb-5">
         {icon ?? <DefaultIcon />}
       </div>
-      <h3 className="text-sm font-semibold text-[#231F20] mb-1">{title}</h3>
-      {description && <p className="text-xs text-[#767676] max-w-xs leading-relaxed">{description}</p>}
-      {action && <div className="mt-5">{action}</div>}
+      <h3 className="text-base font-bold text-[#231F20] mb-1.5">{title}</h3>
+      {description && <p className="text-sm text-[#454042] max-w-sm leading-relaxed">{description}</p>}
+      {action && <div className="mt-6">{action}</div>}
     </div>
   )
 }

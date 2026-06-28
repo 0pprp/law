@@ -119,7 +119,7 @@ export function PremiumSelect({
         disabled={disabled}
         onClick={() => !disabled && setOpen(v => !v)}
         className={cn(
-          'group w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border transition-all duration-200 text-right select-none',
+          'group w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border transition-all duration-200 text-right select-none',
           open
             ? 'bg-[#2C8780] border-[#1D6365] shadow-lg shadow-[#2C8780]/25 text-white'
             : 'bg-white border-[rgba(118,118,118,0.18)] hover:border-[#2C8780]/40 hover:shadow-sm text-[#231F20]',
@@ -145,7 +145,7 @@ export function PremiumSelect({
             </span>
           )}
           <span className={cn(
-            'block text-xs font-bold truncate leading-tight',
+            'block text-sm font-bold truncate leading-tight',
             !selected && !open && 'text-[#767676] font-medium',
             open && 'text-white',
           )}>

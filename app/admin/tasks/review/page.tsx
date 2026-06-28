@@ -19,7 +19,7 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { fetchActiveTaskDefinitions } from '@/lib/task-definitions'
 import { buildCompletionFieldLabelMap, resolveCompletionFieldLabel } from '@/lib/completion-field-labels'
 import { useAdminRole } from '@/context/admin-role'
-import { canReviewTasks } from '@/lib/permissions'
+import { canReadAdminData, canReviewTasks } from '@/lib/permissions'
 
 interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number }
 
@@ -473,6 +473,7 @@ export default function TaskReviewPage() {
   const branchId = useBranchId()
   const role = useAdminRole()
   const canReview = canReviewTasks(role)
+  const isReadOnlyReview = canReadAdminData(role) && !canReview
   const [tasks, setTasks] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [pageOffset, setPageOffset] = useState(0)
@@ -683,7 +684,7 @@ export default function TaskReviewPage() {
                   <button onClick={() => openReview(task)}
                     className="w-full py-2 rounded-xl text-sm font-bold text-white hover:opacity-90"
                     style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-                    مراجعة واتخاذ قرار
+                    {isReadOnlyReview ? 'عرض التفاصيل' : 'مراجعة واتخاذ قرار'}
                   </button>
                 </div>
               </div>

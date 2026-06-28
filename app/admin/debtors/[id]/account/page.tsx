@@ -13,7 +13,7 @@ import DebtorNotesPanel from '@/components/DebtorNotesPanel'
 import DebtorGPSCard from '@/components/DebtorGPSCard'
 import DebtorActivityPanel from '@/components/DebtorActivityPanel'
 import DebtorArchiveTabs from '@/components/DebtorArchiveTabs'
-import { canEditRecords, isAdmin as isAdminRole, isViewer, canAddPayments } from '@/lib/permissions'
+import { canEditRecords, canReadAdminData, canAddPayments } from '@/lib/permissions'
 import type { UserRole } from '@/lib/types'
 
 function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
@@ -48,7 +48,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
 
   if (!debtor) notFound()
 
-  if (!isAdminRole(userRole) && !isViewer(userRole) && profile?.branch_id && debtor.branch_id !== profile.branch_id) {
+  if (!canReadAdminData(userRole) && profile?.branch_id && debtor.branch_id !== profile.branch_id) {
     notFound()
   }
 

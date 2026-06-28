@@ -19,17 +19,17 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     const variants: Record<string, string> = {
       primary: 'bg-gradient-to-r from-[#2C8780] to-[#1D6365] hover:opacity-90 active:opacity-80 text-white focus:ring-[#2C8780]/50 shadow-sm shadow-[#1D6365]/20',
       secondary: 'bg-[#231F20] hover:bg-[#2d2829] active:bg-[#1a1718] text-white focus:ring-[#231F20]/50',
-      ghost: 'text-[#767676] hover:bg-[rgba(118,118,118,0.08)] hover:text-[#231F20] active:bg-[rgba(118,118,118,0.12)] focus:ring-[rgba(118,118,118,0.2)]',
+      ghost: 'text-[#454042] hover:bg-[rgba(118,118,118,0.08)] hover:text-[#231F20] active:bg-[rgba(118,118,118,0.12)] focus:ring-[rgba(118,118,118,0.2)]',
       danger: 'text-red-600 hover:bg-red-50 hover:text-red-700 active:bg-red-100 border border-red-200 hover:border-red-300 focus:ring-red-300',
       outline: 'border border-[#2C8780] text-[#2C8780] bg-white hover:bg-[#2C8780]/5 active:bg-[#2C8780]/10 focus:ring-[#2C8780]/30',
       link: 'text-[#2C8780] hover:text-[#1D6365] underline-offset-4 hover:underline focus:ring-[#2C8780]/30 rounded-lg',
     }
 
     const sizes: Record<string, string> = {
-      xs: 'text-xs px-2.5 py-1.5 rounded-md gap-1',
-      sm: 'text-xs px-3 py-2 rounded-lg',
-      md: 'text-sm px-4 py-2.5',
-      lg: 'text-sm px-6 py-3',
+      xs: 'text-xs px-3 py-2 rounded-md gap-1',
+      sm: 'text-sm px-3.5 py-2.5 rounded-lg',
+      md: 'text-sm px-5 py-3',
+      lg: 'text-base px-6 py-3.5',
     }
 
     return (

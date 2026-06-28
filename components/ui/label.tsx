@@ -7,7 +7,7 @@ interface LabelProps extends LabelHTMLAttributes<HTMLLabelElement> {
 
 export function Label({ required, className, children, ...props }: LabelProps) {
   return (
-    <label className={cn('block text-sm font-semibold text-slate-700 mb-1.5', className)} {...props}>
+    <label className={cn('block text-sm font-bold text-[#231F20] mb-2', className)} {...props}>
       {children}
       {required && <span className="text-red-500 mr-0.5">*</span>}
     </label>
@@ -29,8 +29,8 @@ export function FormField({ label, required, error, hint, htmlFor, children, cla
     <div className={className}>
       {label && <Label htmlFor={htmlFor} required={required}>{label}</Label>}
       {children}
-      {hint && !error && <p className="text-xs text-slate-400 mt-1">{hint}</p>}
-      {error && <p className="text-xs text-red-600 mt-1 font-medium">{error}</p>}
+      {hint && !error && <p className="text-sm text-[#454042] mt-1.5">{hint}</p>}
+      {error && <p className="text-sm text-red-600 mt-1.5 font-semibold">{error}</p>}
     </div>
   )
 }

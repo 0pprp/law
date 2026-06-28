@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import AdminShell from '@/components/AdminShell'
 import { BRANCH_COOKIE } from '@/lib/branch-context'
 import { isMainBranchName } from '@/lib/branch-constants'
+import { canReadAllBranches } from '@/lib/permissions'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -18,7 +19,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   if (profile?.role === 'lawyer') redirect('/lawyer')
 
-  const canPickBranch = profile?.role === 'admin' || profile?.role === 'viewer'
+  const canPickBranch = canReadAllBranches(profile?.role)
 
   let initialBranchId: string | null = null
   let initialBranchName: string | null = null

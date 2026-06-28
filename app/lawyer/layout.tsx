@@ -25,7 +25,7 @@ export default async function LawyerLayout({ children }: { children: React.React
   return (
     <div className="flex flex-col min-h-screen bg-[#F3F1F2]" dir="rtl">
       {/* Top bar */}
-      <header className="bg-[#231F20] text-white px-4 py-2.5 flex items-center justify-between sticky top-0 z-40 shadow-lg">
+      <header className="bg-[#231F20] text-white px-4 sm:px-6 py-3 sm:py-3.5 flex items-center justify-between sticky top-0 z-40 shadow-lg">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl flex items-center justify-center shadow-md shrink-0" style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}>
             <svg className="w-4.5 h-4.5 text-white" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
@@ -33,8 +33,8 @@ export default async function LawyerLayout({ children }: { children: React.React
             </svg>
           </div>
           <div className="leading-none">
-            <p className="font-bold text-sm text-white">قلعة الضمان</p>
-            <p className="text-white/40 text-[10px] mt-0.5">البوابة القانونية</p>
+            <p className="font-bold text-sm sm:text-base text-white">قلعة الضمان</p>
+            <p className="text-white/45 text-xs mt-0.5">البوابة القانونية</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -46,8 +46,8 @@ export default async function LawyerLayout({ children }: { children: React.React
       </header>
 
       {/* Page content */}
-      <main className="flex-1 pb-20 min-h-0">
-        {children}
+      <main className="flex-1 pb-20 min-h-0 px-4 sm:px-6 lg:px-8 pt-4">
+        <div className="app-content">{children}</div>
       </main>
 
       {/* Fixed bottom navigation */}

@@ -49,7 +49,7 @@ export default function LawyerNav() {
       className="fixed bottom-0 inset-x-0 bg-white border-t border-[rgba(118,118,118,0.12)] z-40 safe-area-bottom"
       dir="rtl"
     >
-      <div className="flex items-stretch h-16">
+      <div className="flex items-stretch h-[4.25rem] sm:h-[4.5rem]">
         {tabs.map((tab) => {
           const isActive = active(tab.href, tab.exact)
           return (
@@ -57,7 +57,7 @@ export default function LawyerNav() {
               key={tab.href}
               href={tab.href}
               className={cn(
-                'flex-1 flex flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-all',
+                'flex-1 flex flex-col items-center justify-center gap-1.5 text-xs sm:text-sm font-bold transition-all',
                 isActive ? 'text-[#2C8780]' : 'text-[#767676]'
               )}
             >

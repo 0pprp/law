@@ -69,18 +69,18 @@ export default function LoginPage() {
             </svg>
           </div>
           <h1 className="text-3xl font-black text-[#231F20] tracking-tight">قلعة الضمان</h1>
-          <p className="text-[#767676] text-sm mt-2">النظام الإداري والقانوني للتحصيل والمتابعة</p>
+          <p className="text-[#454042] text-sm sm:text-base mt-2 font-medium">النظام الإداري والقانوني للتحصيل والمتابعة</p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.12)] p-8 shadow-lg shadow-black/5">
-          <h2 className="text-[#231F20] font-bold text-lg mb-6">تسجيل الدخول</h2>
+        <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.12)] p-7 sm:p-8 shadow-lg shadow-black/5">
+          <h2 className="text-[#231F20] font-black text-xl mb-6">تسجيل الدخول</h2>
 
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
-              <label className="block text-sm font-semibold text-[#231F20] mb-2">
+              <label className="block text-sm font-bold text-[#231F20] mb-2">
                 اسم المستخدم
               </label>
-              <p className="text-[11px] text-[#767676] mb-2">
+              <p className="text-sm text-[#454042] mb-2">
                 استخدم اسم المستخدم الذي أنشأته الإدارة — وليس بريد Gmail الشخصي
               </p>
               <div className="relative">
@@ -97,13 +97,13 @@ export default function LoginPage() {
                   autoComplete="username"
                   dir="ltr"
                   placeholder="jafar"
-                  className="w-full bg-white border border-[rgba(118,118,118,0.2)] rounded-lg pr-10 pl-4 py-3 text-[#231F20] placeholder:text-[#767676]/60 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all"
+                  className="w-full bg-white border border-[rgba(118,118,118,0.22)] rounded-xl pr-10 pl-4 py-3.5 text-[#231F20] placeholder:text-[#454042] text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-[#231F20] mb-2">
+              <label className="block text-sm font-bold text-[#231F20] mb-2">
                 كلمة المرور
               </label>
               <div className="relative">
@@ -120,7 +120,7 @@ export default function LoginPage() {
                   autoComplete="current-password"
                   dir="ltr"
                   placeholder="••••••••"
-                  className="w-full bg-white border border-[rgba(118,118,118,0.2)] rounded-lg pr-10 pl-11 py-3 text-[#231F20] placeholder:text-[#767676]/60 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all"
+                  className="w-full bg-white border border-[rgba(118,118,118,0.22)] rounded-xl pr-10 pl-11 py-3.5 text-[#231F20] placeholder:text-[#454042] text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all"
                 />
                 <button
                   type="button"

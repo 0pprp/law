@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
+import { canReadAllBranches } from '@/lib/permissions'
 
 export const BRANCH_COOKIE = 'qalat_branch'
 
@@ -19,7 +20,7 @@ export async function getBranchContext(): Promise<BranchContext> {
     .eq('id', user.id)
     .single()
 
-  const isBranchPicker = profile?.role === 'admin' || profile?.role === 'viewer'
+  const isBranchPicker = canReadAllBranches(profile?.role)
 
   if (isBranchPicker) {
     const cookieStore = await cookies()

@@ -120,7 +120,7 @@ function NavLink({ item, pathname, badge, onClick }: {
       href={item.href}
       onClick={onClick}
       className={cn(
-        'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
+        'flex items-center gap-3 px-3.5 py-3 rounded-lg text-sm sm:text-base font-semibold transition-all',
         active ? 'text-white shadow-sm' : 'text-white/60 hover:text-white hover:bg-white/5'
       )}
       style={active ? { background: 'linear-gradient(135deg, #2C8780, #1D6365)' } : undefined}
@@ -390,7 +390,7 @@ function AdminShellInner({
             {section.label && (
               <>
                 <div className="border-t border-white/[0.05] mb-3" />
-                <p className="text-white/20 text-[9px] font-bold uppercase tracking-[0.2em] px-3 mb-1.5">{section.label}</p>
+                <p className="text-white/25 text-[11px] font-bold uppercase tracking-[0.2em] px-3 mb-2">{section.label}</p>
               </>
             )}
             <div className="space-y-0.5">
@@ -434,7 +434,7 @@ function AdminShellInner({
   return (
     <div className="h-screen overflow-hidden" dir="rtl">
         {/* Desktop sidebar — fixed full height, does not scroll with content */}
-        <aside className="hidden lg:flex fixed top-0 right-0 bottom-0 w-60 z-30 bg-[#231F20] flex-col">
+        <aside className="hidden lg:flex fixed top-0 right-0 bottom-0 w-64 z-30 bg-[#231F20] flex-col">
           {SidebarContent}
         </aside>
 
@@ -453,8 +453,8 @@ function AdminShellInner({
         </aside>
 
         {/* Main column — scrolls independently */}
-        <div className="h-screen overflow-y-auto flex flex-col lg:mr-60 min-w-0">
-          <header className="sticky top-0 z-20 bg-white border-b border-[rgba(118,118,118,0.1)] h-14 flex items-center px-4 lg:px-6 gap-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] shrink-0">
+        <div className="h-screen overflow-y-auto flex flex-col lg:mr-64 min-w-0">
+          <header className="sticky top-0 z-20 bg-white border-b border-[rgba(118,118,118,0.1)] min-h-[3.75rem] sm:min-h-16 flex items-center px-4 sm:px-5 lg:px-8 gap-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] shrink-0">
             <button onClick={() => setDrawerOpen(true)} className="lg:hidden w-9 h-9 flex items-center justify-center text-[#767676] hover:text-[#231F20] hover:bg-[rgba(118,118,118,0.08)] rounded-lg transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
@@ -468,7 +468,7 @@ function AdminShellInner({
               <span className="font-bold text-sm text-[#231F20]">قلعة الضمان</span>
             </div>
 
-            <div className="hidden lg:flex items-center gap-2 text-xs text-[#767676]">
+            <div className="hidden lg:flex items-center gap-2 text-sm text-[#454042] font-medium">
               <svg className="w-3.5 h-3.5 text-[#2C8780]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
               <span>{arabicDate}</span>
             </div>
@@ -492,8 +492,8 @@ function AdminShellInner({
                 userRole={userRole}
               />
               <div className="hidden sm:flex flex-col items-end">
-                <p className="text-xs font-semibold text-[#231F20] leading-none">{userName}</p>
-                <p className="text-[10px] text-[#767676] mt-0.5">{USER_ROLE_LABELS[userRole as UserRole] ?? userRole}</p>
+                <p className="text-sm font-bold text-[#231F20] leading-none">{userName}</p>
+                <p className="text-xs text-[#454042] mt-1 font-medium">{USER_ROLE_LABELS[userRole as UserRole] ?? userRole}</p>
               </div>
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}>
                 {initials}
@@ -502,15 +502,17 @@ function AdminShellInner({
           </header>
 
           {isViewer(userRole) && (
-            <div className="shrink-0 bg-sky-50 border-b border-sky-200 px-4 py-2 text-center text-xs text-sky-900">
+            <div className="shrink-0 bg-sky-50 border-b border-sky-200 px-4 py-2.5 text-center text-sm text-sky-950 font-medium">
               <span className="font-bold">مراقب عام</span>
               {' — '}
               عرض البيانات فقط (مثل المدير بدون إضافة أو تعديل). اختر الفرع من الأعلى لعرض مدينيه ومهامه.
             </div>
           )}
 
-          <main className="flex-1 p-4 lg:p-6 min-w-0 bg-[#F8F7F8]">
-            <AdminRouteGuard>{children}</AdminRouteGuard>
+          <main className="flex-1 p-4 sm:p-5 lg:p-7 xl:p-8 min-w-0 bg-[#F8F7F8]">
+            <div className="app-content">
+              <AdminRouteGuard>{children}</AdminRouteGuard>
+            </div>
           </main>
         </div>
     </div>

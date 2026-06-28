@@ -117,37 +117,37 @@ export default function DashboardPage() {
   const stageTotal = stages.reduce((sum, s) => sum + s.count, 0)
 
   return (
-    <div className="space-y-5 max-w-6xl">
+    <div className="space-y-6 w-full">
 
       {/* Hero */}
       <div className="rounded-2xl overflow-hidden relative" style={{ background: 'linear-gradient(135deg, #231F20 0%, #1a1617 100%)' }}>
         <div className="absolute inset-0 overflow-hidden">
           <div className="absolute -top-16 -right-16 w-64 h-64 bg-[#2C8780]/10 rounded-full" />
         </div>
-        <div className="relative z-10 p-6 flex flex-col sm:flex-row sm:items-center gap-6">
+        <div className="relative z-10 p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center gap-6 sm:gap-8">
           <div className="flex-1">
-            <p className="text-[#2C8780] text-[10px] font-bold tracking-[0.25em] uppercase mb-2">منصة التحصيل القانوني</p>
-            <h1 className="text-white text-2xl font-black leading-tight">لوحة مراحل القضايا</h1>
-            <p className="text-white/40 text-sm mt-1">مهام غير مكلفة حسب نوع المهمة — والمكلفة وبانتظار المراجعة</p>
+            <p className="text-[#2C8780] text-xs font-bold tracking-[0.25em] uppercase mb-2.5">منصة التحصيل القانوني</p>
+            <h1 className="text-white text-2xl sm:text-3xl font-black leading-tight">لوحة مراحل القضايا</h1>
+            <p className="text-white/50 text-sm sm:text-base mt-2 font-medium">مهام غير مكلفة حسب نوع المهمة — والمكلفة وبانتظار المراجعة</p>
           </div>
-          <div className="flex items-stretch gap-4 shrink-0">
+          <div className="flex items-stretch gap-5 sm:gap-6 shrink-0">
             <Link href="/admin/tasks" className="text-center group">
-              <p className="text-3xl font-black text-yellow-400 tabular-nums group-hover:text-yellow-300 transition-colors">
+              <p className="text-3xl sm:text-4xl font-black text-yellow-400 tabular-nums group-hover:text-yellow-300 transition-colors">
                 {loading ? '—' : totalWaiting}
               </p>
-              <p className="text-[10px] text-white/35 mt-0.5">غير مكلفة</p>
+              <p className="text-xs text-white/45 mt-1 font-semibold">غير مكلفة</p>
             </Link>
             <div className="w-px bg-white/10 self-stretch" />
             <div className="text-center">
-              <p className="text-3xl font-black text-white tabular-nums">{loading ? '—' : totalAssigned}</p>
-              <p className="text-[10px] text-white/35 mt-0.5">مكلفة</p>
+              <p className="text-3xl sm:text-4xl font-black text-white tabular-nums">{loading ? '—' : totalAssigned}</p>
+              <p className="text-xs text-white/45 mt-1 font-semibold">مكلفة</p>
             </div>
             <div className="w-px bg-white/10 self-stretch" />
             <Link href="/admin/tasks/review" className="text-center group">
-              <p className="text-3xl font-black text-orange-400 tabular-nums group-hover:text-orange-300 transition-colors">
+              <p className="text-3xl sm:text-4xl font-black text-orange-400 tabular-nums group-hover:text-orange-300 transition-colors">
                 {loading ? '—' : totalPendingReview}
               </p>
-              <p className="text-[10px] text-white/35 mt-0.5">بانتظار المراجعة</p>
+              <p className="text-xs text-white/45 mt-1 font-semibold">بانتظار المراجعة</p>
             </Link>
           </div>
         </div>
@@ -162,8 +162,8 @@ export default function DashboardPage() {
       {/* Stage boxes — unassigned only */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-bold text-[#231F20] text-sm">المراحل القانونية (غير مكلفة)</h2>
-          <span className="text-[11px] text-[#767676]">المهام المكلفة لا تظهر هنا</span>
+          <h2 className="font-black text-[#231F20] text-base sm:text-lg">المراحل القانونية (غير مكلفة)</h2>
+          <span className="text-sm text-[#454042] font-medium">المهام المكلفة لا تظهر هنا</span>
         </div>
 
         {loading ? (

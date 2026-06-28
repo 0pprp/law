@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { apiForbiddenResponse, canDelete, isViewer, STAFF_ROLES, writeForbiddenIfViewer } from '@/lib/permissions'
+import { apiForbiddenResponse, canDelete, canReadAdminData, isViewer, STAFF_ROLES, writeForbiddenIfViewer } from '@/lib/permissions'
 import type { UserRole } from '@/lib/types'
 
 export type SessionProfile = {
@@ -46,6 +46,15 @@ export async function requireMutationStaff() {
   const denied = writeForbiddenIfViewer(ctx.profile?.role)
   if (denied) return { ...ctx, error: denied }
   return ctx
+}
+
+export async function requireReadAdminProfile() {
+  const ctx = await getSessionProfile()
+  if (!ctx.user) return { ...ctx, error: Response.json({ error: 'غير مصرح' }, { status: 401 }) }
+  if (!ctx.profile || !canReadAdminData(ctx.profile.role)) {
+    return { ...ctx, error: apiForbiddenResponse() }
+  }
+  return { ...ctx, error: null as Response | null }
 }
 
 export async function requireAdminProfile() {

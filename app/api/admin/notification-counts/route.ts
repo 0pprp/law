@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getBranchContext } from '@/lib/branch-context'
 import { REVIEW_QUEUE_STATUSES } from '@/lib/task-assignment'
+import { STAFF_ROLES } from '@/lib/permissions'
+import type { UserRole } from '@/lib/types'
 
 function groupPendingExpenses(rows: { expense_type: string | null }[]) {
   const map = new Map<string, number>()
@@ -61,7 +63,7 @@ export async function GET() {
       .eq('id', user.id)
       .single()
 
-    if (!profile || !['admin', 'employee', 'accountant', 'viewer'].includes(profile.role)) {
+    if (!profile || !STAFF_ROLES.includes(profile.role as UserRole)) {
       return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
     }
 

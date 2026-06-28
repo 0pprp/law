@@ -1,6 +1,7 @@
+import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
-import { NextResponse } from 'next/server'
+import { canReadAdminData } from '@/lib/permissions'
 
 export async function POST(request: Request) {
   const supabase = await createClient()
@@ -9,8 +10,7 @@ export async function POST(request: Request) {
 
   const { data: profile } = await supabase
     .from('profiles').select('role').eq('id', user.id).single()
-  const allowed = ['admin', 'employee', 'accountant', 'viewer']
-  if (!allowed.includes(profile?.role ?? '')) {
+  if (!canReadAdminData(profile?.role) && !['employee', 'accountant'].includes(profile?.role ?? '')) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
 
