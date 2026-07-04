@@ -10,7 +10,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { fmtDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { canManageUsers, canViewAllUsersAcrossBranches } from '@/lib/permissions'
+import { canManageUsers, canViewAllUsersAcrossBranches, isLegalManager } from '@/lib/permissions'
 
 const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange' | 'purple' | 'gray'>> = {
   admin: 'purple',
@@ -29,6 +29,7 @@ export default async function LawyersPage() {
     ? await supabase.from('profiles').select('role').eq('id', user.id).single()
     : { data: null }
   const canManage = canManageUsers(myProfile?.role)
+  const showUserActions = canManage || isLegalManager(myProfile?.role)
   const showAllBranches = canViewAllUsersAcrossBranches(myProfile?.role)
 
   let profilesQ = supabase.from('profiles').select('*').order('created_at', { ascending: false })
@@ -57,7 +58,7 @@ export default async function LawyersPage() {
             : `${profiles?.length ?? 0} مستخدم • ${activeCount} نشط`
         }
         actions={
-          canManage ? (
+          showUserActions ? (
             <Link href="/admin/lawyers/new">
               <Button variant="primary" size="sm">+ إضافة مستخدم</Button>
             </Link>
@@ -70,7 +71,7 @@ export default async function LawyersPage() {
           <EmptyState
             title="لا يوجد مستخدمون"
             description={showAllBranches ? 'لا يوجد مستخدمون مسجلون في النظام' : 'لا يوجد مستخدمون مرتبطون بهذا الفرع'}
-            action={canManage ? <Link href="/admin/lawyers/new"><Button variant="primary" size="sm">+ إضافة مستخدم</Button></Link> : undefined}
+            action={showUserActions ? <Link href="/admin/lawyers/new"><Button variant="primary" size="sm">+ إضافة مستخدم</Button></Link> : undefined}
           />
         ) : (
           <>
@@ -100,7 +101,7 @@ export default async function LawyersPage() {
                               {user.full_name?.split(' ').filter(Boolean).slice(0, 2).map((w: string) => w[0]).join('') || '؟'}
                             </span>
                           </div>
-                          {canManage ? (
+                          {showUserActions ? (
                             <Link href={`/admin/lawyers/${user.id}/edit`} className="font-semibold text-[#231F20] hover:text-[#2C8780] transition-colors">
                               {user.full_name}
                             </Link>

@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
 import { fmtMoney } from '@/lib/utils'
+import { parseMoneyInput, formatMoney } from '@/lib/money-input'
+import MoneyInput from '@/components/ui/money-input'
 import {
   fetchLawyerSavingsBalancesMap,
   fetchLawyerWalletTransactions,
@@ -56,7 +58,7 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
 
   async function handleDeposit() {
     if (readOnly) { setError(PERMISSION_DENIED_MSG); return }
-    const amt = parseFloat(depositAmount)
+    const amt = parseMoneyInput(depositAmount)
     if (!amt || amt <= 0 || !selectedId) return
     setSaving(true); setError('')
     const supabase = createClient()
@@ -73,7 +75,7 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
       action: 'lawyer_wallet_deposit',
       entity_type: 'lawyer',
       entity_id: selectedId,
-      description: `إيداع صرفيات ${amt.toLocaleString('en-US')} د.ع — ${selected?.full_name ?? ''}`,
+      description: `إيداع صرفيات ${formatMoney(amt)} — ${selected?.full_name ?? ''}`,
     }, supabase)
     setDepositAmount(''); setDepositNotes('')
     await load(); setSaving(false)
@@ -81,7 +83,7 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
 
   async function handleWithdraw() {
     if (readOnly) { setError(PERMISSION_DENIED_MSG); return }
-    const amt = parseFloat(withdrawAmount)
+    const amt = parseMoneyInput(withdrawAmount)
     if (!amt || amt <= 0 || !selectedId) return
     setSaving(true); setError('')
     const supabase = createClient()
@@ -98,7 +100,7 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
       action: 'lawyer_savings_withdraw',
       entity_type: 'lawyer',
       entity_id: selectedId,
-      description: `سحب صرفيات ${amt.toLocaleString('en-US')} د.ع — ${selected?.full_name ?? ''}`,
+      description: `سحب صرفيات ${formatMoney(amt)} — ${selected?.full_name ?? ''}`,
     }, supabase)
     setWithdrawAmount(''); setWithdrawNotes('')
     await load(); setSaving(false)
@@ -135,7 +137,7 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
           <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <p className="text-xs font-bold text-emerald-800">إيداع يدوي</p>
-              <input type="number" value={depositAmount} onChange={e => setDepositAmount(e.target.value)} placeholder="المبلغ" className={INP} dir="ltr" min="1" />
+              <MoneyInput value={depositAmount} onChange={v => setDepositAmount(v)} placeholder="المبلغ" className={INP} />
               <input type="text" value={depositNotes} onChange={e => setDepositNotes(e.target.value)} placeholder="ملاحظة" className={INP} />
               <button onClick={handleDeposit} disabled={saving || !depositAmount}
                 className="w-full py-2 rounded-lg text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50">
@@ -144,7 +146,7 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
             </div>
             <div className="space-y-2">
               <p className="text-xs font-bold text-orange-800">سحب يدوي</p>
-              <input type="number" value={withdrawAmount} onChange={e => setWithdrawAmount(e.target.value)} placeholder="المبلغ" className={INP} dir="ltr" min="1" max={balance || undefined} />
+              <MoneyInput value={withdrawAmount} onChange={v => setWithdrawAmount(v)} placeholder="المبلغ" className={INP} />
               <input type="text" value={withdrawNotes} onChange={e => setWithdrawNotes(e.target.value)} placeholder="ملاحظة" className={INP} />
               <button onClick={handleWithdraw} disabled={saving || !withdrawAmount || balance <= 0}
                 className="w-full py-2 rounded-lg text-sm font-bold text-white bg-orange-600 hover:bg-orange-700 disabled:opacity-50">

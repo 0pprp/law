@@ -5,7 +5,9 @@ import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
 import Link from 'next/link'
 import { useAdminRole } from '@/context/admin-role'
-import { canAddDebtor } from '@/lib/permissions'
+import { canAddDebtor, isLegalManager } from '@/lib/permissions'
+import { fetchLegalManagerWalletBalance } from '@/lib/legal-manager-wallet'
+import { fmtMoney } from '@/lib/utils'
 import { activityActionLabel } from '@/lib/activity-labels'
 import { StatCard } from '@/components/ui/stat-card'
 import { stageAccent, stageIconBg } from '@/lib/stage-config'
@@ -37,6 +39,9 @@ export default function DashboardPage() {
   const branchId = useBranchId()
   const role = useAdminRole()
   const allowAddDebtor = canAddDebtor(role)
+  const showAddDebtorLink = allowAddDebtor || isLegalManager(role)
+  const legalManagerView = isLegalManager(role)
+  const [lmWalletBalance, setLmWalletBalance] = useState<number | null>(null)
   const [stages, setStages] = useState<UnassignedStageCount[]>([])
   const [totalPendingReview, setTotalPendingReview] = useState(0)
   const [totalWaiting, setTotalWaiting] = useState(0)
@@ -114,6 +119,15 @@ export default function DashboardPage() {
 
   useEffect(() => { loadData() }, [loadData])
 
+  useEffect(() => {
+    if (!legalManagerView) return
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      fetchLegalManagerWalletBalance(supabase, user.id).then(setLmWalletBalance)
+    })
+  }, [legalManagerView])
+
   const stageTotal = stages.reduce((sum, s) => sum + s.count, 0)
 
   return (
@@ -159,6 +173,18 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {legalManagerView && (
+        <Link href="/admin/legal-manager-wallet" className="block">
+          <StatCard
+            label="محفظة مدير القانونية"
+            value={lmWalletBalance === null ? '—' : fmtMoney(lmWalletBalance)}
+            accent="teal"
+            valueColor="text-[#2C8780]"
+            sub="1,000 د.ع لكل إنجاز معتمد — عرض التفاصيل"
+          />
+        </Link>
+      )}
+
       {/* Stage boxes — unassigned only */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -175,7 +201,7 @@ export default function DashboardPage() {
         ) : stages.length === 0 ? (
           <div className="bg-white rounded-2xl border p-12 text-center">
             <p className="text-sm font-semibold text-[#231F20]">لا توجد مهام غير مكلفة حالياً</p>
-            {allowAddDebtor && (
+            {showAddDebtorLink && (
             <Link href="/admin/debtors/new" className="inline-flex mt-4 text-xs font-semibold text-[#2C8780] hover:underline">
               إضافة مدين جديد ←
             </Link>

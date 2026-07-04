@@ -8,7 +8,8 @@ import { PageHeader } from '@/components/ui/page-header'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import type { ReceiptType } from '@/lib/types'
-import { assignTasksToLawyer, fetchBranchLawyers, taskLawyerId } from '@/lib/task-assignment'
+import { assignTasksViaApi } from '@/lib/task-operations-api'
+import { fetchBranchLawyers, taskLawyerId } from '@/lib/task-assignment'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { useAdminRole } from '@/context/admin-role'
@@ -168,8 +169,7 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
     if (taskIds.length === 0) { setError('حدد مديناً واحداً على الأقل'); return }
     setAssigning(true); setError('')
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    const result = await assignTasksToLawyer(supabase, taskIds, lawyerId, undefined, user?.id)
+    const result = await assignTasksViaApi(taskIds, lawyerId)
     if (!result.ok) { setError(result.error ?? 'فشل التكليف'); setAssigning(false); return }
     setAssigning(false)
     setBulkLawyerId('')

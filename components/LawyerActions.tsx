@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { logActivity } from '@/lib/activity-log'
+import { PERMISSION_DENIED_MSG } from '@/lib/permissions'
 
 interface Props {
   userId: string
@@ -17,9 +18,8 @@ export default function LawyerActions({ userId, isActive, fullName, readOnly }: 
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
-  if (readOnly) return <span className="text-xs text-[#767676]">—</span>
-
   async function toggle() {
+    if (readOnly) return
     const verb = isActive ? 'تعطيل' : 'تفعيل'
     if (!confirm(`هل تريد ${verb} حساب "${fullName}"؟`)) return
     setLoading(true)
@@ -44,8 +44,9 @@ export default function LawyerActions({ userId, isActive, fullName, readOnly }: 
       </Link>
       <button
         onClick={toggle}
-        disabled={loading}
-        className={`text-xs font-medium disabled:opacity-50 transition-colors ${
+        disabled={readOnly || loading}
+        title={readOnly ? PERMISSION_DENIED_MSG : undefined}
+        className={`text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
           isActive ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'
         }`}
       >

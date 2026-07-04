@@ -7,7 +7,7 @@ import type { TaskType } from '@/lib/types'
 import { fmtDate, fmtMoney } from '@/lib/utils'
 import { logActivity } from '@/lib/activity-log'
 import { extractGpsFromCompletion } from '@/lib/task-approval'
-import { rejectTaskExpenses } from '@/lib/expense-wallet'
+import { rejectTaskViaApi, taskTransitionViaApi } from '@/lib/task-operations-api'
 import TaskExpensesReviewCard from '@/components/TaskExpensesReviewCard'
 import { fetchPendingReviewTasksPaginated, fetchPendingReviewTaskById, fetchBranchLawyers, REVIEW_TASK_PAGE_SIZE } from '@/lib/task-assignment'
 import { cacheGet, cacheSet, cacheDelete, CACHE_TTL } from '@/lib/query-cache'
@@ -131,69 +131,26 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
     }
     setSaving(true); setError('')
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setError('يجب تسجيل الدخول'); setSaving(false); return }
+    const result = await taskTransitionViaApi({
+      taskId: task.id,
+      action,
+      nextTaskDefId: action === 'next' ? nextTaskId : undefined,
+      updateGps: showGpsUpdate ? updateGps : false,
+    })
 
-    const branchId = task.branch_id ?? debtor?.branch_id ?? null
-
-    if (newGps && (!hasExistingGps || updateGps)) {
-      await supabase.from('debtors').update({
-        latitude: newGps.lat,
-        longitude: newGps.lng,
-        location_captured_at: new Date().toISOString(),
-      }).eq('id', task.debtor_id)
+    if (!result.ok) {
+      setError(result.error ?? 'فشل تحديث المرحلة')
+      setSaving(false)
+      return
     }
 
+    const nextDef = taskDefs.find(d => d.id === nextTaskId)
     if (action === 'close') {
-      const closedAt = new Date().toISOString()
-      const closePayloads: Record<string, unknown>[] = [
-        { case_status: 'closed', closed_at: closedAt, current_task_id: null, last_task_id: task.id },
-        { case_status: 'closed', closed_at: closedAt, current_task_id: null },
-        { status: 'closed', closed_at: closedAt, current_task_id: null, last_task_id: task.id },
-        { status: 'closed', closed_at: closedAt, current_task_id: null },
-      ]
-      let closeErr: { message?: string } | null = null
-      for (const payload of closePayloads) {
-        const { error: err } = await supabase.from('debtors').update(payload as any).eq('id', task.debtor_id)
-        if (!err) { closeErr = null; break }
-        closeErr = err
-      }
-      if (closeErr) {
-        setError(closeErr.message ?? 'خطأ في إغلاق القضية')
-        setSaving(false)
-        return
-      }
       await logActivity({
         action: 'close_case', entity_type: 'debtor', entity_id: task.debtor_id,
         description: `إغلاق قضية ${debtor?.full_name ?? '—'} — آخر مهمة: ${taskLabel}`,
       }, supabase)
     } else {
-      const nextDef = taskDefs.find(d => d.id === nextTaskId)
-      const { data: newTask, error: taskErr } = await supabase.from('tasks').insert({
-        debtor_id: task.debtor_id,
-        task_definition_id: nextTaskId,
-        task_status: 'waiting_assignment',
-        assigned_to: null,
-        reward_amount: nextDef?.fee_amount ?? 0,
-        branch_id: branchId,
-        created_by: user.id,
-      } as any).select('id').single()
-      if (taskErr) {
-        setError(taskErr.message)
-        setSaving(false)
-        return
-      }
-
-      const { error: linkErr } = await supabase
-        .from('debtors')
-        .update({ current_task_id: newTask.id, last_task_id: task.id, case_status: 'active' } as any)
-        .eq('id', task.debtor_id)
-      if (linkErr) {
-        setError(linkErr.message)
-        setSaving(false)
-        return
-      }
-
       await logActivity({
         action: 'approve_task_transition', entity_type: 'task', entity_id: task.id,
         description: `اعتماد "${taskLabel}" للمدين ${debtor?.full_name ?? '—'} والانتقال إلى "${nextDef?.label}"`,
@@ -334,25 +291,17 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
     if (!rejectReason.trim()) { setError('يجب إدخال سبب الرفض'); return }
     setSaving(true)
     const supabase = createClient()
-    const payloads = [
-      { task_status: 'needs_revision', admin_notes: rejectReason.trim() },
-      { task_status: 'rejected', admin_notes: rejectReason.trim() },
-    ]
-    let lastErr: { message?: string } | null = null
-    for (const payload of payloads) {
-      const { error: err } = await supabase.from('tasks').update(payload as any).eq('id', task.id)
-      if (!err) {
-        await rejectTaskExpenses(supabase, task.id)
-        await logActivity({
-          action: 'reject_task', entity_type: 'task', entity_id: task.id,
-          description: `رفض إنجاز مهمة: ${taskLabel} — السبب: ${rejectReason}`,
-        }, supabase)
-        setSaving(false); onDone(); onClose()
-        return
-      }
-      lastErr = err
+    const result = await rejectTaskViaApi(task.id, rejectReason)
+    if (!result.ok) {
+      setError(result.error ?? 'فشل رفض المهمة')
+      setSaving(false)
+      return
     }
-    setError(lastErr?.message ?? 'فشل رفض المهمة'); setSaving(false)
+    await logActivity({
+      action: 'reject_task', entity_type: 'task', entity_id: task.id,
+      description: `رفض إنجاز مهمة: ${taskLabel} — السبب: ${rejectReason}`,
+    }, supabase)
+    setSaving(false); onDone(); onClose()
   }
 
   return (

@@ -16,7 +16,7 @@ import { debtorSearchOrFilter, DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-se
 import { RECEIPT_TYPE_LABEL } from '@/lib/ui-labels'
 import DebtorImportModal from '@/components/DebtorImportModal'
 import { useAdminRole } from '@/context/admin-role'
-import { canAddDebtor, canDelete, canEditRecords, canImportDebtors, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { canAddDebtor, canDelete, canEditRecords, canImportDebtors, isLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
 
 const PAGE_SIZE = 50
 const COLS = 'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status'
@@ -44,6 +44,10 @@ export default function DebtorsPage() {
   const allowEdit = canEditRecords(role)
   const allowAdd = canAddDebtor(role)
   const allowImport = canImportDebtors(role)
+  const showEditLink = allowEdit || isLegalManager(role)
+  const showDeleteBtn = allowDelete || isLegalManager(role)
+  const showAddBtn = allowAdd || isLegalManager(role)
+  const showImportBtn = allowImport || isLegalManager(role)
   const [debtors, setDebtors] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -123,14 +127,14 @@ export default function DebtorsPage() {
       <PageHeader
         title="المدينون"
         subtitle={`${total} مدين مسجّل في النظام`}
-        actions={allowAdd || allowImport ? (
+        actions={showAddBtn || showImportBtn ? (
           <div className="flex items-center gap-2">
-            {allowImport && (
-              <Button variant="outline" size="sm" onClick={() => setImportOpen(true)} disabled={!branchId}>
+            {showImportBtn && (
+              <Button variant="outline" size="sm" onClick={() => allowImport ? setImportOpen(true) : setError(PERMISSION_DENIED_MSG)} disabled={!branchId || !allowImport}>
                 استيراد من Excel
               </Button>
             )}
-            {allowAdd && (
+            {showAddBtn && (
               <Link href="/admin/debtors/new">
                 <Button variant="primary" size="sm">+ إضافة مدين</Button>
               </Link>
@@ -199,7 +203,7 @@ export default function DebtorsPage() {
           <EmptyState
             title={search ? 'لا نتائج للبحث' : 'لا يوجد مدينون مسجلون بعد'}
             description={search ? 'جرّب كلمات بحث مختلفة' : 'ابدأ بإضافة أول مدين في النظام'}
-            action={!search && allowAdd ? (
+            action={!search && showAddBtn ? (
               <Link href="/admin/debtors/new"><Button variant="primary" size="sm">+ إضافة مدين</Button></Link>
             ) : undefined}
           />
@@ -246,14 +250,15 @@ export default function DebtorsPage() {
                       <TD>
                         <div className="flex items-center justify-center gap-2">
                           <Link href={`/admin/debtors/${debtor.id}/account`} className="text-xs text-[#231F20] hover:text-[#2C8780] border border-[rgba(118,118,118,0.2)] hover:border-[#2C8780]/40 px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap">كشف الحساب</Link>
-                          {allowEdit && (
+                          {showEditLink && (
                             <Link href={`/admin/debtors/${debtor.id}/edit`} className="text-xs text-[#231F20] hover:text-[#2C8780] border border-[rgba(118,118,118,0.2)] hover:border-[#2C8780]/40 px-2.5 py-1.5 rounded-lg transition-colors">تعديل</Link>
                           )}
-                          {allowDelete && (
+                          {showDeleteBtn && (
                           <button
                             onClick={() => deleteDebtor(debtor.id, debtor.full_name)}
-                            disabled={deletingId === debtor.id}
-                            className="text-xs text-red-600 hover:text-red-800 border border-red-200 hover:border-red-300 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                            disabled={!allowDelete || deletingId === debtor.id}
+                            title={!allowDelete ? PERMISSION_DENIED_MSG : undefined}
+                            className="text-xs text-red-600 hover:text-red-800 border border-red-200 hover:border-red-300 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {deletingId === debtor.id ? '...' : 'حذف'}
                           </button>
@@ -287,14 +292,15 @@ export default function DebtorsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <Link href={`/admin/debtors/${debtor.id}/account`} className="flex-1 text-center text-xs text-[#231F20] border border-[rgba(118,118,118,0.2)] px-3 py-1.5 rounded-lg">كشف الحساب</Link>
-                    {allowEdit && (
+                    {showEditLink && (
                       <Link href={`/admin/debtors/${debtor.id}/edit`} className="flex-1 text-center text-xs text-[#231F20] border border-[rgba(118,118,118,0.2)] px-3 py-1.5 rounded-lg">تعديل</Link>
                     )}
-                    {allowDelete && (
+                    {showDeleteBtn && (
                     <button
                       onClick={() => deleteDebtor(debtor.id, debtor.full_name)}
-                      disabled={deletingId === debtor.id}
-                      className="text-xs text-red-600 border border-red-200 bg-red-50 px-3 py-1.5 rounded-lg disabled:opacity-50"
+                      disabled={!allowDelete || deletingId === debtor.id}
+                      title={!allowDelete ? PERMISSION_DENIED_MSG : undefined}
+                      className="text-xs text-red-600 border border-red-200 bg-red-50 px-3 py-1.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {deletingId === debtor.id ? '...' : 'حذف'}
                     </button>

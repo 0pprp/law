@@ -1,0 +1,2 @@
+-- Deprecated: use step1 + step2 scripts (enum commit must precede index)
+-- See: apply-legal-manager-wallet-step1.sql then apply-legal-manager-wallet-step2-index.sql

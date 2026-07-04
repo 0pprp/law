@@ -95,6 +95,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
             />
             <InfoRow label="الصرفيات" value={fmtMoney(totalExpensesSum)} />
             <InfoRow label="أتعاب المحامين" value={fmtMoney(debtor.lawyer_fees)} />
+            <InfoRow label="أتعاب مدير القانونية" value={fmtMoney(debtor.legal_manager_fees ?? 0)} />
             {debtor.address && <InfoRow label="العنوان" value={debtor.address} />}
             {debtor.export_date && <InfoRow label={LEGAL_ISSUE_DATE_LABEL} value={fmtDate(debtor.export_date)} mono />}
             <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} mono />

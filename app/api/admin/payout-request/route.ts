@@ -47,11 +47,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 400 })
     }
 
+    const admin = createAdminClient()
+    const { data: reqRow } = await admin
+      .from('lawyer_payout_requests')
+      .select('wallet_kind')
+      .eq('id', requestId)
+      .maybeSingle()
+
+    const isLegalManagerPayout = (reqRow?.wallet_kind ?? 'fees') === 'legal_manager'
+
     await logActivity({
-      action: action === 'approved' ? 'approve_lawyer_payout_request' : 'reject_lawyer_payout_request',
-      entity_type: 'lawyer',
+      action: action === 'approved'
+        ? (isLegalManagerPayout ? 'approve_legal_manager_payout' : 'approve_lawyer_payout_request')
+        : (isLegalManagerPayout ? 'reject_legal_manager_payout' : 'reject_lawyer_payout_request'),
+      entity_type: isLegalManagerPayout ? 'profile' : 'lawyer',
       entity_id: requestId,
-      description: action === 'approved' ? 'اعتماد طلب صرف أتعاب من محامٍ' : 'رفض طلب صرف أتعاب من محامٍ',
+      description: action === 'approved'
+        ? (isLegalManagerPayout ? 'اعتماد طلب سحب من محفظة مدير القانونية' : 'اعتماد طلب صرف أتعاب من محامٍ')
+        : (isLegalManagerPayout ? 'رفض طلب سحب من محفظة مدير القانونية' : 'رفض طلب صرف أتعاب من محامٍ'),
     }, supabase)
 
     return NextResponse.json({ success: true })

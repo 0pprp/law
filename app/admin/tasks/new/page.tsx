@@ -17,6 +17,7 @@ import { DebtorSearchPicker } from '@/components/ui/debtor-search-picker'
 import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { DatePicker } from '@/components/ui/date-picker'
 import { cn } from '@/lib/utils'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { DEBTOR_TASK_SELECT, type DebtorSearchRow } from '@/lib/debtor-search'
 
 const ALL_TASK_TYPES: TaskType[] = [
@@ -31,6 +32,7 @@ const ALL_TASK_STATUSES: TaskStatus[] = ['new', 'in_progress', 'completed', 'fai
 export default function NewTaskPage() {
   const router = useRouter()
   const branchId = useBranchId()
+  const readOnly = !useCanWrite()
   const [lawyers, setLawyers] = useState<any[]>([])
   const [selectedDebtor, setSelectedDebtor] = useState<DebtorSearchRow | null>(null)
   const [showAllLawyers, setShowAllLawyers] = useState(false)
@@ -71,6 +73,7 @@ export default function NewTaskPage() {
 
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
+    if (readOnly) return
     if (!form.debtor_id || !form.task_type) { setError('يرجى اختيار المدين ونوع المهمة'); return }
 
     const debtor = selectedDebtor
@@ -106,7 +109,14 @@ export default function NewTaskPage() {
         breadcrumb={[{ label: 'المهام', href: '/admin/tasks' }, { label: 'مهمة جديدة' }]}
       />
 
+      {readOnly && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          عرض البيانات فقط — التكليف يتم من صفحة «تكليف المهام».
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-5">
+        <fieldset disabled={readOnly} className="space-y-5 border-0 p-0 m-0 min-w-0">
         <FormFlow>
           <FormFlowStep step={1} title="المدين / الزبون" subtitle="ابحث بالاسم أو الهاتف أو رقم الوصل">
             <FormField label="اختر المدين" required hint="اكتب للبحث — لا تُحمّل كل المدينين">
@@ -210,11 +220,12 @@ export default function NewTaskPage() {
             </div>
           </FormFlowStep>
         </FormFlow>
+        </fieldset>
 
         {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>}
 
         <div className="flex gap-3 pb-6">
-          <Button type="submit" variant="primary" loading={saving}>تكليف المهمة</Button>
+          <Button type="submit" variant="primary" loading={saving} disabled={readOnly}>تكليف المهمة</Button>
           <Link href="/admin/tasks"><Button type="button" variant="outline">إلغاء</Button></Link>
         </div>
       </form>

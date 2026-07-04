@@ -1,10 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ReceiptStatus, LawyerWalletKind } from '@/lib/types'
+import { formatMoney } from '@/lib/money-input'
 import {
   fetchLawyerWalletBalance,
   fetchLawyerSavingsBalance,
   payoutLawyerFees,
   withdrawLawyerSavings,
+  payoutLegalManagerWallet,
 } from '@/lib/lawyer-wallet'
 
 export interface LawyerPayoutRequest {
@@ -29,9 +31,9 @@ function balanceForWalletKind(
   lawyerId: string,
   walletKind: LawyerWalletKind,
 ): Promise<number> {
-  return walletKind === 'savings'
-    ? fetchLawyerSavingsBalance(supabase, lawyerId)
-    : fetchLawyerWalletBalance(supabase, lawyerId, 'fees')
+  if (walletKind === 'savings') return fetchLawyerSavingsBalance(supabase, lawyerId)
+  if (walletKind === 'legal_manager') return fetchLawyerWalletBalance(supabase, lawyerId, 'legal_manager')
+  return fetchLawyerWalletBalance(supabase, lawyerId, 'fees')
 }
 
 /** Wallet balance minus amounts already reserved in pending payout requests for the same wallet. */
@@ -120,7 +122,7 @@ export async function submitLawyerPayoutRequest(
   if (params.amount > available) {
     return {
       ok: false,
-      error: `المبلغ يتجاوز الرصيد المتاح — المتاح: ${available.toLocaleString('en-US')} د.ع`,
+      error: `المبلغ يتجاوز الرصيد المتاح — المتاح: ${formatMoney(available)}`,
     }
   }
 
@@ -189,9 +191,10 @@ export async function reviewLawyerPayoutRequest(
   const amount = Number(req.amount)
   const available = await balanceForWalletKind(supabase, req.lawyer_id, walletKind)
   if (amount > available) {
+    const who = walletKind === 'legal_manager' ? 'مدير القانونية' : 'المحامي'
     return {
       ok: false,
-      error: `رصيد المحامي غير كافٍ الآن — المتاح: ${available.toLocaleString('en-US')} د.ع`,
+      error: `رصيد ${who} غير كافٍ الآن — المتاح: ${formatMoney(available)}`,
     }
   }
 
@@ -202,12 +205,19 @@ export async function reviewLawyerPayoutRequest(
         notes: req.notes?.trim() || `طلب صرفيات: ${req.title}`,
         createdBy: params.reviewerId,
       })
-    : await payoutLawyerFees(supabase, {
-        lawyerId: req.lawyer_id,
-        amount,
-        notes: `طلب صرف: ${req.title}`,
-        createdBy: params.reviewerId,
-      })
+    : walletKind === 'legal_manager'
+      ? await payoutLegalManagerWallet(supabase, {
+          legalManagerUserId: req.lawyer_id,
+          amount,
+          notes: req.notes?.trim() || `طلب سحب: ${req.title}`,
+          createdBy: params.reviewerId,
+        })
+      : await payoutLawyerFees(supabase, {
+          lawyerId: req.lawyer_id,
+          amount,
+          notes: `طلب صرف: ${req.title}`,
+          createdBy: params.reviewerId,
+        })
   if (!payout.ok) return { ok: false, error: payout.error }
 
   const { error: updateErr } = await supabase

@@ -12,6 +12,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { fmtDate } from '@/lib/utils'
 import { useBranchId, useBranch } from '@/context/branch'
+import { useAdminRole } from '@/context/admin-role'
+import { canManageUsers } from '@/lib/permissions'
 import { PremiumSelect } from '@/components/ui/premium-select'
 
 const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer', 'viewer']
@@ -43,6 +45,8 @@ export default function EditLawyerPage() {
   const params = useParams()
   const branchId = useBranchId()
   const { branchName } = useBranch()
+  const role = useAdminRole()
+  const readOnly = !canManageUsers(role)
   const id = params.id as string
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -83,6 +87,7 @@ export default function EditLawyerPage() {
 
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
+    if (readOnly) return
     setSaving(true); setError('')
     const cleanUsername = form.username.trim().toLowerCase()
     if (cleanUsername && !/^[a-z0-9._]{3,50}$/.test(cleanUsername)) {
@@ -108,6 +113,7 @@ export default function EditLawyerPage() {
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (readOnly) return
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true); setError('')
@@ -136,6 +142,7 @@ export default function EditLawyerPage() {
   }
 
   async function deleteFile(att: Attachment) {
+    if (readOnly) return
     if (!confirm(`هل تريد حذف هذا الملف؟\n"${att.file_name}"`)) return
     setDeletingId(att.id)
     try {
@@ -160,9 +167,16 @@ export default function EditLawyerPage() {
         breadcrumb={[{ label: 'المستخدمون', href: '/admin/lawyers' }, { label: 'تعديل' }]}
       />
 
+      {readOnly && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          عرض البيانات فقط — لا تملك صلاحية تعديل المستخدمين.
+        </div>
+      )}
+
       {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>}
 
       <form onSubmit={handleSubmit} className="space-y-5">
+        <fieldset disabled={readOnly} className="space-y-5 border-0 p-0 m-0 min-w-0">
         <Card>
           <CardHeader title="البيانات الأساسية" />
           <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -216,9 +230,10 @@ export default function EditLawyerPage() {
             </Field>
           </div>
         </Card>
+        </fieldset>
 
         <div className="flex gap-3">
-          <Button type="submit" variant="primary" loading={saving}>حفظ التعديلات</Button>
+          <Button type="submit" variant="primary" loading={saving} disabled={readOnly}>حفظ التعديلات</Button>
           <Link href="/admin/lawyers"><Button type="button" variant="outline">إلغاء</Button></Link>
         </div>
       </form>
@@ -227,8 +242,8 @@ export default function EditLawyerPage() {
       <Card>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <h3 className="font-semibold text-slate-800">مستمسكات المحامي ({attachments.length})</h3>
-          <label className="cursor-pointer">
-            <input ref={fileInputRef} type="file" accept="application/pdf,image/*" onChange={handleFileUpload} disabled={uploading} className="hidden" />
+          <label className={readOnly ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}>
+            <input ref={fileInputRef} type="file" accept="application/pdf,image/*" onChange={handleFileUpload} disabled={uploading || readOnly} className="hidden" />
             <span className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${uploading ? 'bg-slate-100 text-slate-400' : 'bg-[#2C8780] hover:bg-[#1D6365] text-white cursor-pointer'}`}>
               {uploading ? 'جارٍ الرفع...' : '+ رفع مستمسك'}
             </span>
@@ -256,7 +271,7 @@ export default function EditLawyerPage() {
                   className="text-xs text-[#2C8780] border border-[#2C8780]/30 hover:bg-[#2C8780]/5 disabled:opacity-50 px-2.5 py-1.5 rounded-lg transition-colors shrink-0">
                   {openingId === att.id ? '...' : 'فتح'}
                 </button>
-                <button onClick={() => deleteFile(att)} disabled={deletingId === att.id}
+                <button onClick={() => deleteFile(att)} disabled={readOnly || deletingId === att.id}
                   className="text-xs text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 disabled:opacity-50 px-2.5 py-1.5 rounded-lg transition-colors shrink-0">
                   {deletingId === att.id ? '...' : 'حذف'}
                 </button>

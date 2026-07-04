@@ -12,6 +12,7 @@ import { buildAssignPayload } from '@/lib/task-assignment'
 import { ACTIVE_CASE_BLOCK_MSG, hasActiveCurrentTask } from '@/lib/debtor-current-task'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DatePicker } from '@/components/ui/date-picker'
+import { useCanWrite } from '@/hooks/use-can-write'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   draft: 'gray',
@@ -317,6 +318,7 @@ function AssignModal({ taskId, taskLabel, onClose, onAssigned }: {
 // ─── Main Panel ────────────────────────────────────────────────────────────────
 export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
   const branchId = useBranchId()
+  const canWrite = useCanWrite()
   const [tasks, setTasks] = useState<any[]>([])
   const [debtorMeta, setDebtorMeta] = useState<{ current_task_id: string | null; case_status: string | null } | null>(null)
   const [defs, setDefs] = useState<TaskDef[]>([])
@@ -358,7 +360,7 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
 
   useEffect(() => { load() }, [load])
 
-  const canAddTask = !hasActiveCurrentTask(debtorMeta ?? {})
+  const canAddTask = canWrite && !hasActiveCurrentTask(debtorMeta ?? {})
   const currentTaskId = debtorMeta?.current_task_id ?? null
   const sortedTasks = [...tasks].sort((a, b) => {
     if (a.id === currentTaskId) return -1

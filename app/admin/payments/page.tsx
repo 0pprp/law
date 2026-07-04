@@ -11,6 +11,8 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { DebtorSearchPicker } from '@/components/ui/debtor-search-picker'
 import { FormField, formInputClass } from '@/components/ui/form-flow'
 import { fmtMoney, fmtDate, cn } from '@/lib/utils'
+import { parseMoneyInput, formatMoney } from '@/lib/money-input'
+import MoneyInput from '@/components/ui/money-input'
 import { RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import {
   DEBTOR_SEARCH_PLACEHOLDER,
@@ -101,7 +103,7 @@ export default function PaymentsPage() {
   async function saveEdit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (!allowEdit) { setEditError(PERMISSION_DENIED_MSG); return }
-    const amt = Number(editForm.amount)
+    const amt = parseMoneyInput(editForm.amount)
     if (!amt || amt <= 0) { setEditError('يرجى إدخال مبلغ صحيح'); return }
     setSaving(true)
     setEditError('')
@@ -115,7 +117,7 @@ export default function PaymentsPage() {
       action: 'update_payment',
       entity_type: 'payment',
       entity_id: editingPayment.id,
-      description: `تعديل تسديد: ${amt.toLocaleString('en-US')} د.ع — ${editingPayment.debtors?.full_name ?? ''}`,
+      description: `تعديل تسديد: ${formatMoney(amt)} — ${editingPayment.debtors?.full_name ?? ''}`,
     }, supabase)
     setSaving(false)
     setEditingPayment(null)
@@ -124,7 +126,7 @@ export default function PaymentsPage() {
 
   async function deletePayment(id: string, debtorName: string, amount: number) {
     if (!allowDelete) { alert(PERMISSION_DENIED_MSG); return }
-    if (!confirm(`هل أنت متأكد من حذف هذا التسديد (${amount.toLocaleString('en-US')} د.ع) الخاص بـ "${debtorName}"؟`)) return
+    if (!confirm(`هل أنت متأكد من حذف هذا التسديد (${formatMoney(amount)}) الخاص بـ "${debtorName}"؟`)) return
     setDeletingId(id)
     const supabase = createClient()
     const { error } = await supabase.from('debtor_payments').delete().eq('id', id)
@@ -133,7 +135,7 @@ export default function PaymentsPage() {
       action: 'delete_payment',
       entity_type: 'payment',
       entity_id: id,
-      description: `حذف تسديد: ${amount.toLocaleString('en-US')} د.ع — ${debtorName}`,
+      description: `حذف تسديد: ${formatMoney(amount)} — ${debtorName}`,
     }, supabase)
     setDeletingId(null)
     load()
@@ -142,7 +144,7 @@ export default function PaymentsPage() {
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (!allowAdd) { setError(PERMISSION_DENIED_MSG); return }
-    if (!form.debtor_id || !form.amount || Number(form.amount) <= 0) {
+    if (!form.debtor_id || !form.amount || parseMoneyInput(form.amount) <= 0) {
       setError('يرجى اختيار المدين وإدخال مبلغ صحيح')
       return
     }
@@ -152,7 +154,7 @@ export default function PaymentsPage() {
     const paymentDate = new Date().toISOString().split('T')[0]
     const { error: dbErr } = await supabase.from('debtor_payments').insert({
       debtor_id: form.debtor_id,
-      amount: Number(form.amount),
+      amount: parseMoneyInput(form.amount),
       payment_date: paymentDate,
       notes: form.notes || null,
       ...(branchId ? { branch_id: branchId } : {}),
@@ -162,7 +164,7 @@ export default function PaymentsPage() {
       action: 'add_payment',
       entity_type: 'payment',
       entity_id: form.debtor_id,
-      description: `تسجيل تسديد: ${Number(form.amount).toLocaleString('en-US')} د.ع`,
+      description: `تسجيل تسديد: ${formatMoney(parseMoneyInput(form.amount))}`,
     }, supabase)
     setForm(EMPTY_FORM)
     setSelectedDebtor(null)
@@ -202,7 +204,7 @@ export default function PaymentsPage() {
           </div>
           <form onSubmit={saveEdit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`} required>
-              <input type="number" min="1" value={editForm.amount} onChange={e => setEditForm(f => ({ ...f, amount: e.target.value }))} className={INP} dir="ltr" required />
+              <MoneyInput value={editForm.amount} onChange={v => setEditForm(f => ({ ...f, amount: v }))} className={INP} required />
             </FormField>
             <FormField label="ملاحظات">
               <input type="text" value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} className={INP} />
@@ -230,7 +232,7 @@ export default function PaymentsPage() {
                 />
               </FormField>
               <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`} required>
-                <input type="number" min="1" value={form.amount} onChange={e => set('amount', e.target.value)} required className={INP} dir="ltr" placeholder="0" />
+                <MoneyInput value={form.amount} onChange={v => set('amount', v)} required className={INP} placeholder="0" />
               </FormField>
               <div className="md:col-span-2">
                 <FormField label="ملاحظات">

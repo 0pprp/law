@@ -10,13 +10,14 @@ import { logActivity } from '@/lib/activity-log'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { fmtDate } from '@/lib/utils'
+import { parseMoneyInput } from '@/lib/money-input'
+import MoneyInput from '@/components/ui/money-input'
 import { RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { cn } from '@/lib/utils'
 import { useAdminRole } from '@/context/admin-role'
 import { canEditRecords } from '@/lib/permissions'
-import PermissionDenied from '@/components/PermissionDenied'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
 
@@ -52,7 +53,7 @@ export default function EditDebtorPage() {
       ])
       if (data) {
         setCreatedAt(data.created_at ?? null)
-        const hasPenalty = parseFloat(data.penalty_amount) > 0
+        const hasPenalty = parseMoneyInput(data.penalty_amount) > 0
         setForm({
           full_name: data.full_name ?? '',
           phone: data.phone ?? '',
@@ -96,6 +97,7 @@ export default function EditDebtorPage() {
 
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
+    if (readOnly) return
     setSaving(true); setError('')
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
@@ -104,10 +106,10 @@ export default function EditDebtorPage() {
       full_name: form.full_name, phone: form.phone || null, address: form.address || null,
       id_number: form.id_number || null,
       receipt_type: form.receipt_type, receipt_number: form.receipt_number || null,
-      receipt_amount: parseFloat(form.receipt_amount) || 0,
-      remaining_amount: parseFloat(form.remaining_amount) || 0,
-      lawyer_fees: parseFloat(form.lawyer_fees) || 0,
-      penalty_amount: form.has_contract ? (parseFloat(form.penalty_amount) || 0) : 0,
+      receipt_amount: parseMoneyInput(form.receipt_amount),
+      remaining_amount: parseMoneyInput(form.remaining_amount),
+      lawyer_fees: parseMoneyInput(form.lawyer_fees),
+      penalty_amount: form.has_contract ? parseMoneyInput(form.penalty_amount) : 0,
       receipt_signed_legal_costs: form.receipt_signed_legal_costs,
       notes: form.notes || null,
     }).eq('id', id)
@@ -130,9 +132,7 @@ export default function EditDebtorPage() {
     </div>
   )
 
-  if (!canEditRecords(role)) {
-    return <PermissionDenied />
-  }
+  const readOnly = !canEditRecords(role)
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -142,7 +142,14 @@ export default function EditDebtorPage() {
         breadcrumb={[{ label: 'المدينون', href: '/admin/debtors' }, { label: 'تعديل' }]}
       />
 
+      {readOnly && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          عرض البيانات فقط — لا تملك صلاحية تعديل المدين.
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-5">
+        <fieldset disabled={readOnly} className="space-y-5 border-0 p-0 m-0 min-w-0">
         <FormFlow>
           <FormFlowStep step={1} title="البيانات الشخصية" subtitle="معلومات التواصل والهوية">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -176,13 +183,13 @@ export default function EditDebtorPage() {
                 <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={formInputClass} dir="ltr" />
               </FormField>
               <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`}>
-                <input type="number" value={form.receipt_amount} onChange={e => set('receipt_amount', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" />
+                <MoneyInput value={form.receipt_amount} onChange={v => set('receipt_amount', v)} className={formInputClass} />
               </FormField>
               <FormField label="المبلغ المتبقي (د.ع)">
-                <input type="number" value={form.remaining_amount} onChange={e => set('remaining_amount', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" />
+                <MoneyInput value={form.remaining_amount} onChange={v => set('remaining_amount', v)} className={formInputClass} />
               </FormField>
               <FormField label="أتعاب المحامي (د.ع)">
-                <input type="number" value={form.lawyer_fees} onChange={e => set('lawyer_fees', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" />
+                <MoneyInput value={form.lawyer_fees} onChange={v => set('lawyer_fees', v)} className={formInputClass} />
               </FormField>
               <div className="md:col-span-2">
                 <label className="flex items-center gap-2.5 cursor-pointer select-none p-3 rounded-xl border border-[rgba(118,118,118,0.12)] bg-[#FAFAFA] hover:bg-[#F3F1F2] transition-colors">
@@ -202,7 +209,7 @@ export default function EditDebtorPage() {
               </div>
               {form.has_contract && (
                 <FormField label="الشرط الجزائي (د.ع)">
-                  <input type="number" value={form.penalty_amount} onChange={e => set('penalty_amount', e.target.value)} className={formInputClass} min="0" step="any" dir="ltr" />
+                  <MoneyInput value={form.penalty_amount} onChange={v => set('penalty_amount', v)} className={formInputClass} />
                 </FormField>
               )}
             </div>
@@ -250,11 +257,12 @@ export default function EditDebtorPage() {
             <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} className={cn(formInputClass, 'resize-none')} placeholder="ملاحظات إضافية..." />
           </FormFlowStep>
         </FormFlow>
+        </fieldset>
 
         {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>}
 
         <div className="flex gap-3 pb-6">
-          <Button type="submit" variant="primary" loading={saving}>حفظ التعديلات</Button>
+          <Button type="submit" variant="primary" loading={saving} disabled={readOnly}>حفظ التعديلات</Button>
           <Link href="/admin/debtors"><Button type="button" variant="outline">إلغاء</Button></Link>
         </div>
       </form>

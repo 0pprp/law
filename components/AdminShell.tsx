@@ -66,6 +66,9 @@ const sections = [
       { label: 'أتعاب المحامين', href: '/admin/finance', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
       )},
+      { label: 'محفظة مدير القانونية', href: '/admin/legal-manager-wallet', icon: (
+        <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+      )},
       { label: 'الصرفيات', href: '/admin/expenses', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
       )},
@@ -503,9 +506,9 @@ function AdminShellInner({
 
           {isViewer(userRole) && (
             <div className="shrink-0 bg-sky-50 border-b border-sky-200 px-4 py-2.5 text-center text-sm text-sky-950 font-medium">
-              <span className="font-bold">مراقب عام</span>
+              <span className="font-bold">مدير القانونية</span>
               {' — '}
-              عرض البيانات فقط (مثل المدير بدون إضافة أو تعديل). اختر الفرع من الأعلى لعرض مدينيه ومهامه.
+              نفس واجهة المدير للعرض. التنفيذ المسموح: تكليف المحامين، مراجعة/اعتماد/رفض الإنجازات، والتقارير.
             </div>
           )}
 

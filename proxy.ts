@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import type { UserRole } from '@/lib/types'
-import { isViewerWritePath } from '@/lib/permissions'
+import { isAccountant } from '@/lib/permissions'
 
 export default async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -45,7 +45,7 @@ export default async function proxy(request: NextRequest) {
       .single()
 
     const role = profile?.role as UserRole
-    const dest = role === 'lawyer' ? '/lawyer/tasks' : '/admin/dashboard'
+    const dest = role === 'lawyer' ? '/lawyer' : '/admin/dashboard'
     return NextResponse.redirect(new URL(dest, request.url))
   }
 
@@ -63,9 +63,6 @@ export default async function proxy(request: NextRequest) {
     }
     if (isAdminRoute && role === 'lawyer') {
       return NextResponse.redirect(new URL('/lawyer/tasks', request.url))
-    }
-    if (isAdminRoute && role === 'viewer' && isViewerWritePath(pathname)) {
-      return NextResponse.redirect(new URL('/admin/dashboard?denied=1', request.url))
     }
   }
 

@@ -9,6 +9,8 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { useBranchId, useBranch } from '@/context/branch'
+import { useAdminRole } from '@/context/admin-role'
+import { canManageUsers } from '@/lib/permissions'
 import { isMainBranchName } from '@/lib/branch-constants'
 import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
@@ -46,6 +48,8 @@ export default function NewLawyerPage() {
   const router = useRouter()
   const branchId = useBranchId()
   const { branchName } = useBranch()
+  const role = useAdminRole()
+  const readOnly = !canManageUsers(role)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -73,6 +77,7 @@ export default function NewLawyerPage() {
 
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
+    if (readOnly) return
     if (!branchId || isMainBranchName(branchName)) {
       setError('يجب اختيار فرعاً رسمياً من القائمة العلوية قبل إضافة مستخدم')
       return
@@ -142,6 +147,12 @@ export default function NewLawyerPage() {
         breadcrumb={[{ label: 'المستخدمون', href: '/admin/lawyers' }, { label: 'مستخدم جديد' }]}
       />
 
+      {readOnly && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          عرض البيانات فقط — لا تملك صلاحية إضافة مستخدمين.
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-5">
         {branchId && branchName && !isMainBranchName(branchName) ? (
           <p className="text-xs text-[#767676] bg-[#F3F1F2] rounded-lg px-3 py-2">
@@ -150,7 +161,7 @@ export default function NewLawyerPage() {
               <span className="block mt-1 text-[#2C8780]">سيُربط المحاسب تلقائياً بهذا الفرع فقط.</span>
             )}
             {isViewerRole && (
-              <span className="block mt-1 text-[#2C8780]">المراقب العام يطلع على كل الفروع — صلاحية قراءة فقط.</span>
+              <span className="block mt-1 text-[#2C8780]">مدير القانونية يطلع على كل الفروع — تكليف ومراجعة إنجازات بدون إعدادات أو حذف.</span>
             )}
           </p>
         ) : (
@@ -176,7 +187,7 @@ export default function NewLawyerPage() {
           <CardHeader title="بيانات الحساب" />
           <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label="الاسم الكامل" required>
-              <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={INP} placeholder={isLawyer ? 'اسم المحامي الكامل' : isViewerRole ? 'اسم المراقب الكامل' : 'اسم المحاسب الكامل'} />
+              <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={INP} placeholder={isLawyer ? 'اسم المحامي الكامل' : isViewerRole ? 'اسم مدير القانونية الكامل' : 'اسم المحاسب الكامل'} />
             </Field>
             <Field label="اسم المستخدم" required hint="أحرف إنجليزية صغيرة، أرقام، نقطة، شرطة سفلية فقط — يُستخدم لتسجيل الدخول">
               <input type="text" value={form.username}
@@ -248,7 +259,7 @@ export default function NewLawyerPage() {
         {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>}
 
         <div className="flex gap-3 pb-6">
-          <Button type="submit" variant="primary" loading={saving}>إنشاء الحساب</Button>
+          <Button type="submit" variant="primary" loading={saving} disabled={readOnly}>إنشاء الحساب</Button>
           <Link href="/admin/lawyers"><Button type="button" variant="outline">إلغاء</Button></Link>
         </div>
       </form>

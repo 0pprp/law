@@ -8,10 +8,10 @@ import type { TaskStatus } from '@/lib/types'
 import { logActivity } from '@/lib/activity-log'
 import {
   fetchCurrentBranchTaskRowsPaginated,
-  assignTasksToLawyer,
   type CurrentBranchTaskRow,
   CURRENT_TASK_PAGE_SIZE,
 } from '@/lib/task-assignment'
+import { assignTasksViaApi } from '@/lib/task-operations-api'
 import { fetchBranchProfiles, filterLawyerProfiles } from '@/lib/branch-profiles'
 import { formatErrorMessage } from '@/lib/format-error'
 import { scheduleBranchMaintenance } from '@/lib/branch-maintenance'
@@ -280,8 +280,7 @@ export default function TasksPage() {
     }
     setAssigning(true); setError('')
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    const result = await assignTasksToLawyer(supabase, ids, lawyerId, dueDate, user?.id)
+    const result = await assignTasksViaApi(ids, lawyerId, dueDate)
     if (!result.ok) {
       setError(result.error ?? 'فشل تكليف المهمة')
       setAssigning(false)

@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { logActivity } from '@/lib/activity-log'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DatePicker } from '@/components/ui/date-picker'
+import { formatMoney } from '@/lib/money-input'
 import { localTodayYmd } from '@/lib/local-date'
 
 interface ExpenseTypeDef {
@@ -35,8 +36,6 @@ interface Props {
   expenses: Expense[]
   taskDueDate?: string | null
 }
-
-function fmt(n: number) { return Number(n).toLocaleString('ar-IQ') }
 
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/20 focus:border-[#2C8780] bg-white transition-all'
 
@@ -140,7 +139,7 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
       action: 'add_expense',
       entity_type: 'expense',
       entity_id: debtorId,
-      description: `طلب صرفية: ${selectedType.name} — ${fmt(selectedType.default_amount)} د.ع (بانتظار الاعتماد)`,
+      description: `طلب صرفية: ${selectedType.name} — ${formatMoney(selectedType.default_amount)} (بانتظار الاعتماد)`,
     }, supabase)
 
     resetForm()
@@ -169,7 +168,7 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
           )}
         </div>
         {total > 0 && (
-          <span className="text-sm font-black text-amber-600 tabular-nums">{fmt(total)} د.ع</span>
+          <span className="text-sm font-black text-amber-600 tabular-nums">{formatMoney(total)}</span>
         )}
       </div>
 
@@ -199,7 +198,7 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
                   <p className="text-[11px] text-slate-400 mt-0.5" dir="ltr">{exp.expense_date}</p>
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">
-                  <span className="text-sm font-black text-slate-800 tabular-nums">{fmt(Number(exp.amount))} د.ع</span>
+                  <span className="text-sm font-black text-slate-800 tabular-nums">{formatMoney(Number(exp.amount))}</span>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>
                 </div>
               </div>
@@ -250,7 +249,7 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
           {selectedType && (
             <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
               <span className="text-xs font-bold text-amber-700">المبلغ المحدد (غير قابل للتعديل)</span>
-              <span className="text-lg font-black text-amber-800 tabular-nums">{fmt(selectedType.default_amount)} د.ع</span>
+              <span className="text-lg font-black text-amber-800 tabular-nums">{formatMoney(selectedType.default_amount)}</span>
             </div>
           )}
 

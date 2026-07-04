@@ -1,8 +1,8 @@
 export type UserRole = 'admin' | 'employee' | 'accountant' | 'lawyer' | 'viewer'
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent'
 export type ReceiptStatus = 'pending' | 'approved' | 'rejected'
-export type WalletTransactionType = 'accountant_transfer' | 'approved_task_payment' | 'manual_adjustment' | 'fee_payout' | 'transfer_from_savings' | 'savings_withdrawal' | 'task_expense_deduction'
-export type LawyerWalletKind = 'fees' | 'savings'
+export type WalletTransactionType = 'accountant_transfer' | 'approved_task_payment' | 'manual_adjustment' | 'fee_payout' | 'transfer_from_savings' | 'savings_withdrawal' | 'task_expense_deduction' | 'legal_manager_task_bonus' | 'legal_manager_withdrawal' | 'legal_manager_manual_deposit' | 'legal_manager_manual_withdrawal'
+export type LawyerWalletKind = 'fees' | 'savings' | 'legal_manager'
 export type TaskStatus =
   | 'draft' | 'assigned' | 'in_progress' | 'submitted' | 'approved' | 'rejected' | 'completed'
   | 'new' | 'failed' | 'postponed' | 'needs_info' | 'closed' | 'waiting_assignment'
@@ -94,6 +94,7 @@ export interface Debtor {
   remaining_amount: number
   total_expenses: number
   lawyer_fees: number
+  legal_manager_fees?: number
   penalty_amount: number
   receipt_signed_legal_costs?: boolean
   total_payments: number
@@ -302,7 +303,7 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   employee: 'موظف',
   accountant: 'محاسب',
   lawyer: 'محامي',
-  viewer: 'مراقب عام',
+  viewer: 'مدير القانونية',
 }
 
 export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
@@ -333,9 +334,14 @@ export const WALLET_TRANSACTION_LABELS: Record<WalletTransactionType, string> = 
   transfer_from_savings: 'إضافة صرفيات',
   savings_withdrawal: 'سحب صرفيات',
   task_expense_deduction: 'خصم صرفية مهمة',
+  legal_manager_task_bonus: 'مكافأة مدير القانونية (اعتماد إنجاز)',
+  legal_manager_withdrawal: 'سحب معتمد — محفظة مدير القانونية',
+  legal_manager_manual_deposit: 'إيداع يدوي من الإدارة إلى محفظة مدير القانونية',
+  legal_manager_manual_withdrawal: 'سحب يدوي من الإدارة من محفظة مدير القانونية',
 }
 
 export const LAWYER_WALLET_LABELS: Record<LawyerWalletKind, string> = {
   fees: 'محفظة الأتعاب',
   savings: 'محفظة الصرفيات',
+  legal_manager: 'محفظة مدير القانونية',
 }

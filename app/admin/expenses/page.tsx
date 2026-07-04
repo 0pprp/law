@@ -14,6 +14,8 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import AdminDisbursementWalletPanel from '@/components/AdminDisbursementWalletPanel'
 import { fmtMoney, fmtDate } from '@/lib/utils'
+import { parseMoneyInput, formatMoney } from '@/lib/money-input'
+import MoneyInput from '@/components/ui/money-input'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DateRangePicker } from '@/components/ui/date-range-picker'
@@ -135,24 +137,24 @@ export default function ExpensesPage() {
   async function saveEdit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (!canWrite) { setEditError(PERMISSION_DENIED_MSG); return }
-    const amt = Number(editForm.amount)
+    const amt = parseMoneyInput(editForm.amount)
     if (!amt || amt <= 0) { setEditError('يرجى إدخال مبلغ صحيح'); return }
     setSaving(true); setEditError('')
     const supabase = createClient()
     const { error } = await supabase.from('expenses').update({ amount: amt, expense_type: editForm.expense_type || null, description: editForm.description || null, expense_date: editForm.expense_date }).eq('id', editingExpense.id)
     if (error) { setEditError(error.message); setSaving(false); return }
-    await logActivity({ action: 'update_expense', entity_type: 'expense', entity_id: editingExpense.id, description: `تعديل صرفية: ${amt.toLocaleString('en-US')} د.ع — ${editingExpense.debtors?.full_name ?? ''}` }, supabase)
+    await logActivity({ action: 'update_expense', entity_type: 'expense', entity_id: editingExpense.id, description: `تعديل صرفية: ${formatMoney(amt)} — ${editingExpense.debtors?.full_name ?? ''}` }, supabase)
     setSaving(false); setEditingExpense(null); load()
   }
 
   async function deleteExpense(id: string, debtorName: string, amount: number) {
     if (!canWrite) { alert(PERMISSION_DENIED_MSG); return }
-    if (!confirm(`هل أنت متأكد من حذف هذه الصرفية (${amount.toLocaleString('en-US')} د.ع) الخاصة بـ "${debtorName}"؟`)) return
+    if (!confirm(`هل أنت متأكد من حذف هذه الصرفية (${formatMoney(amount)}) الخاصة بـ "${debtorName}"؟`)) return
     setDeletingId(id)
     const supabase = createClient()
     const { error } = await supabase.from('expenses').delete().eq('id', id)
     if (error) { alert(`فشل الحذف: ${error.message}`); setDeletingId(null); return }
-    await logActivity({ action: 'delete_expense', entity_type: 'expense', entity_id: id, description: `حذف صرفية: ${amount.toLocaleString('en-US')} د.ع — ${debtorName}` }, supabase)
+    await logActivity({ action: 'delete_expense', entity_type: 'expense', entity_id: id, description: `حذف صرفية: ${formatMoney(amount)} — ${debtorName}` }, supabase)
     setDeletingId(null); load()
   }
 
@@ -229,7 +231,7 @@ export default function ExpensesPage() {
           </div>
           <form onSubmit={saveEdit} className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div><label className={lbl}>المبلغ (د.ع) *</label>
-              <input type="number" min="1" value={editForm.amount} onChange={e => setEditForm(f => ({ ...f, amount: e.target.value }))} className={INP} dir="ltr" required /></div>
+              <MoneyInput value={editForm.amount} onChange={v => setEditForm(f => ({ ...f, amount: v }))} className={INP} required /></div>
             <div><label className={lbl}>نوع الصرف</label>
               <input type="text" value={editForm.expense_type} onChange={e => setEditForm(f => ({ ...f, expense_type: e.target.value }))} className={INP} /></div>
             <div><label className={lbl}>الوصف</label>

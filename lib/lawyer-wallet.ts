@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WalletTransactionType, LawyerWalletKind } from '@/lib/types'
+import { formatMoney } from '@/lib/money-input'
 
 export type { LawyerWalletKind }
 
@@ -39,6 +40,8 @@ const DISBURSEMENT_TYPES = new Set<string>([
 ])
 
 function legacyWalletForType(type: string): LawyerWalletKind {
+  if (type === 'legal_manager_task_bonus' || type === 'legal_manager_withdrawal') return 'legal_manager'
+  if (type === 'legal_manager_manual_deposit' || type === 'legal_manager_manual_withdrawal') return 'legal_manager'
   if (DISBURSEMENT_TYPES.has(type)) return 'savings'
   return 'fees'
 }
@@ -82,7 +85,28 @@ export async function fetchLawyerWalletBalance(
   if (wallet === 'savings') {
     return fetchLawyerDisbursementBalance(supabase, lawyerId)
   }
+  if (wallet === 'legal_manager') {
+    return fetchLegalManagerDrawerBalance(supabase, lawyerId)
+  }
   return fetchLawyerFeesOnlyBalance(supabase, lawyerId)
+}
+
+async function fetchLegalManagerDrawerBalance(
+  supabase: SupabaseClient,
+  ownerId: string,
+): Promise<number> {
+  const hasWallet = await probeWalletColumn(supabase)
+  if (!hasWallet) return 0
+
+  const { data, error } = await supabase
+    .from('lawyer_wallet_transactions')
+    .select('amount')
+    .eq('lawyer_id', ownerId)
+    .eq('wallet', 'legal_manager')
+    .limit(5000)
+
+  if (error) return 0
+  return sumAmounts(data)
 }
 
 async function fetchLawyerFeesOnlyBalance(
@@ -391,7 +415,7 @@ export async function withdrawLawyerSavings(
   if (params.amount > balance) {
     return {
       ok: false,
-      error: `رصيد الصرفيات غير كافٍ — المتاح: ${balance.toLocaleString('en-US')} د.ع`,
+      error: `رصيد الصرفيات غير كافٍ — المتاح: ${formatMoney(balance)}`,
     }
   }
 
@@ -429,7 +453,7 @@ export async function payoutLawyerFees(
     return { ok: false, error: 'لا يوجد رصيد أتعاب — تُضاف الأتعاب عند اختيار المهمة التالية أو إغلاق القضية' }
   }
   if (params.amount > balance) {
-    return { ok: false, error: `رصيد الأتعاب غير كافٍ — المتاح: ${balance.toLocaleString('en-US')} د.ع` }
+    return { ok: false, error: `رصيد الأتعاب غير كافٍ — المتاح: ${formatMoney(balance)}` }
   }
 
   const note = params.notes?.trim() || 'صرف أتعاب للمحامي'
@@ -446,6 +470,42 @@ export async function payoutLawyerFees(
     { ...base, type: 'fee_payout' },
     { ...base, type: 'manual_adjustment' },
   )
+  if (!result.ok) return result
+  return { ok: true, newBalance: balance - params.amount }
+}
+
+/** سحب معتمد من محفظة مدير القانونية */
+export async function payoutLegalManagerWallet(
+  supabase: SupabaseClient,
+  params: {
+    legalManagerUserId: string
+    amount: number
+    notes?: string | null
+    createdBy: string
+  },
+): Promise<{ ok: boolean; error?: string; newBalance?: number }> {
+  if (params.amount <= 0) return { ok: false, error: 'المبلغ يجب أن يكون أكبر من صفر' }
+
+  const balance = await fetchLawyerWalletBalance(supabase, params.legalManagerUserId, 'legal_manager')
+  if (balance <= 0) {
+    return { ok: false, error: 'لا يوجد رصيد في محفظة مدير القانونية' }
+  }
+  if (params.amount > balance) {
+    return {
+      ok: false,
+      error: `رصيد المحفظة غير كافٍ — المتاح: ${formatMoney(balance)}`,
+    }
+  }
+
+  const note = params.notes?.trim() || 'سحب معتمد — محفظة مدير القانونية'
+  const result = await insertWalletTransaction(supabase, {
+    lawyer_id: params.legalManagerUserId,
+    type: 'legal_manager_withdrawal',
+    wallet: 'legal_manager',
+    amount: -params.amount,
+    notes: note,
+    created_by: params.createdBy,
+  })
   if (!result.ok) return result
   return { ok: true, newBalance: balance - params.amount }
 }

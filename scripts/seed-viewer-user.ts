@@ -32,7 +32,7 @@ async function main() {
 
   const username = (process.env.VIEWER_USERNAME ?? 'viewer').trim().toLowerCase()
   const password = process.env.VIEWER_PASSWORD ?? 'admin12'
-  const fullName = process.env.VIEWER_FULL_NAME ?? 'مراقب عام'
+  const fullName = process.env.VIEWER_FULL_NAME ?? 'مدير القانونية'
 
   const admin = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } })
 

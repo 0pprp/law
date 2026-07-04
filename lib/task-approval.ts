@@ -175,7 +175,11 @@ export async function creditTaskFeeOnApproval(
 
   if (existingTx) {
     const debtorId = task.debtor_id as string | null
-    if (debtorId) await syncDebtorLawyerFees(supabase, debtorId)
+    if (debtorId) {
+      await syncDebtorLawyerFees(supabase, debtorId)
+      const { syncDebtorLegalManagerFees } = await import('@/lib/legal-manager-wallet')
+      await syncDebtorLegalManagerFees(supabase, debtorId)
+    }
     await markFeeReleased(supabase, taskId)
     return { ok: true, amount: 0, alreadyCredited: true }
   }
@@ -230,6 +234,13 @@ export async function creditTaskFeeOnApproval(
   return { ok: true, amount: walletCredited }
 }
 
+export type ApproveTaskResult = {
+  ok: boolean
+  feeAmount: number
+  legalManagerBonus?: number
+  error?: string
+}
+
 export function parseGps(val: string): { lat: number; lng: number } | null {
   if (!val) return null
   const parts = val.split(',').map(s => parseFloat(s.trim()))
@@ -279,7 +290,7 @@ export async function approveTaskCompletion(
   supabase: SupabaseClient,
   taskId: string,
   reviewerId: string,
-): Promise<{ ok: boolean; feeAmount: number; error?: string }> {
+): Promise<ApproveTaskResult> {
   const { data: task } = await supabase
     .from('tasks')
     .select('id, task_status, completed_at, fee_status')
@@ -326,7 +337,17 @@ export async function approveTaskCompletion(
     return { ok: false, feeAmount: 0, error: feeResult.error ?? 'فشل احتساب أتعاب المحامي' }
   }
 
-  return { ok: true, feeAmount: feeResult.amount }
+  const { creditLegalManagerBonusOnApproval } = await import('@/lib/legal-manager-wallet')
+  const lmResult = await creditLegalManagerBonusOnApproval(supabase, taskId, reviewerId)
+  if (!lmResult.ok) {
+    console.error('[approveTaskCompletion] legal manager bonus failed:', lmResult.error)
+    return { ok: false, feeAmount: feeResult.amount, error: lmResult.error ?? 'فشل إضافة مكافأة مدير القانونية' }
+  }
+  if (lmResult.skipped && lmResult.reason) {
+    console.warn('[approveTaskCompletion]', lmResult.reason, 'task', taskId)
+  }
+
+  return { ok: true, feeAmount: feeResult.amount, legalManagerBonus: lmResult.amount }
 }
 
 /** Fees are credited on approval — no release when assigning the next task. */

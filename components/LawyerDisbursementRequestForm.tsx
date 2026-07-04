@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import { fmtMoney } from '@/lib/utils'
+import { parseMoneyInput } from '@/lib/money-input'
+import MoneyInput from '@/components/ui/money-input'
 import { RECEIPT_STATUS_LABELS } from '@/lib/types'
 import type { LawyerPayoutRequest } from '@/lib/lawyer-payout-requests'
 
@@ -33,7 +35,7 @@ export default function LawyerDisbursementRequestForm({ availableBalance, reques
     e.preventDefault()
     setError('')
     setSuccess('')
-    const parsed = parseFloat(amount)
+    const parsed = parseMoneyInput(amount)
     if (!title.trim()) { setError('أدخل اسم الطلب'); return }
     if (!parsed || parsed <= 0) { setError('أدخل مبلغاً صحيحاً'); return }
     if (!notes.trim()) { setError('ملاحظة السحب مطلوبة'); return }
@@ -92,7 +94,7 @@ export default function LawyerDisbursementRequestForm({ availableBalance, reques
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">المبلغ (د.ع) *</label>
-            <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" className={INP} dir="ltr" min="1" max={availableBalance > 0 ? availableBalance : undefined} />
+            <MoneyInput value={amount} onChange={v => setAmount(v)} placeholder="0" className={INP} />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">ملاحظة السحب *</label>

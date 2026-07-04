@@ -8,13 +8,18 @@ export function isAdmin(role: string | null | undefined): boolean {
   return role === 'admin'
 }
 
-export function isViewer(role: string | null | undefined): boolean {
+/** مدير القانونية — القيمة في DB: viewer */
+export function isLegalManager(role: string | null | undefined): boolean {
   return role === 'viewer'
 }
 
-/** alias — لا يوجد دور auditor منفصل حالياً */
+export function isViewer(role: string | null | undefined): boolean {
+  return isLegalManager(role)
+}
+
+/** alias */
 export function isAuditor(role: string | null | undefined): boolean {
-  return isViewer(role)
+  return isLegalManager(role)
 }
 
 export function isAccountant(role: string | null | undefined): boolean {
@@ -25,35 +30,42 @@ export function isLawyer(role: string | null | undefined): boolean {
   return role === 'lawyer'
 }
 
-/** أي دور يفتح لوحة الإدارة */
 export function isAdminPanelRole(role: string | null | undefined): boolean {
   return !!role && STAFF_ROLES.includes(role as UserRole)
 }
 
-/** قراءة بيانات لوحة المدير — المراقب = المدير */
 export function canReadAdminData(role: string | null | undefined): boolean {
-  return isAdmin(role) || isViewer(role)
+  return isAdmin(role) || isLegalManager(role)
 }
 
-/** التبديل بين كل الفروع — المراقب = المدير */
 export function canReadAllBranches(role: string | null | undefined): boolean {
-  return isAdmin(role) || isViewer(role)
+  return isAdmin(role) || isLegalManager(role)
 }
 
-/** كتابة بيانات الإدارة — المدير فقط */
 export function canWriteAdminData(role: string | null | undefined): boolean {
   return isAdmin(role)
 }
 
-/** اعتماد/رفض الإنجازات */
-export function canApproveCompletions(role: string | null | undefined): boolean {
-  if (isViewer(role)) return false
-  return isAdmin(role) || isAccountant(role) || role === 'employee'
+export function canAssignTasks(role: string | null | undefined): boolean {
+  return isAdmin(role) || isAccountant(role) || role === 'employee' || isLegalManager(role)
 }
 
-/** False for مراقب عام — يمنع insert/update/delete من الواجهة */
+export function canApproveCompletions(role: string | null | undefined): boolean {
+  return isAdmin(role) || isAccountant(role) || role === 'employee' || isLegalManager(role)
+}
+
+export function canReviewTasks(role: string | null | undefined): boolean {
+  return canApproveCompletions(role)
+}
+
+export function canViewLawyerReports(role: string | null | undefined): boolean {
+  return canViewReports(role)
+}
+
+/** تعديل عام للبيانات — ليس لمدير القانونية */
 export function canWriteData(role: string | null | undefined): boolean {
-  return !!role && !isViewer(role)
+  if (isLegalManager(role)) return false
+  return !!role && STAFF_ROLES.includes(role as UserRole)
 }
 
 export function canPickAnyBranch(role: string | null | undefined): boolean {
@@ -62,6 +74,11 @@ export function canPickAnyBranch(role: string | null | undefined): boolean {
 
 export function canViewAllUsersAcrossBranches(role: string | null | undefined): boolean {
   return canReadAllBranches(role)
+}
+
+/** واجهة المدير الكاملة (عرض) — مدير القانونية يرى مثل المدير */
+export function showsFullAdminUi(role: string | null | undefined): boolean {
+  return isAdmin(role) || isLegalManager(role)
 }
 
 export function canDelete(role: string | null | undefined): boolean {
@@ -76,29 +93,31 @@ export function canManageUsers(role: string | null | undefined): boolean {
   return isAdmin(role)
 }
 
+export function canManageSettings(role: string | null | undefined): boolean {
+  return isAdmin(role) || role === 'employee'
+}
+
 export function canAccessSettings(role: string | null | undefined): boolean {
-  return canReadAdminData(role)
+  return canManageSettings(role)
 }
 
 export function canSwitchBranch(role: string | null | undefined): boolean {
   return canReadAllBranches(role)
 }
 
+/** عرض صفحات المالية (قراءة) — مدير القانونية يرى مثل المدير */
 export function canAccessFinance(role: string | null | undefined): boolean {
   return canReadAdminData(role) || isAccountant(role) || role === 'employee'
 }
 
-export function canManualWalletOps(role: string | null | undefined): boolean {
+export function canManageFinance(role: string | null | undefined): boolean {
+  if (isLegalManager(role)) return false
   return isAdmin(role) || role === 'employee'
 }
 
-export function canAssignTasks(role: string | null | undefined): boolean {
-  if (isViewer(role)) return false
-  return isAdmin(role) || isAccountant(role) || role === 'employee'
-}
-
-export function canReviewTasks(role: string | null | undefined): boolean {
-  return canApproveCompletions(role)
+export function canManualWalletOps(role: string | null | undefined): boolean {
+  if (isLegalManager(role)) return false
+  return isAdmin(role) || role === 'employee'
 }
 
 export function canViewTaskReview(role: string | null | undefined): boolean {
@@ -106,12 +125,12 @@ export function canViewTaskReview(role: string | null | undefined): boolean {
 }
 
 export function canAddDebtor(role: string | null | undefined): boolean {
-  if (isViewer(role)) return false
+  if (isLegalManager(role)) return false
   return isAdmin(role) || isAccountant(role) || role === 'employee'
 }
 
 export function canImportDebtors(role: string | null | undefined): boolean {
-  if (isViewer(role)) return false
+  if (isLegalManager(role)) return false
   return isAdmin(role) || isAccountant(role) || role === 'employee'
 }
 
@@ -120,7 +139,7 @@ export function canViewReports(role: string | null | undefined): boolean {
 }
 
 export function canEditReports(role: string | null | undefined): boolean {
-  if (isViewer(role)) return false
+  if (isLegalManager(role)) return false
   return isAdmin(role) || role === 'employee'
 }
 
@@ -129,7 +148,7 @@ export function canCreateTaskDefinition(role: string | null | undefined): boolea
 }
 
 export function canAddPayments(role: string | null | undefined): boolean {
-  if (isViewer(role)) return false
+  if (isLegalManager(role)) return false
   return isAdmin(role) || role === 'employee'
 }
 
@@ -142,8 +161,11 @@ const ACCOUNTANT_HREFS = new Set([
   '/admin/reports',
 ])
 
+/** مدير القانونية يرى نفس قائمة المدير — الفرق في الصلاحيات التنفيذية فقط */
 export function isNavVisibleForRole(href: string, role: string | null | undefined): boolean {
-  if (isViewer(role)) return true
+  if (href === '/admin/legal-manager-wallet') {
+    return canViewLegalManagerWallet(role)
+  }
   if (!isAccountant(role)) return true
   return ACCOUNTANT_HREFS.has(href)
 }
@@ -162,14 +184,26 @@ export function isAccountantPathAllowed(pathname: string): boolean {
   return false
 }
 
+/** مسارات الكتابة — للمحاسب/المراقب القديم في proxy؛ مدير القانونية يفتح كل الصفحات للعرض */
 export function isViewerWritePath(pathname: string): boolean {
   if (/\/new\/?$/.test(pathname)) return true
   if (/\/edit\/?$/.test(pathname)) return true
   return false
 }
 
-export function isViewerPathAllowed(pathname: string): boolean {
-  if (isViewerWritePath(pathname)) return false
+/** عرض محفظة مدير القانونية — المدير/الأدمن + مدير القانونية */
+export function canViewLegalManagerWallet(role: string | null | undefined): boolean {
+  return isAdmin(role) || isLegalManager(role) || role === 'employee'
+}
+
+/** إيداع/سحب يدوي لمحفظة مدير القانونية — المدير/الأدمن/المطور فقط */
+export function canManualLegalManagerWalletOps(role: string | null | undefined): boolean {
+  if (isLegalManager(role)) return false
+  return isAdmin(role) || role === 'employee' || role === 'developer'
+}
+
+/** مدير القانونية = نفس واجهة المدير — لا قيود على المسارات */
+export function isViewerPathAllowed(_pathname: string): boolean {
   return true
 }
 
@@ -186,7 +220,7 @@ export function assertNotAccountantOrThrow(role: string | null | undefined, acti
   if (isAccountant(role)) {
     throw new Error(PERMISSION_DENIED_MSG)
   }
-  if (isViewer(role)) {
+  if (isLegalManager(role)) {
     throw new Error(PERMISSION_DENIED_MSG)
   }
   if (action === 'delete' && !canDelete(role)) {
@@ -209,7 +243,8 @@ export function apiForbiddenResponse() {
   return Response.json({ error: PERMISSION_DENIED_MSG }, { status: 403 })
 }
 
+/** يمنع التعديلات العامة — التكليف/الاعتماد عبر API مخصصة */
 export function writeForbiddenIfViewer(role: string | null | undefined): Response | null {
-  if (isViewer(role)) return apiForbiddenResponse()
+  if (isLegalManager(role)) return apiForbiddenResponse()
   return null
 }

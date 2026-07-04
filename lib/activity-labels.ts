@@ -39,6 +39,11 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   submit_lawyer_payout_request: 'طلب صرف أتعاب',
   approve_lawyer_payout_request: 'اعتماد طلب صرف أتعاب',
   reject_lawyer_payout_request: 'رفض طلب صرف أتعاب',
+  legal_manager_task_bonus: 'مكافأة مدير القانونية (اعتماد إنجاز)',
+  approve_legal_manager_payout: 'اعتماد طلب سحب مدير القانونية',
+  reject_legal_manager_payout: 'رفض طلب سحب مدير القانونية',
+  legal_manager_manual_deposit: 'إيداع يدوي لمحفظة مدير القانونية',
+  legal_manager_manual_withdrawal: 'سحب يدوي من محفظة مدير القانونية',
   login: 'تسجيل دخول',
 }
 
@@ -58,6 +63,11 @@ export const ACTIVITY_ACTION_BADGE: Record<string, 'success' | 'info' | 'warning
   complete_task: 'success',
   approve_task_transition: 'success',
   approve_task: 'success',
+  legal_manager_task_bonus: 'success',
+  approve_legal_manager_payout: 'success',
+  reject_legal_manager_payout: 'danger',
+  legal_manager_manual_deposit: 'success',
+  legal_manager_manual_withdrawal: 'warning',
   approve_expense: 'success',
   add_payment: 'success',
   assign_task: 'info',

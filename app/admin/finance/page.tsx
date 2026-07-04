@@ -4,6 +4,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
 import { fmtMoney, fmtDate } from '@/lib/utils'
+import { parseMoneyInput, formatMoney } from '@/lib/money-input'
+import MoneyInput from '@/components/ui/money-input'
 import { RECEIPT_STATUS_LABELS } from '@/lib/types'
 import type { ReceiptStatus, WalletTransactionType, LawyerWalletKind } from '@/lib/types'
 import {
@@ -94,6 +96,7 @@ export default function FinancePage() {
   const [allPayoutRequests, setAllPayoutRequests] = useState<LawyerPayoutRequest[]>([])
   const [reviewPayoutRequest, setReviewPayoutRequest] = useState<LawyerPayoutRequest | null>(null)
   const [payoutReviewNotes, setPayoutReviewNotes] = useState('')
+  const [legalManagerBalanceMap, setLegalManagerBalanceMap] = useState<Map<string, number>>(new Map())
 
   const supabase = createClient()
 
@@ -132,6 +135,9 @@ export default function FinancePage() {
       if (res.ok) {
         setAllPayoutRequests(data.payouts ?? [])
         setBranchReceipts(data.receipts ?? [])
+        if (data.legalManagerBalances) {
+          setLegalManagerBalanceMap(new Map(Object.entries(data.legalManagerBalances as Record<string, number>)))
+        }
         return
       }
     } catch {
@@ -280,7 +286,7 @@ export default function FinancePage() {
 
   async function handlePayout() {
     if (!canWalletOps) { setError(PERMISSION_DENIED_MSG); return }
-    const amt = parseFloat(payoutAmount)
+    const amt = parseMoneyInput(payoutAmount)
     if (!amt || amt <= 0 || !selectedId) return
     setSaving(true)
     setError('')
@@ -303,7 +309,7 @@ export default function FinancePage() {
       action: 'lawyer_fee_payout',
       entity_type: 'lawyer',
       entity_id: selectedId,
-      description: `صرف ${amt.toLocaleString('en-US')} د.ع من أتعاب ${selectedLawyer?.full_name ?? 'محامٍ'}`,
+      description: `صرف ${formatMoney(amt)} من أتعاب ${selectedLawyer?.full_name ?? 'محامٍ'}`,
     }, supabase)
 
     setPayoutAmount('')
@@ -423,7 +429,7 @@ export default function FinancePage() {
                 <span className="font-black text-[#2C8780]" dir="ltr">{fmtMoney(Math.max(0, walletBalance))}</span>
               </p>
               <div className="space-y-3">
-                <input type="number" value={payoutAmount} onChange={e => setPayoutAmount(e.target.value)} placeholder="المبلغ (دينار)" className={INP} dir="ltr" min="0" max={walletBalance || undefined} />
+                <MoneyInput value={payoutAmount} onChange={v => setPayoutAmount(v)} placeholder="المبلغ (دينار)" className={INP} />
                 <input type="text" value={payoutNotes} onChange={e => setPayoutNotes(e.target.value)} placeholder="ملاحظات (اختياري)" className={INP} />
                 <button onClick={handlePayout} disabled={saving || !payoutAmount || walletBalance <= 0}
                   className="w-full py-2.5 rounded-xl text-sm font-bold bg-red-600 hover:bg-red-700 text-white disabled:opacity-50">
@@ -452,7 +458,7 @@ export default function FinancePage() {
             <div>
               <h2 className="text-sm font-black text-[#231F20]">جميع طلبات الصرف</h2>
               <p className="text-xs text-[#767676] mt-0.5">
-                طلبات المحامين + طلبات المهام · {pendingCountAll} بانتظار الموافقة · {fmtMoney(pendingTotalAll)}
+                طلبات المحامين + مديري القانونية + طلبات المهام · {pendingCountAll} بانتظار الموافقة · {fmtMoney(pendingTotalAll)}
               </p>
             </div>
             <div className="flex gap-1.5 flex-wrap">
@@ -480,11 +486,16 @@ export default function FinancePage() {
 
                 if (isPayout) {
                   const req = item.data
-                  const isSavings = (req.wallet_kind ?? 'fees') === 'savings'
+                  const walletKind = req.wallet_kind ?? 'fees'
+                  const isSavings = walletKind === 'savings'
+                  const isLegalManager = walletKind === 'legal_manager'
+                  const lmBalance = isLegalManager ? (legalManagerBalanceMap.get(req.lawyer_id) ?? null) : null
                   return (
                     <div key={key} className="px-5 py-4 flex items-center gap-4">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${isSavings ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800'}`}>
-                        {isSavings ? 'سحب صرفيات' : 'صرف أتعاب'}
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                        isLegalManager ? 'bg-violet-100 text-violet-800' : isSavings ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {isLegalManager ? 'سحب مدير القانونية' : isSavings ? 'سحب صرفيات' : 'صرف أتعاب'}
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap mb-0.5">
@@ -494,12 +505,17 @@ export default function FinancePage() {
                           </span>
                         </div>
                         <p className="text-xs text-[#767676]">
-                          {req.lawyer?.full_name ?? 'محامٍ'}
+                          {req.lawyer?.full_name ?? (isLegalManager ? 'مدير القانونية' : 'محامٍ')}
+                          {isLegalManager && lmBalance != null && (
+                            <> · الرصيد: <span className="font-bold tabular-nums" dir="ltr">{fmtMoney(lmBalance)}</span></>
+                          )}
                           {req.notes ? ` · ${req.notes}` : ''}
                         </p>
                         {req.review_notes && <p className="text-xs text-red-600 mt-1">ملاحظة: {req.review_notes}</p>}
                       </div>
-                      <p className={`text-sm font-black tabular-nums shrink-0 ${isSavings ? 'text-sky-600' : 'text-[#2C8780]'}`} dir="ltr">{fmtMoney(amount)}</p>
+                      <p className={`text-sm font-black tabular-nums shrink-0 ${
+                        isLegalManager ? 'text-violet-600' : isSavings ? 'text-sky-600' : 'text-[#2C8780]'
+                      }`} dir="ltr">{fmtMoney(amount)}</p>
                       <p className="text-xs text-[#767676] font-mono shrink-0 hidden sm:block" dir="ltr">{fmtDate(req.created_at)}</p>
                       {status === 'pending' && canWrite && (
                         <button onClick={() => { setReviewPayoutRequest(req); setPayoutReviewNotes('') }}
@@ -588,23 +604,43 @@ export default function FinancePage() {
       )}
 
       {reviewPayoutRequest && (() => {
-        const isSavings = (reviewPayoutRequest.wallet_kind ?? 'fees') === 'savings'
+        const walletKind = reviewPayoutRequest.wallet_kind ?? 'fees'
+        const isSavings = walletKind === 'savings'
+        const isLegalManager = walletKind === 'legal_manager'
+        const lmBalance = isLegalManager ? legalManagerBalanceMap.get(reviewPayoutRequest.lawyer_id) : null
+        const title = isLegalManager
+          ? 'مراجعة طلب سحب مدير القانونية'
+          : isSavings
+            ? 'مراجعة طلب سحب صرفيات'
+            : 'مراجعة طلب صرف أتعاب'
+        const approveLabel = isLegalManager ? 'اعتماد وسحب' : isSavings ? 'اعتماد وسحب' : 'اعتماد وصرف'
+        const amountColor = isLegalManager ? 'text-violet-600' : isSavings ? 'text-sky-600' : 'text-[#2C8780]'
+        const btnGradient = isLegalManager
+          ? 'linear-gradient(135deg,#7c3aed,#6d28d9)'
+          : isSavings
+            ? 'linear-gradient(135deg,#0ea5e9,#0284c7)'
+            : 'linear-gradient(135deg,#2C8780,#1D6365)'
         return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(35,31,32,0.5)' }}>
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl p-5 space-y-4">
-            <h3 className="font-bold text-[#231F20]">{isSavings ? 'مراجعة طلب سحب صرفيات' : 'مراجعة طلب صرف أتعاب'}</h3>
+            <h3 className="font-bold text-[#231F20]">{title}</h3>
             <p className="text-sm text-[#231F20] font-semibold">{reviewPayoutRequest.title}</p>
             <p className="text-sm text-[#767676]">{reviewPayoutRequest.lawyer?.full_name}</p>
+            {isLegalManager && lmBalance != null && (
+              <p className="text-xs text-[#767676]">
+                الرصيد الحالي: <span className="font-black text-violet-600 tabular-nums" dir="ltr">{fmtMoney(lmBalance)}</span>
+              </p>
+            )}
             {reviewPayoutRequest.notes && (
               <p className="text-xs text-[#767676] bg-[#F3F1F2] rounded-lg px-3 py-2">{reviewPayoutRequest.notes}</p>
             )}
-            <p className={`text-lg font-black tabular-nums ${isSavings ? 'text-sky-600' : 'text-[#2C8780]'}`} dir="ltr">{fmtMoney(Number(reviewPayoutRequest.amount))}</p>
+            <p className={`text-lg font-black tabular-nums ${amountColor}`} dir="ltr">{fmtMoney(Number(reviewPayoutRequest.amount))}</p>
             <textarea value={payoutReviewNotes} onChange={e => setPayoutReviewNotes(e.target.value)} rows={3} placeholder="ملاحظة المراجعة (اختياري)..." className={`${INP} resize-none`} />
             <div className="flex gap-3">
               <button onClick={() => setReviewPayoutRequest(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-[#F3F1F2]">إلغاء</button>
               <button onClick={() => handlePayoutRequestReview('rejected')} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-red-50 text-red-700">رفض</button>
-              <button onClick={() => handlePayoutRequestReview('approved')} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white" style={{ background: isSavings ? 'linear-gradient(135deg,#0ea5e9,#0284c7)' : 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-                {isSavings ? 'اعتماد وسحب' : 'اعتماد وصرف'}
+              <button onClick={() => handlePayoutRequestReview('approved')} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white" style={{ background: btnGradient }}>
+                {approveLabel}
               </button>
             </div>
           </div>

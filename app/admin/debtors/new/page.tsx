@@ -15,9 +15,8 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { FormFlow, FormFlowHero, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { cn } from '@/lib/utils'
 import { formatMoneyInput, parseMoneyInput } from '@/lib/money-input'
-import PermissionDenied from '@/components/PermissionDenied'
-import { useAdminRole } from '@/context/admin-role'
 import { canAddDebtor } from '@/lib/permissions'
+import { useAdminRole } from '@/context/admin-role'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
 
@@ -43,7 +42,7 @@ function hasMoneyDigits(value: string): boolean {
 export default function NewDebtorPage() {
   const router = useRouter()
   const role = useAdminRole()
-  if (!canAddDebtor(role)) return <PermissionDenied />
+  const readOnly = !canAddDebtor(role)
   const branchId = useBranchId()
   const { branchName } = useBranch()
   const today = new Date().toISOString().split('T')[0]
@@ -131,6 +130,7 @@ export default function NewDebtorPage() {
 
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
+    if (readOnly) return
     setSaving(true)
     setError('')
 
@@ -271,6 +271,12 @@ export default function NewDebtorPage() {
         subtitle="سجّل بيانات المدين واربطه بمهمته الأولية في فرعك الحالي"
         breadcrumb={[{ label: 'المدينون', href: '/admin/debtors' }, { label: 'إضافة جديد' }]}
       />
+
+      {readOnly && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          عرض النموذج فقط — لا تملك صلاحية إضافة مدين.
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <FormFlow>
@@ -467,7 +473,7 @@ export default function NewDebtorPage() {
         )}
 
         <div className="flex gap-3 pb-6">
-          <Button type="submit" variant="primary" loading={saving} disabled={!branchOk}>
+          <Button type="submit" variant="primary" loading={saving} disabled={!branchOk || readOnly}>
             حفظ المدين وإنشاء المهمة
           </Button>
           <Link href="/admin/debtors">

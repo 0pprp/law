@@ -15,6 +15,7 @@ import { fmtDate } from '@/lib/utils'
 import { useBranchId } from '@/context/branch'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DatePicker } from '@/components/ui/date-picker'
+import { useCanWrite } from '@/hooks/use-can-write'
 
 function formatSize(bytes: number | null) {
   if (!bytes) return ''
@@ -51,6 +52,7 @@ export default function EditTaskPage() {
   const params = useParams()
   const id = params.id as string
   const branchId = useBranchId()
+  const readOnly = !useCanWrite()
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -106,6 +108,7 @@ export default function EditTaskPage() {
 
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
+    if (readOnly) return
     setSaving(true); setError('')
     const supabase = createClient()
     const { error: dbError } = await supabase.from('tasks').update({
@@ -162,7 +165,14 @@ export default function EditTaskPage() {
         </div>
       )}
 
+      {readOnly && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          عرض البيانات فقط — التكليف يتم من صفحة «تكليف المهام»؛ لا تملك صلاحية تعديل المهمة مباشرة.
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-5">
+        <fieldset disabled={readOnly} className="space-y-5 border-0 p-0 m-0 min-w-0">
         <Card>
           <CardHeader title="المحامي المكلف" />
           <div className="p-5 space-y-4">
@@ -239,9 +249,10 @@ export default function EditTaskPage() {
         </Card>
 
         {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>}
+        </fieldset>
 
         <div className="flex gap-3">
-          <Button type="submit" variant="primary" loading={saving}>حفظ التعديلات</Button>
+          <Button type="submit" variant="primary" loading={saving} disabled={readOnly}>حفظ التعديلات</Button>
           <Link href="/admin/tasks"><Button type="button" variant="outline">إلغاء</Button></Link>
         </div>
       </form>

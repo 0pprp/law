@@ -8,6 +8,8 @@ import type { RequiredField } from '@/lib/types'
 import { APPROVED_BRANCH_NAMES, filterSelectableBranches } from '@/lib/branch-constants'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { formatMoney } from '@/lib/money-input'
+import MoneyInput from '@/components/ui/money-input'
 
 // ── Shared styles ──────────────────────────────────────────────
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/20 focus:border-[#2C8780] transition-all'
@@ -613,7 +615,7 @@ function TaskDefsTab() {
                 <tr key={def.id} className={`hover:bg-[#F8F7F8] transition-colors ${!def.is_active ? 'opacity-40' : ''}`}>
                   <td className="px-4 py-3 font-semibold text-[#231F20]">{def.label}</td>
                   <td className="px-4 py-3 text-[#2C8780] font-black tabular-nums text-left" dir="ltr">
-                    {Number(def.fee_amount).toLocaleString('en-US')}
+                    {formatMoney(Number(def.fee_amount), { suffix: false })}
                   </td>
                   <td className="px-4 py-3 text-center">
                     {defFields(def).length === 0 ? (
@@ -654,7 +656,7 @@ function TaskDefsTab() {
           </div>
           <div>
             <label className="block text-xs font-bold text-[#231F20] mb-1.5">الأتعاب (د.ع)</label>
-            <input type="number" value={editForm.fee} onChange={e => setEditForm(f => ({ ...f, fee: e.target.value }))} className={INP} dir="ltr" min="0" />
+            <MoneyInput value={editForm.fee} onChange={v => setEditForm(f => ({ ...f, fee: v }))} className={INP} />
           </div>
           <div className="flex items-center justify-between py-2.5 border-t border-b border-[rgba(118,118,118,0.08)]">
             <span className="text-xs font-bold text-[#231F20]">الحالة</span>
@@ -735,7 +737,7 @@ function TaskDefsTab() {
           </div>
           <div>
             <label className="block text-xs font-bold text-[#231F20] mb-1.5">الأتعاب (د.ع)</label>
-            <input type="number" value={addForm.fee} onChange={e => setAddForm(f => ({ ...f, fee: e.target.value }))} className={INP} dir="ltr" min="0" />
+            <MoneyInput value={addForm.fee} onChange={v => setAddForm(f => ({ ...f, fee: v }))} className={INP} />
           </div>
 
           <div>
@@ -921,7 +923,7 @@ function ExpenseTypesTab() {
                 <tr key={t.id} className={`hover:bg-[#F8F7F8] transition-colors ${!t.is_active ? 'opacity-50' : ''}`}>
                   <td className="px-4 py-3 font-semibold text-[#231F20]">{t.name}</td>
                   <td className="px-4 py-3 text-[#767676] tabular-nums text-left font-bold" dir="ltr">
-                    {t.default_amount > 0 ? `${Number(t.default_amount).toLocaleString('en-US')} د.ع` : '—'}
+                    {t.default_amount > 0 ? formatMoney(Number(t.default_amount)) : '—'}
                   </td>
                   {(['requires_attachment', 'requires_note'] as const).map(field => (
                     <td key={field} className="px-4 py-3 text-center">
@@ -960,7 +962,7 @@ function ExpenseTypesTab() {
           </div>
           <div>
             <label className="block text-xs font-bold text-[#231F20] mb-1.5">المبلغ الافتراضي (0 = يدخله المحامي)</label>
-            <input type="number" value={form.default_amount} onChange={e => setForm(f => f ? { ...f, default_amount: e.target.value } : f)} className={INP} dir="ltr" min="0" />
+            <MoneyInput value={form.default_amount} onChange={v => setForm(f => f ? { ...f, default_amount: v } : f)} className={INP} />
           </div>
           {([
             { key: 'requires_attachment' as const, label: 'يتطلب مرفق (صورة / PDF)' },

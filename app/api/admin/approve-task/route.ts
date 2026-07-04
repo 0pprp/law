@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { approveTaskCompletion } from '@/lib/task-approval'
-import { STAFF_ROLES, isAccountant, isViewer, apiForbiddenResponse } from '@/lib/permissions'
+import { STAFF_ROLES, isAccountant, canApproveCompletions, apiForbiddenResponse } from '@/lib/permissions'
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
     }
 
-    if (isViewer(profile.role)) {
+    if (!canApproveCompletions(profile.role)) {
       return apiForbiddenResponse()
     }
 
@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       feeAmount: result.feeAmount,
+      legalManagerBonus: result.legalManagerBonus ?? 0,
     })
   } catch (e) {
     console.error('[admin/approve-task]', e)

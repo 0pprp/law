@@ -6,6 +6,8 @@ import { TASK_TYPE_LABELS, REQUIRED_FIELD_LABELS } from '@/lib/types'
 import type { TaskType, RequiredField } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
 import { useBranchId } from '@/context/branch'
+import { formatMoney } from '@/lib/money-input'
+import MoneyInput from '@/components/ui/money-input'
 
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
 
@@ -156,8 +158,7 @@ function EditModal({ def, reqFields, expenseRows, onClose, onSaved }: {
 
           <div>
             <label className="block text-xs font-bold text-[#231F20] mb-1.5">الأتعاب (د.ع)</label>
-            <input type="number" value={fee} onChange={e => setFee(e.target.value)}
-              className={INP} dir="ltr" min="0" />
+            <MoneyInput value={fee} onChange={v => setFee(v)} className={INP} dir="ltr" />
           </div>
 
           <div>
@@ -174,8 +175,7 @@ function EditModal({ def, reqFields, expenseRows, onClose, onSaved }: {
                   <div key={idx} className="grid grid-cols-[1fr_100px_32px] gap-2 items-center">
                     <input value={line.name} onChange={e => setExpenseLines(prev => prev.map((l, i) => i === idx ? { ...l, name: e.target.value } : l))}
                       className={INP} placeholder="اسم الصرفية" />
-                    <input type="number" value={line.max_amount} onChange={e => setExpenseLines(prev => prev.map((l, i) => i === idx ? { ...l, max_amount: e.target.value } : l))}
-                      className={INP} placeholder="الحد" dir="ltr" min="1" />
+                    <MoneyInput value={line.max_amount} onChange={v => setExpenseLines(prev => prev.map((l, i) => i === idx ? { ...l, max_amount: v } : l))} className={INP} placeholder="الحد" />
                     <button type="button" onClick={() => setExpenseLines(prev => prev.filter((_, i) => i !== idx))}
                       className="text-red-500 text-lg leading-none">×</button>
                   </div>
@@ -314,7 +314,7 @@ export default function TaskDefinitionsPage() {
                   <tr key={def.id} className={`hover:bg-[#F3F1F2]/50 transition-colors ${!def.is_active ? 'opacity-40' : ''}`}>
                     <td className="px-4 py-3 font-semibold text-[#231F20]">{def.label}</td>
                     <td className="px-4 py-3 text-[#2C8780] font-black tabular-nums text-left" dir="ltr">
-                      {Number(def.fee_amount).toLocaleString('en-US')} <span className="text-[10px] font-normal">د.ع</span>
+                      {formatMoney(Number(def.fee_amount), { suffix: false })}{' '}<span className="text-[10px] font-normal">د.ع</span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
