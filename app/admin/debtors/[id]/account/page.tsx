@@ -13,6 +13,8 @@ import DebtorNotesPanel from '@/components/DebtorNotesPanel'
 import DebtorGPSCard from '@/components/DebtorGPSCard'
 import DebtorActivityPanel from '@/components/DebtorActivityPanel'
 import DebtorArchiveTabs from '@/components/DebtorArchiveTabs'
+import DebtorAccountPaymentButton from '@/components/DebtorAccountPaymentButton'
+import DebtorPaymentsPanel from '@/components/DebtorPaymentsPanel'
 import { canEditRecords, canReadAdminData, canAddPayments } from '@/lib/permissions'
 import type { UserRole } from '@/lib/types'
 
@@ -55,7 +57,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const taskIds = (taskRows ?? []).map(t => t.id)
   const totalPaymentsSum = (payments ?? []).reduce((s, p) => s + Number(p.amount), 0)
   const totalExpensesSum = (expenses ?? []).filter(e => e.status === 'approved' || e.status == null).reduce((s, e) => s + Number(e.amount), 0)
-  const totalOwed = Number(debtor.required_amount) + totalExpensesSum
+  const totalOwed = Number(debtor.required_amount ?? 0)
   const collectionRate = totalOwed > 0 ? Math.round((totalPaymentsSum / totalOwed) * 100) : 0
 
   const overviewTab = (
@@ -95,7 +97,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
             />
             <InfoRow label="الصرفيات" value={fmtMoney(totalExpensesSum)} />
             <InfoRow label="أتعاب المحامين" value={fmtMoney(debtor.lawyer_fees)} />
-            <InfoRow label="أتعاب مدير القانونية" value={fmtMoney(debtor.legal_manager_fees ?? 0)} />
+            <InfoRow label="أتعاب مسؤول القانونية" value={fmtMoney(debtor.legal_manager_fees ?? 0)} />
             {debtor.address && <InfoRow label="العنوان" value={debtor.address} />}
             {debtor.export_date && <InfoRow label={LEGAL_ISSUE_DATE_LABEL} value={fmtDate(debtor.export_date)} mono />}
             <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} mono />
@@ -108,25 +110,17 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
 
   const paymentsTab = (
     <Card>
-      <CardHeader
-        title={`التسديدات (${payments?.length ?? 0})`}
-        action={<span className="text-sm font-black text-emerald-700 tabular-nums" dir="ltr">{fmtMoney(totalPaymentsSum)}</span>}
+      <CardHeader title={`التسديدات (${payments?.length ?? 0})`} />
+      <DebtorPaymentsPanel
+        debtorId={id}
+        debtorName={debtor.full_name}
+        initialPayments={(payments ?? []).map(p => ({
+          id: p.id,
+          amount: Number(p.amount),
+          notes: p.notes,
+          payment_date: p.payment_date,
+        }))}
       />
-      {!(payments?.length) ? (
-        <div className="py-8 text-center text-[#767676] text-sm">لا توجد تسديدات</div>
-      ) : (
-        <div className="divide-y divide-[rgba(118,118,118,0.08)]">
-          {payments!.map((p: { id: string; amount: number; notes?: string; payment_date: string }) => (
-            <div key={p.id} className="px-5 py-3.5 flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-sm font-black text-emerald-700 tabular-nums" dir="ltr">{fmtMoney(Number(p.amount))}</p>
-                <p className="text-xs text-[#767676] mt-0.5">{p.notes || '—'}</p>
-              </div>
-              <span className="text-xs text-[#767676] font-mono shrink-0" dir="ltr">{fmtDate(p.payment_date)}</span>
-            </div>
-          ))}
-        </div>
-      )}
     </Card>
   )
 
@@ -222,7 +216,13 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
               <Link href={`/admin/debtors/${id}/edit`} className="text-xs text-white/70 border border-white/20 hover:border-white/40 px-3 py-1.5 rounded-lg transition-colors">تعديل البيانات</Link>
             )}
             {allowPayments && (
-              <Link href="/admin/payments" className="text-xs text-white px-3 py-1.5 rounded-lg transition-colors font-semibold hover:opacity-90" style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}>+ تسجيل تسديد</Link>
+              <DebtorAccountPaymentButton
+                debtorId={id}
+                debtorName={debtor.full_name}
+                receiptNumber={debtor.receipt_number ?? null}
+                remainingAmount={Number(debtor.remaining_amount ?? 0)}
+                branchId={debtor.branch_id ?? null}
+              />
             )}
           </div>
         </div>

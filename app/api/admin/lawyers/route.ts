@@ -12,7 +12,8 @@ export async function POST(request: NextRequest) {
 
   const { data: callerProfile } = await supabase
     .from('profiles').select('role').eq('id', user.id).single()
-  if (callerProfile?.role !== 'admin')
+  const callerRole = callerProfile?.role
+  if (callerRole !== 'admin' && callerRole !== 'viewer')
     return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
 
   const {
@@ -43,6 +44,10 @@ export async function POST(request: NextRequest) {
     bodyRole === 'accountant' ? 'accountant'
     : bodyRole === 'viewer' ? 'viewer'
     : 'lawyer'
+
+  if (callerRole === 'viewer' && userRole !== 'lawyer') {
+    return NextResponse.json({ error: 'مسؤول القانونية يمكنه إضافة محامين فقط' }, { status: 403 })
+  }
 
   if (userRole === 'lawyer') {
     if (!identity_number || !String(identity_number).trim())

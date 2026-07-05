@@ -13,7 +13,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { debtorSearchOrFilter, DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
-import { RECEIPT_TYPE_LABEL } from '@/lib/ui-labels'
+import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL } from '@/lib/ui-labels'
 import DebtorImportModal from '@/components/DebtorImportModal'
 import { useAdminRole } from '@/context/admin-role'
 import { canAddDebtor, canDelete, canEditRecords, canImportDebtors, isLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
@@ -28,7 +28,7 @@ function SearchIcon() {
 function SkeletonRow() {
   return (
     <TR>
-      {[1,2,3,4,5,6,7].map(i => (
+      {[1,2,3,4,5,6,7,8].map(i => (
         <TD key={i}><div className="h-4 bg-[rgba(118,118,118,0.1)] rounded animate-pulse" style={{ width: `${50 + (i * 13) % 40}%` }} /></TD>
       ))}
     </TR>
@@ -182,7 +182,7 @@ export default function DebtorsPage() {
               <Table>
                 <THead>
                   <tr>
-                    <TH>الاسم</TH><TH>رقم الهوية</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
+                    <TH>الاسم</TH><TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
                     <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
                   </tr>
                 </THead>
@@ -216,6 +216,7 @@ export default function DebtorsPage() {
                   <tr>
                     <TH>الاسم</TH>
                     <TH>رقم الهوية</TH>
+                    <TH>{RECEIPT_NUMBER_LABEL}</TH>
                     <TH>{RECEIPT_TYPE_LABEL}</TH>
                     <TH>المبلغ المطلوب</TH>
                     <TH>المتبقي</TH>
@@ -237,6 +238,7 @@ export default function DebtorsPage() {
                         </div>
                       </TD>
                       <TD><span className="font-mono text-xs" dir="ltr">{debtor.id_number ?? '—'}</span></TD>
+                      <TD><span className="font-mono text-xs" dir="ltr">{debtor.receipt_number ?? '—'}</span></TD>
                       <TD>
                         <Badge variant="default">{RECEIPT_TYPE_LABELS[debtor.receipt_type as keyof typeof RECEIPT_TYPE_LABELS] ?? debtor.receipt_type}</Badge>
                       </TD>
@@ -279,7 +281,8 @@ export default function DebtorsPage() {
                     <Link href={`/admin/debtors/${debtor.id}/account`} className="font-semibold text-[#231F20]">{debtor.full_name}</Link>
                     <Badge variant="default" className="shrink-0">{RECEIPT_TYPE_LABELS[debtor.receipt_type as keyof typeof RECEIPT_TYPE_LABELS]}</Badge>
                   </div>
-                  {debtor.id_number && <p className="text-xs text-[#767676] font-mono mb-2" dir="ltr">{debtor.id_number}</p>}
+                  {debtor.id_number && <p className="text-xs text-[#767676] font-mono mb-1" dir="ltr">{debtor.id_number}</p>}
+                  {debtor.receipt_number && <p className="text-xs text-[#767676] font-mono mb-2" dir="ltr">{RECEIPT_NUMBER_LABEL}: {debtor.receipt_number}</p>}
                   <div className="grid grid-cols-2 gap-2 text-sm mb-3">
                     <div>
                       <p className="text-[10px] text-[#767676] mb-0.5">المطلوب</p>

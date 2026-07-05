@@ -8,7 +8,7 @@ export function isAdmin(role: string | null | undefined): boolean {
   return role === 'admin'
 }
 
-/** مدير القانونية — القيمة في DB: viewer */
+/** مسؤول القانونية — القيمة في DB: viewer */
 export function isLegalManager(role: string | null | undefined): boolean {
   return role === 'viewer'
 }
@@ -91,6 +91,32 @@ export function canEditRecords(role: string | null | undefined): boolean {
 
 export function canManageUsers(role: string | null | undefined): boolean {
   return isAdmin(role)
+}
+
+/** إضافة محامي — المدير أو مسؤول القانونية (محامي فقط) */
+export function canCreateLawyerUser(role: string | null | undefined): boolean {
+  return isAdmin(role) || isLegalManager(role)
+}
+
+/** تعديل ملف محامي — المدير أو مسؤول القانونية للمحامين فقط */
+export function canEditLawyerProfile(
+  role: string | null | undefined,
+  targetRole?: string | null,
+): boolean {
+  if (isAdmin(role)) return true
+  if (isLegalManager(role) && targetRole === 'lawyer') return true
+  return false
+}
+
+/** إضافة محكمة أو دائرة تنفيذ ضمن الفرع */
+export function canAddBranchReferenceData(role: string | null | undefined): boolean {
+  return canWriteData(role) || isLegalManager(role)
+}
+
+/** تعديل/حذف محاكم ودوائر — ليس لمسؤول القانونية */
+export function canModifyBranchReferenceData(role: string | null | undefined): boolean {
+  if (isLegalManager(role)) return false
+  return canWriteData(role)
 }
 
 export function canManageSettings(role: string | null | undefined): boolean {
@@ -191,9 +217,10 @@ export function isViewerWritePath(pathname: string): boolean {
   return false
 }
 
-/** عرض محفظة مدير القانونية — المدير/الأدمن + مدير القانونية */
+/** عرض وإدارة محفظة مسؤول القانونية — المدير/الموظف فقط (ليس مسؤول القانونية نفسه) */
 export function canViewLegalManagerWallet(role: string | null | undefined): boolean {
-  return isAdmin(role) || isLegalManager(role) || role === 'employee'
+  if (isLegalManager(role)) return false
+  return isAdmin(role) || role === 'employee'
 }
 
 /** إيداع/سحب يدوي لمحفظة مدير القانونية — المدير/الأدمن/المطور فقط */

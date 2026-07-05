@@ -7,7 +7,9 @@ export function walletTransactionLabel(
   amount?: number,
 ): string {
   if (type === 'task_expense_deduction') return WALLET_TRANSACTION_LABELS.task_expense_deduction
+  if (type === 'lawyer_expense_wallet_deduction') return WALLET_TRANSACTION_LABELS.lawyer_expense_wallet_deduction
   if (type === 'legal_manager_task_bonus') return WALLET_TRANSACTION_LABELS.legal_manager_task_bonus
+  if (type === 'legal_manager_percentage_fee') return WALLET_TRANSACTION_LABELS.legal_manager_percentage_fee
   if (type === 'legal_manager_withdrawal') return WALLET_TRANSACTION_LABELS.legal_manager_withdrawal
   if (type === 'legal_manager_manual_deposit') return WALLET_TRANSACTION_LABELS.legal_manager_manual_deposit
   if (type === 'legal_manager_manual_withdrawal') return WALLET_TRANSACTION_LABELS.legal_manager_manual_withdrawal
@@ -27,7 +29,7 @@ export function walletTransactionIconKind(
   amount: number,
 ): WalletTxIconKind {
   if (wallet === 'savings') return 'savings'
-  if (wallet === 'legal_manager' || type === 'legal_manager_task_bonus') return 'task'
+  if (wallet === 'legal_manager' || type === 'legal_manager_task_bonus' || type === 'legal_manager_percentage_fee') return 'task'
   if (type === 'legal_manager_withdrawal') return 'payout'
   if (type === 'legal_manager_manual_deposit') return 'credit'
   if (type === 'legal_manager_manual_withdrawal') return 'payout'

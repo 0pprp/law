@@ -174,15 +174,13 @@ export default function DashboardPage() {
       )}
 
       {legalManagerView && (
-        <Link href="/admin/legal-manager-wallet" className="block">
-          <StatCard
-            label="محفظة مدير القانونية"
-            value={lmWalletBalance === null ? '—' : fmtMoney(lmWalletBalance)}
-            accent="teal"
-            valueColor="text-[#2C8780]"
-            sub="1,000 د.ع لكل إنجاز معتمد — عرض التفاصيل"
-          />
-        </Link>
+        <StatCard
+          label="رصيد أتعابك"
+          value={lmWalletBalance === null ? '—' : fmtMoney(lmWalletBalance)}
+          accent="teal"
+          valueColor="text-[#2C8780]"
+          sub="لك نسبة 5% من أتعاب كل إنجاز معتمد"
+        />
       )}
 
       {/* Stage boxes — unassigned only */}

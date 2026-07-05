@@ -22,6 +22,7 @@ import {
 import { DateRangePicker } from '@/components/ui/date-range-picker'
 import { useAdminRole } from '@/context/admin-role'
 import { canAddPayments, canEditRecords, canDelete, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { syncDebtorRemainingAfterPayments } from '@/lib/debtor-balances'
 
 const EMPTY_FORM = { debtor_id: '', amount: '', notes: '' }
 const INP = formInputClass
@@ -113,6 +114,11 @@ export default function PaymentsPage() {
       notes: editForm.notes || null,
     }).eq('id', editingPayment.id)
     if (dbErr) { setEditError(dbErr.message); setSaving(false); return }
+    const debtorId = editingPayment.debtor_id ?? editingPayment.debtors?.id
+    if (debtorId) {
+      const syncResult = await syncDebtorRemainingAfterPayments(supabase, debtorId)
+      if (!syncResult.ok) { setEditError(syncResult.error ?? 'فشل تحديث المتبقي'); setSaving(false); return }
+    }
     await logActivity({
       action: 'update_payment',
       entity_type: 'payment',
@@ -124,13 +130,15 @@ export default function PaymentsPage() {
     load()
   }
 
-  async function deletePayment(id: string, debtorName: string, amount: number) {
+  async function deletePayment(id: string, debtorId: string, debtorName: string, amount: number) {
     if (!allowDelete) { alert(PERMISSION_DENIED_MSG); return }
-    if (!confirm(`هل أنت متأكد من حذف هذا التسديد (${formatMoney(amount)}) الخاص بـ "${debtorName}"؟`)) return
+    if (!confirm(`هل أنت متأكد من حذف هذا التسديد (${formatMoney(amount)}) الخاص بـ "${debtorName}"؟\nسيُعاد المبلغ إلى المتبقي.`)) return
     setDeletingId(id)
     const supabase = createClient()
     const { error } = await supabase.from('debtor_payments').delete().eq('id', id)
     if (error) { alert(`فشل الحذف: ${error.message}`); setDeletingId(null); return }
+    const syncResult = await syncDebtorRemainingAfterPayments(supabase, debtorId)
+    if (!syncResult.ok) { alert(syncResult.error ?? 'فشل تحديث المتبقي'); setDeletingId(null); return }
     await logActivity({
       action: 'delete_payment',
       entity_type: 'payment',
@@ -160,6 +168,8 @@ export default function PaymentsPage() {
       ...(branchId ? { branch_id: branchId } : {}),
     })
     if (dbErr) { setError(dbErr.message); setSaving(false); return }
+    const syncResult = await syncDebtorRemainingAfterPayments(supabase, form.debtor_id)
+    if (!syncResult.ok) { setError(syncResult.error ?? 'فشل تحديث المتبقي'); setSaving(false); return }
     await logActivity({
       action: 'add_payment',
       entity_type: 'payment',
@@ -339,7 +349,7 @@ export default function PaymentsPage() {
                       <button onClick={() => startEdit(p)} className="text-xs text-[#231F20] hover:text-[#2C8780] border border-[rgba(118,118,118,0.2)] hover:border-[#2C8780]/40 px-2.5 py-1.5 rounded-lg transition-colors">تعديل</button>
                       )}
                       {allowDelete && (
-                      <button onClick={() => deletePayment(p.id, p.debtors?.full_name ?? '', Number(p.amount))} disabled={deletingId === p.id} className="text-xs text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50">
+                      <button onClick={() => deletePayment(p.id, p.debtor_id, p.debtors?.full_name ?? '', Number(p.amount))} disabled={deletingId === p.id} className="text-xs text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50">
                         {deletingId === p.id ? '...' : 'حذف'}
                       </button>
                       )}

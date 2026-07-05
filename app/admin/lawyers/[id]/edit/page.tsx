@@ -13,7 +13,7 @@ import { Card, CardHeader } from '@/components/ui/card'
 import { fmtDate } from '@/lib/utils'
 import { useBranchId, useBranch } from '@/context/branch'
 import { useAdminRole } from '@/context/admin-role'
-import { canManageUsers } from '@/lib/permissions'
+import { canEditLawyerProfile, canManageUsers, isLegalManager } from '@/lib/permissions'
 import { PremiumSelect } from '@/components/ui/premium-select'
 
 const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer', 'viewer']
@@ -45,8 +45,11 @@ export default function EditLawyerPage() {
   const params = useParams()
   const branchId = useBranchId()
   const { branchName } = useBranch()
-  const role = useAdminRole()
-  const readOnly = !canManageUsers(role)
+  const adminRole = useAdminRole()
+  const legalOfficerMode = isLegalManager(adminRole)
+  const [targetRole, setTargetRole] = useState<UserRole>('lawyer')
+  const [targetLoaded, setTargetLoaded] = useState(false)
+  const readOnly = targetLoaded ? !canEditLawyerProfile(adminRole, targetRole) : !canManageUsers(adminRole)
   const id = params.id as string
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -76,8 +79,10 @@ export default function EditLawyerPage() {
       if (data) {
         setProfileBranchId(data.branch_id ?? null)
         setForm({ username: data.username ?? '', full_name: data.full_name ?? '', phone: data.phone ?? '', governorate: data.governorate ?? '', identity_type: data.identity_type ?? '', identity_number: data.identity_number ?? '', identity_category: data.identity_category ?? '', role: data.role ?? 'lawyer', is_active: data.is_active ?? true })
+        setTargetRole((data.role ?? 'lawyer') as UserRole)
       }
       setAttachments(files ?? [])
+      setTargetLoaded(true)
       setLoading(false)
     }
     load()
@@ -88,6 +93,11 @@ export default function EditLawyerPage() {
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (readOnly) return
+    if (legalOfficerMode && form.role !== 'lawyer') {
+      setError('لا يمكنك تعديل هذا المستخدم')
+      setSaving(false)
+      return
+    }
     setSaving(true); setError('')
     const cleanUsername = form.username.trim().toLowerCase()
     if (cleanUsername && !/^[a-z0-9._]{3,50}$/.test(cleanUsername)) {
@@ -99,8 +109,9 @@ export default function EditLawyerPage() {
       username: cleanUsername || null, full_name: form.full_name, phone: form.phone || null,
       governorate: form.governorate || null, identity_type: form.identity_type || null,
       identity_number: form.identity_number || null, identity_category: form.identity_category || null,
-      role: form.role, is_active: form.is_active,
+      is_active: form.is_active,
     }
+    if (!legalOfficerMode) updatePayload.role = form.role
     if (!profileBranchId && branchId) updatePayload.branch_id = branchId
 
     const { error: dbError } = await supabase.from('profiles').update(updatePayload).eq('id', id)
@@ -192,6 +203,7 @@ export default function EditLawyerPage() {
             <Field label="رقم الهاتف">
               <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} className={INP} dir="ltr" />
             </Field>
+            {!legalOfficerMode && (
             <PremiumSelect
               value={form.role}
               onChange={v => set('role', v)}
@@ -200,6 +212,7 @@ export default function EditLawyerPage() {
               headerTitle="اختر الدور"
               searchable={false}
             />
+            )}
             <div className="flex items-center gap-2.5">
               <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => set('is_active', e.target.checked)} className="w-4 h-4 rounded accent-[#2C8780]" />
               <label htmlFor="is_active" className="text-sm font-semibold text-slate-700 select-none cursor-pointer">الحساب فعال</label>

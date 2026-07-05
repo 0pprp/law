@@ -39,11 +39,12 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   submit_lawyer_payout_request: 'طلب صرف أتعاب',
   approve_lawyer_payout_request: 'اعتماد طلب صرف أتعاب',
   reject_lawyer_payout_request: 'رفض طلب صرف أتعاب',
-  legal_manager_task_bonus: 'مكافأة مدير القانونية (اعتماد إنجاز)',
-  approve_legal_manager_payout: 'اعتماد طلب سحب مدير القانونية',
-  reject_legal_manager_payout: 'رفض طلب سحب مدير القانونية',
-  legal_manager_manual_deposit: 'إيداع يدوي لمحفظة مدير القانونية',
-  legal_manager_manual_withdrawal: 'سحب يدوي من محفظة مدير القانونية',
+  legal_manager_task_bonus: 'نسبة مسؤول القانونية (اعتماد إنجاز)',
+  legal_manager_percentage_fee: 'نسبة 5% لمسؤول القانونية (اعتماد إنجاز)',
+  approve_legal_manager_payout: 'اعتماد طلب سحب مسؤول القانونية',
+  reject_legal_manager_payout: 'رفض طلب سحب مسؤول القانونية',
+  legal_manager_manual_deposit: 'إيداع يدوي لمحفظة مسؤول القانونية',
+  legal_manager_manual_withdrawal: 'سحب يدوي من محفظة مسؤول القانونية',
   login: 'تسجيل دخول',
 }
 

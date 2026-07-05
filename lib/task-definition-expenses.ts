@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { normalizeTaskLabelKey } from '@/lib/task-label-normalize'
 
 export interface TaskDefinitionExpense {
   id: string
@@ -8,7 +9,33 @@ export interface TaskDefinitionExpense {
   sort_order: number
 }
 
-export async function fetchTaskDefinitionExpenses(
+export interface GetTaskExpensesInput {
+  taskDefinitionId?: string | null
+  taskName?: string | null
+  branchId?: string | null
+  taskType?: string | null
+}
+
+export interface GetTaskExpensesResult {
+  expenses: TaskDefinitionExpense[]
+  taskDefinitionId: string | null
+}
+
+export function normalizeExpenseRows(rows: unknown): TaskDefinitionExpense[] {
+  if (!Array.isArray(rows)) return []
+  return rows
+    .map(row => ({
+      id: String((row as TaskDefinitionExpense).id),
+      task_definition_id: String((row as TaskDefinitionExpense).task_definition_id),
+      name: String((row as TaskDefinitionExpense).name),
+      max_amount: Number((row as TaskDefinitionExpense).max_amount),
+      sort_order: Number((row as TaskDefinitionExpense).sort_order ?? 0),
+    }))
+    .filter(e => e.max_amount > 0)
+    .sort((a, b) => a.sort_order - b.sort_order)
+}
+
+async function fetchExpensesDirect(
   supabase: SupabaseClient,
   taskDefinitionId: string,
 ): Promise<TaskDefinitionExpense[]> {
@@ -21,56 +48,153 @@ export async function fetchTaskDefinitionExpenses(
 
   if (error) {
     if (!error.message.includes('does not exist')) {
-      console.error('[fetchTaskDefinitionExpenses]', error.message)
+      console.error('[getTaskExpenses:direct]', error.message)
     }
     return []
   }
 
-  return (data ?? []).map(row => ({
-    ...row,
-    max_amount: Number(row.max_amount),
-  })) as TaskDefinitionExpense[]
+  return normalizeExpenseRows(data)
 }
 
-async function resolveTaskDefinitionId(
+/** جلب الصرفيات عبر task_definitions — يعمل أحياناً عندما يُحجب الاستعلام المباشر */
+export async function fetchExpensesViaDefinitionEmbed(
   supabase: SupabaseClient,
-  task: {
-    task_definition_id?: string | null
-    task_type?: string | null
-    branch_id?: string | null
-  },
-): Promise<string | null> {
-  if (task.task_definition_id) return task.task_definition_id
-  if (!task.task_type) return null
-
-  let q = supabase
+  taskDefinitionId: string,
+): Promise<TaskDefinitionExpense[]> {
+  const { data, error } = await supabase
     .from('task_definitions')
-    .select('id')
-    .eq('task_type', task.task_type)
-    .eq('is_active', true)
+    .select('id, task_definition_expenses(id, task_definition_id, name, max_amount, sort_order)')
+    .eq('id', taskDefinitionId)
+    .maybeSingle()
 
-  if (task.branch_id) {
-    q = q.eq('branch_id', task.branch_id)
+  if (error) {
+    if (!error.message.includes('does not exist')) {
+      console.error('[getTaskExpenses:embed]', error.message)
+    }
+    return []
   }
 
-  const { data } = await q.limit(1).maybeSingle()
+  const embedded = (data as { task_definition_expenses?: unknown } | null)?.task_definition_expenses
+  return normalizeExpenseRows(embedded)
+}
+
+async function fetchExpensesByDefinitionId(
+  supabase: SupabaseClient,
+  taskDefinitionId: string,
+): Promise<TaskDefinitionExpense[]> {
+  const direct = await fetchExpensesDirect(supabase, taskDefinitionId)
+  if (direct.length > 0) return direct
+  return fetchExpensesViaDefinitionEmbed(supabase, taskDefinitionId)
+}
+
+async function findDefinitionIdByType(
+  supabase: SupabaseClient,
+  taskType: string,
+  branchId?: string | null,
+): Promise<string | null> {
+  if (branchId) {
+    const { data } = await supabase
+      .from('task_definitions')
+      .select('id')
+      .eq('task_type', taskType)
+      .eq('is_active', true)
+      .eq('branch_id', branchId)
+      .limit(1)
+      .maybeSingle()
+    if (data?.id) return data.id
+  }
+
+  const { data } = await supabase
+    .from('task_definitions')
+    .select('id')
+    .eq('task_type', taskType)
+    .eq('is_active', true)
+    .limit(1)
+    .maybeSingle()
   return data?.id ?? null
 }
 
-/** Expense lines for a task — read only from task_definition_expenses (no code defaults). */
+async function findDefinitionIdByName(
+  supabase: SupabaseClient,
+  taskName: string,
+  branchId?: string | null,
+): Promise<string | null> {
+  const key = normalizeTaskLabelKey(taskName)
+
+  const matchFromRows = (rows: { id: string; label: string }[] | null) =>
+    rows?.find(r => normalizeTaskLabelKey(r.label) === key)?.id ?? null
+
+  if (branchId) {
+    const { data: branchRows } = await supabase
+      .from('task_definitions')
+      .select('id, label')
+      .eq('is_active', true)
+      .eq('branch_id', branchId)
+    const id = matchFromRows(branchRows)
+    if (id) return id
+  }
+
+  const { data: allRows } = await supabase
+    .from('task_definitions')
+    .select('id, label')
+    .eq('is_active', true)
+  return matchFromRows(allRows)
+}
+
+export async function resolveTaskDefinitionId(
+  supabase: SupabaseClient,
+  input: GetTaskExpensesInput,
+): Promise<string | null> {
+  if (input.taskDefinitionId) return input.taskDefinitionId
+  if (input.taskType) {
+    const id = await findDefinitionIdByType(supabase, input.taskType, input.branchId)
+    if (id) return id
+  }
+  if (input.taskName?.trim()) {
+    return findDefinitionIdByName(supabase, input.taskName, input.branchId)
+  }
+  return null
+}
+
+export async function getTaskExpenses(
+  supabase: SupabaseClient,
+  input: GetTaskExpensesInput,
+): Promise<GetTaskExpensesResult> {
+  const taskDefinitionId = await resolveTaskDefinitionId(supabase, input)
+  if (!taskDefinitionId) {
+    return { expenses: [], taskDefinitionId: null }
+  }
+  const expenses = await fetchExpensesByDefinitionId(supabase, taskDefinitionId)
+  return { expenses, taskDefinitionId }
+}
+
+export function taskHasExpenses(expenses: TaskDefinitionExpense[]): boolean {
+  return expenses.some(e => Number(e.max_amount) > 0)
+}
+
 export async function fetchTaskDefinitionExpensesForTask(
   supabase: SupabaseClient,
   task: {
     task_definition_id?: string | null
     task_type?: string | null
     branch_id?: string | null
+    task_label?: string | null
+    definition_label?: string | null
   },
 ): Promise<TaskDefinitionExpense[]> {
-  const defId = await resolveTaskDefinitionId(supabase, task)
-  if (!defId) return []
-  return fetchTaskDefinitionExpenses(supabase, defId)
+  const { expenses } = await getTaskExpenses(supabase, {
+    taskDefinitionId: task.task_definition_id,
+    taskName: task.definition_label ?? task.task_label,
+    branchId: task.branch_id,
+    taskType: task.task_type,
+  })
+  return expenses
 }
 
 export function taskHasExpenseDefinitions(expenses: TaskDefinitionExpense[]): boolean {
-  return expenses.some(e => Number(e.max_amount) > 0)
+  return taskHasExpenses(expenses)
+}
+
+export function resolveExpenseDefsForTask(expenseDefs: TaskDefinitionExpense[]): TaskDefinitionExpense[] {
+  return expenseDefs
 }

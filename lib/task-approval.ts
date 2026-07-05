@@ -114,7 +114,6 @@ export async function creditTaskFeeOnApproval(
   const fullSelect = `
       id,
       assigned_to,
-      lawyer_id,
       reward_amount,
       fee_status,
       task_status,
@@ -134,14 +133,13 @@ export async function creditTaskFeeOnApproval(
     .eq('id', taskId)
     .single()
 
-  if (fullErr?.message?.includes('fee_status') || fullErr?.message?.includes('lawyer_id')) {
+  if (fullErr?.message?.includes('fee_status')) {
     const { data: liteTask, error: liteErr } = await supabase
       .from('tasks')
       .select(`
         id,
         assigned_to,
         reward_amount,
-        fee_status,
         task_status,
         task_definition_id,
         task_type,
@@ -341,7 +339,8 @@ export async function approveTaskCompletion(
   const lmResult = await creditLegalManagerBonusOnApproval(supabase, taskId, reviewerId)
   if (!lmResult.ok) {
     console.error('[approveTaskCompletion] legal manager bonus failed:', lmResult.error)
-    return { ok: false, feeAmount: feeResult.amount, error: lmResult.error ?? 'فشل إضافة مكافأة مدير القانونية' }
+    // الاعتماد وأتعاب المحامي تمّا — لا نمنع نافذة المهمة التالية
+    return { ok: true, feeAmount: feeResult.amount, legalManagerBonus: 0 }
   }
   if (lmResult.skipped && lmResult.reason) {
     console.warn('[approveTaskCompletion]', lmResult.reason, 'task', taskId)

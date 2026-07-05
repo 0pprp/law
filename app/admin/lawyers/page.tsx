@@ -10,7 +10,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { fmtDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { canManageUsers, canViewAllUsersAcrossBranches, isLegalManager } from '@/lib/permissions'
+import { canCreateLawyerUser, canEditLawyerProfile, canManageUsers, canViewAllUsersAcrossBranches } from '@/lib/permissions'
 
 const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange' | 'purple' | 'gray'>> = {
   admin: 'purple',
@@ -29,7 +29,8 @@ export default async function LawyersPage() {
     ? await supabase.from('profiles').select('role').eq('id', user.id).single()
     : { data: null }
   const canManage = canManageUsers(myProfile?.role)
-  const showUserActions = canManage || isLegalManager(myProfile?.role)
+  const canAddUser = canCreateLawyerUser(myProfile?.role)
+  const showUserActions = canAddUser
   const showAllBranches = canViewAllUsersAcrossBranches(myProfile?.role)
 
   let profilesQ = supabase.from('profiles').select('*').order('created_at', { ascending: false })
@@ -101,7 +102,7 @@ export default async function LawyersPage() {
                               {user.full_name?.split(' ').filter(Boolean).slice(0, 2).map((w: string) => w[0]).join('') || '؟'}
                             </span>
                           </div>
-                          {showUserActions ? (
+                          {canEditLawyerProfile(myProfile?.role, user.role) ? (
                             <Link href={`/admin/lawyers/${user.id}/edit`} className="font-semibold text-[#231F20] hover:text-[#2C8780] transition-colors">
                               {user.full_name}
                             </Link>
@@ -136,7 +137,13 @@ export default async function LawyersPage() {
                       </TD>
                       <TD><span className="text-xs font-mono text-[#767676]" dir="ltr">{fmtDate(user.created_at)}</span></TD>
                       <TD>
-                        <LawyerActions userId={user.id} isActive={user.is_active} fullName={user.full_name} readOnly={!canManage} />
+                        <LawyerActions
+                          userId={user.id}
+                          isActive={user.is_active}
+                          fullName={user.full_name}
+                          readOnly={!canManage}
+                          showEdit={canEditLawyerProfile(myProfile?.role, user.role)}
+                        />
                       </TD>
                     </TR>
                   ))}
@@ -171,7 +178,13 @@ export default async function LawyersPage() {
                       <span className="text-xs text-[#2C8780]">{attachCountMap.get(user.id)} مستمسك</span>
                     )}
                   </div>
-                  <LawyerActions userId={user.id} isActive={user.is_active} fullName={user.full_name} readOnly={!canManage} />
+                  <LawyerActions
+                    userId={user.id}
+                    isActive={user.is_active}
+                    fullName={user.full_name}
+                    readOnly={!canManage}
+                    showEdit={canEditLawyerProfile(myProfile?.role, user.role)}
+                  />
                 </div>
               ))}
             </div>

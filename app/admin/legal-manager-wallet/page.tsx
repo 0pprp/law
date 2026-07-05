@@ -4,20 +4,16 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAdminRole } from '@/context/admin-role'
 import {
-  isLegalManager,
   canManualLegalManagerWalletOps,
   canViewLegalManagerWallet,
 } from '@/lib/permissions'
 import {
   fetchLegalManagerWalletBalance,
-  fetchLegalManagerAvailableBalance,
   fetchLegalManagerPayoutRequests,
   fetchLegalManagerLedger,
   listActiveLegalManagers,
-  LEGAL_MANAGER_TASK_BONUS,
   type LegalManagerLedgerRow,
 } from '@/lib/legal-manager-wallet'
-import LawyerPayoutRequestForm from '@/components/LawyerPayoutRequestForm'
 import type { LawyerPayoutRequest } from '@/lib/lawyer-payout-requests'
 import { PageHeader } from '@/components/ui/page-header'
 import { StatCard } from '@/components/ui/stat-card'
@@ -27,6 +23,7 @@ import { parseMoneyInput } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { RECEIPT_STATUS_LABELS } from '@/lib/types'
+import PermissionDenied from '@/components/PermissionDenied'
 
 type ManualModal = 'deposit' | 'withdraw' | null
 
@@ -34,17 +31,14 @@ const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-
 
 export default function LegalManagerWalletPage() {
   const role = useAdminRole()
-  const viewerMode = isLegalManager(role)
-  const browseMode = !viewerMode && canViewLegalManagerWallet(role)
   const canManualOps = canManualLegalManagerWalletOps(role)
 
-  const [userId, setUserId] = useState<string | null>(null)
   const [managers, setManagers] = useState<{ id: string; full_name: string; branch_id: string | null }[]>([])
   const [selectedId, setSelectedId] = useState<string>('')
   const [balance, setBalance] = useState(0)
-  const [availableBalance, setAvailableBalance] = useState(0)
   const [payoutRequests, setPayoutRequests] = useState<LawyerPayoutRequest[]>([])
   const [ledger, setLedger] = useState<LegalManagerLedgerRow[]>([])
+  const [movementCount, setMovementCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
   const [manualModal, setManualModal] = useState<ManualModal>(null)
@@ -54,49 +48,39 @@ export default function LegalManagerWalletPage() {
   const [manualSaving, setManualSaving] = useState(false)
   const [manualError, setManualError] = useState('')
 
-  const activeManagerId = viewerMode ? userId : selectedId
+  const activeManagerId = selectedId
 
   const loadWallet = useCallback(async (managerId: string) => {
     setLoading(true)
     const supabase = createClient()
-    const [bal, avail, reqs, rows] = await Promise.all([
+    const [bal, reqs, ledgerResult] = await Promise.all([
       fetchLegalManagerWalletBalance(supabase, managerId),
-      fetchLegalManagerAvailableBalance(supabase, managerId),
       fetchLegalManagerPayoutRequests(supabase, managerId, 50),
       fetchLegalManagerLedger(supabase, managerId),
     ])
     setBalance(bal)
-    setAvailableBalance(avail)
     setPayoutRequests(reqs)
-    setLedger(rows)
+    setLedger(ledgerResult.rows)
+    setMovementCount(ledgerResult.movementCount)
     setLoading(false)
   }, [])
 
   useEffect(() => {
     async function init() {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      setUserId(user.id)
-
-      if (browseMode) {
-        const list = await listActiveLegalManagers(supabase)
-        setManagers(list)
-        const first = list[0]?.id ?? ''
-        setSelectedId(first)
-        if (first) await loadWallet(first)
-      } else if (viewerMode) {
-        await loadWallet(user.id)
-      } else {
-        setLoading(false)
-      }
+      const list = await listActiveLegalManagers(supabase)
+      setManagers(list)
+      const first = list[0]?.id ?? ''
+      setSelectedId(first)
+      if (first) await loadWallet(first)
+      else setLoading(false)
     }
     init()
-  }, [browseMode, viewerMode, loadWallet])
+  }, [loadWallet])
 
   useEffect(() => {
-    if (browseMode && selectedId) loadWallet(selectedId)
-  }, [browseMode, selectedId, loadWallet])
+    if (selectedId) loadWallet(selectedId)
+  }, [selectedId, loadWallet])
 
   function openManualModal(kind: ManualModal) {
     setManualModal(kind)
@@ -114,7 +98,7 @@ export default function LegalManagerWalletPage() {
   async function submitManual() {
     if (!manualModal) return
     const parsed = parseMoneyInput(manualAmount)
-    if (!manualManagerId) { setManualError('اختر مدير القانونية'); return }
+    if (!manualManagerId) { setManualError('اختر مسؤول القانونية'); return }
     if (!parsed || parsed <= 0) { setManualError('أدخل مبلغاً صحيحاً'); return }
     if (!manualNotes.trim()) { setManualError('الملاحظة مطلوبة'); return }
     if (manualModal === 'withdraw' && manualManagerId === activeManagerId && parsed > balance) {
@@ -142,47 +126,44 @@ export default function LegalManagerWalletPage() {
         return
       }
       closeManualModal()
-      if (manualManagerId === activeManagerId) {
-        await loadWallet(activeManagerId!)
-      } else if (browseMode) {
-        setSelectedId(manualManagerId)
-        await loadWallet(manualManagerId)
-      }
+      setSelectedId(manualManagerId)
+      await loadWallet(manualManagerId)
     } catch {
       setManualError('حدث خطأ في الاتصال')
     }
     setManualSaving(false)
   }
 
-  const title = viewerMode ? 'محفظتي' : 'محفظة مدير القانونية'
-  const subtitle = viewerMode
-    ? `مكافأة ${fmtMoney(LEGAL_MANAGER_TASK_BONUS)} لكل إنجاز معتمد — يمكنك طلب سحب من الرصيد`
-    : 'عرض أرصدة وحركات مديري القانونية'
+  if (!canViewLegalManagerWallet(role)) {
+    return (
+      <PermissionDenied message="رصيدك يظهر في لوحة التحكم فقط — لا يمكنك الوصول إلى صفحة المحفظة." />
+    )
+  }
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <PageHeader title={title} subtitle={subtitle} />
+      <PageHeader title="محفظة مسؤول القانونية" subtitle="عرض أرصدة وحركات مسؤولي القانونية" />
 
-      {browseMode && managers.length > 1 && (
+      {managers.length > 1 && (
         <div className="max-w-sm">
           <PremiumSelect
             value={selectedId}
             onChange={setSelectedId}
             options={managers.map(m => ({ value: m.id, label: m.full_name }))}
-            fieldLabel="مدير القانونية"
-            headerTitle="اختر مدير القانونية"
+            fieldLabel="مسؤول القانونية"
+            headerTitle="اختر مسؤول القانونية"
             searchable={managers.length > 6}
           />
         </div>
       )}
 
-      {browseMode && managers.length === 0 && !loading && (
+      {managers.length === 0 && !loading && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-          لا يوجد مدير قانونية نشط في النظام.
+          لا يوجد مسؤول قانونية نشط في النظام.
         </div>
       )}
 
-      <div className="grid sm:grid-cols-2 gap-3">
+      <div className="max-w-sm">
         <StatCard
           label="رصيد المحفظة"
           value={loading ? '—' : fmtMoney(balance)}
@@ -190,18 +171,9 @@ export default function LegalManagerWalletPage() {
           valueColor="text-[#2C8780]"
           sub="الرصيد"
         />
-        {viewerMode && (
-          <StatCard
-            label="المتاح للسحب"
-            value={loading ? '—' : fmtMoney(availableBalance)}
-            accent="teal"
-            valueColor="text-[#2C8780]"
-            sub="بعد خصم الطلبات المعلّقة"
-          />
-        )}
       </div>
 
-      {canManualOps && browseMode && activeManagerId && !loading && (
+      {canManualOps && activeManagerId && !loading && (
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -221,26 +193,28 @@ export default function LegalManagerWalletPage() {
         </div>
       )}
 
-      {viewerMode && activeManagerId && !loading && (
-        <LawyerPayoutRequestForm
-          availableBalance={availableBalance}
-          requests={payoutRequests}
-          onSubmitted={() => loadWallet(activeManagerId)}
-          walletKind="legal_manager"
-          submitUrl="/api/admin/legal-manager-payout-request"
-          formTitle="طلب سحب"
-          formHint="يُرسل للمدير للموافقة أو الرفض — لا يُخصم المبلغ حتى الاعتماد"
-          submitButtonLabel="طلب سحب"
-          requestsSectionTitle="طلبات السحب"
-          showTitleField={false}
-        />
+      {payoutRequests.length > 0 && (
+        <Card>
+          <CardHeader title={`طلبات السحب (${payoutRequests.length})`} />
+          <div className="divide-y divide-[rgba(118,118,118,0.08)]">
+            {payoutRequests.map(req => (
+              <div key={req.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-[#231F20] tabular-nums" dir="ltr">{fmtMoney(req.amount)}</p>
+                  <p className="text-xs text-[#767676] mt-0.5">{req.status ? RECEIPT_STATUS_LABELS[req.status as keyof typeof RECEIPT_STATUS_LABELS] ?? req.status : '—'}</p>
+                </div>
+                <span className="text-xs text-[#767676] font-mono shrink-0" dir="ltr">{fmtDate(req.created_at)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
       )}
 
       <Card>
-        <CardHeader title={`كشف المحفظة (${ledger.length})`} />
+        <CardHeader title={`كشف المحفظة (${movementCount})`} />
         {loading ? (
           <div className="py-12 text-center text-sm text-[#767676]">جارٍ التحميل...</div>
-        ) : ledger.length === 0 ? (
+        ) : movementCount === 0 && ledger.length === 0 ? (
           <div className="py-12 text-center text-sm text-[#767676]">
             لا توجد حركات بعد — تُضاف تلقائياً عند اعتماد إنجازات المهام.
           </div>
@@ -301,8 +275,8 @@ export default function LegalManagerWalletPage() {
         )}
       </Card>
 
-      {!activeManagerId && !loading && browseMode && (
-        <p className="text-sm text-[#767676]">اختر مدير قانونية لعرض المحفظة.</p>
+      {!activeManagerId && !loading && (
+        <p className="text-sm text-[#767676]">اختر مسؤول قانونية لعرض المحفظة.</p>
       )}
 
       {manualModal && (
@@ -313,19 +287,19 @@ export default function LegalManagerWalletPage() {
             </h3>
             <p className="text-xs text-[#767676]">
               {manualModal === 'deposit'
-                ? 'إيداع يدوي من الإدارة إلى محفظة مدير القانونية'
-                : 'سحب يدوي من الإدارة من محفظة مدير القانونية'}
+                ? 'إيداع يدوي من الإدارة إلى محفظة مسؤول القانونية'
+                : 'سحب يدوي من الإدارة من محفظة مسؤول القانونية'}
             </p>
 
             {managers.length > 1 && (
               <div>
-                <label className="block text-xs font-semibold text-[#767676] mb-1">مدير القانونية *</label>
+                <label className="block text-xs font-semibold text-[#767676] mb-1">مسؤول القانونية *</label>
                 <PremiumSelect
                   value={manualManagerId}
                   onChange={setManualManagerId}
                   options={managers.map(m => ({ value: m.id, label: m.full_name }))}
-                  fieldLabel="مدير القانونية"
-                  headerTitle="اختر مدير القانونية"
+                  fieldLabel="مسؤول القانونية"
+                  headerTitle="اختر مسؤول القانونية"
                   searchable={managers.length > 6}
                 />
               </div>

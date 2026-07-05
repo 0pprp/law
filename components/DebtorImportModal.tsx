@@ -233,7 +233,8 @@ export default function DebtorImportModal({ open, onClose, onComplete }: Props) 
                 </Button>
               </div>
               <p className="text-xs text-[#767676]">
-                أنواع السند: {IMPORT_RECEIPT_TYPE_HINT} · المهمة يجب أن تطابق اسم المهمة في الفرع.
+                أنواع السند: {IMPORT_RECEIPT_TYPE_HINT} · المهمة يجب أن تطابق اسم المهمة في الفرع <span className="font-semibold">تماماً</span>.
+                {' '}مجموعة التسديدات ومجموعة الصرفيات <span className="font-semibold">اختياريان</span> — رقم إجمالي واحد لكل حقل.
                 {' '}رقم الهوية <span className="font-semibold">اختياري</span>.
                 {' '}ملف PDF <span className="font-semibold">اختياري</span> — ارفع ZIP للمجموعة أو ملفات PDF فردية.
               </p>

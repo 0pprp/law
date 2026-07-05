@@ -40,8 +40,13 @@ const DISBURSEMENT_TYPES = new Set<string>([
 ])
 
 function legacyWalletForType(type: string): LawyerWalletKind {
-  if (type === 'legal_manager_task_bonus' || type === 'legal_manager_withdrawal') return 'legal_manager'
-  if (type === 'legal_manager_manual_deposit' || type === 'legal_manager_manual_withdrawal') return 'legal_manager'
+  if (
+    type === 'legal_manager_task_bonus'
+    || type === 'legal_manager_percentage_fee'
+    || type === 'legal_manager_withdrawal'
+    || type === 'legal_manager_manual_deposit'
+    || type === 'legal_manager_manual_withdrawal'
+  ) return 'legal_manager'
   if (DISBURSEMENT_TYPES.has(type)) return 'savings'
   return 'fees'
 }

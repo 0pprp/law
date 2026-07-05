@@ -12,9 +12,10 @@ interface Props {
   isActive: boolean
   fullName: string
   readOnly?: boolean
+  showEdit?: boolean
 }
 
-export default function LawyerActions({ userId, isActive, fullName, readOnly }: Props) {
+export default function LawyerActions({ userId, isActive, fullName, readOnly, showEdit = true }: Props) {
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
@@ -39,9 +40,11 @@ export default function LawyerActions({ userId, isActive, fullName, readOnly }: 
 
   return (
     <div className="flex items-center gap-3">
+      {showEdit && (
       <Link href={`/admin/lawyers/${userId}/edit`} className="text-slate-600 hover:text-slate-800 font-medium text-xs">
         تعديل
       </Link>
+      )}
       <button
         onClick={toggle}
         disabled={readOnly || loading}

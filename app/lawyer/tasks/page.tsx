@@ -1,10 +1,8 @@
 'use client'
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import Link from 'next/link'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { resolveTaskLabel } from '@/lib/task-display-label'
 import type { TaskStatus } from '@/lib/types'
 import {
   fetchLawyerAssignedTasksPaginated,
@@ -12,13 +10,7 @@ import {
   LAWYER_TASK_PAGE_SIZE,
 } from '@/lib/task-assignment'
 import LawyerWalletSummary from '@/components/LawyerWalletSummary'
-import {
-  isLawyerAchievedTask,
-  lawyerTaskStatusLabel,
-} from '@/lib/lawyer-task-display'
-import { isTaskOverdue } from '@/lib/local-date'
-import { Badge } from '@/components/ui/badge'
-import { fmtMoney, fmtDate } from '@/lib/utils'
+import LawyerTasksGrid from '@/components/LawyerTasksGrid'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
 
 const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
@@ -30,21 +22,6 @@ const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
   { key: 'rejected', label: 'مرفوضة' },
   { key: 'completed', label: 'منجزة' },
 ]
-
-const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
-  assignment_pending_acceptance: 'warning',
-  assigned: 'info',
-  in_progress: 'warning',
-  submitted: 'purple',
-  approved: 'success',
-  rejected: 'danger',
-  completed: 'success',
-  new: 'info',
-  failed: 'danger',
-  postponed: 'gray',
-  needs_info: 'purple',
-  closed: 'gray',
-}
 
 export default function LawyerTasksPage() {
   const searchParams = useSearchParams()
@@ -199,76 +176,15 @@ export default function LawyerTasksPage() {
         </div>
       )}
 
-      <div className="p-4">
-        {loading ? (
-          <div className="flex flex-col items-center gap-3 py-16">
-            <div className="w-10 h-10 border-2 border-[#2C8780]/30 border-t-[#2C8780] rounded-full animate-spin" />
-            <p className="text-sm text-slate-400">جارٍ التحميل...</p>
-          </div>
-        ) : !tasks.length ? (
-          <div className="text-center py-16 space-y-2">
-            <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto">
-              <svg className="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-            </div>
-            <p className="text-sm text-slate-400 font-medium">
-              {search ? `لا نتائج للبحث عن "${search}"` : filter === 'all' ? 'لا توجد مهام' : 'لا توجد مهام بهذه الحالة'}
-            </p>
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {tasks.map((task: any) => {
-                const remaining = Number(task.debtors?.remaining_amount ?? 0)
-                const isOverdue = task.due_date && isTaskOverdue(task.due_date) && !['completed', 'closed', 'failed', 'approved'].includes(task.task_status)
-                const fee = Number(task.reward_amount ?? 0)
-                return (
-                  <Link key={task.id} href={`/lawyer/tasks/${task.id}`} className="block">
-                    <div className={`bg-white rounded-2xl border shadow-sm active:scale-[0.99] transition-all p-4 h-full flex flex-col ${isOverdue ? 'border-red-200' : 'border-slate-200'}`}>
-                      <div className="flex items-start gap-2 mb-1.5">
-                        <p className="flex-1 font-bold text-slate-800 text-sm leading-snug truncate">{task.debtors?.full_name ?? '—'}</p>
-                        <Badge variant={isLawyerAchievedTask(task.task_status) ? 'success' : (STATUS_BADGE[task.task_status as TaskStatus] ?? 'default')}>
-                          {lawyerTaskStatusLabel(task.task_status)}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-slate-400 mb-2.5 font-semibold">{resolveTaskLabel(task.task_type, task.task_label)}</p>
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400 mb-auto">
-                        {task.debtors?.governorate && <span>📍 {task.debtors.governorate}</span>}
-                        {task.court_name && <span>🏛 {task.court_name}</span>}
-                        {task.due_date && (
-                          <span className={isOverdue ? 'text-red-500 font-semibold' : ''} dir="ltr">
-                            📅 {fmtDate(task.due_date)}
-                          </span>
-                        )}
-                      </div>
-                      {(remaining > 0 || fee > 0) && (
-                        <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
-                          {fee > 0 && <span className="text-[11px] font-bold text-[#2C8780] tabular-nums" dir="ltr">أتعاب: {fmtMoney(fee)}</span>}
-                          {remaining > 0 && <span className="text-xs font-black text-red-600 tabular-nums" dir="ltr">{fmtMoney(remaining)}</span>}
-                        </div>
-                      )}
-                      <div className="mt-3 text-[11px] font-bold text-[#2C8780] flex items-center gap-0.5">
-                        تفاصيل المهمة ←
-                      </div>
-                    </div>
-                  </Link>
-                )
-              })}
-            </div>
-            {hasMore && (
-              <div className="mt-4 text-center">
-                <button
-                  type="button"
-                  onClick={() => loadPage(true, pageOffset)}
-                  disabled={loadingMore}
-                  className="text-sm font-bold text-[#2C8780] hover:underline disabled:opacity-50"
-                >
-                  {loadingMore ? 'جارٍ التحميل...' : `تحميل المزيد (${tasks.length} / ${total})`}
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+      <LawyerTasksGrid
+        tasks={tasks}
+        loading={loading}
+        loadingMore={loadingMore}
+        hasMore={hasMore}
+        total={total}
+        onLoadMore={() => loadPage(true, pageOffset)}
+        emptyMessage={search ? `لا نتائج للبحث عن "${search}"` : filter === 'all' ? 'لا توجد مهام' : 'لا توجد مهام بهذه الحالة'}
+      />
     </div>
   )
 }

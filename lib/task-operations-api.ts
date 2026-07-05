@@ -46,7 +46,6 @@ export async function applyTaskTransition(
     .from('tasks')
     .select(`
       id, debtor_id, branch_id, task_type, task_definition_id, completion_data,
-      debtors ( id, full_name, branch_id, latitude, longitude ),
       task_definitions ( label, fee_amount )
     `)
     .eq('id', taskId)
@@ -56,7 +55,27 @@ export async function applyTaskTransition(
     return { ok: false, error: taskErr?.message ?? 'المهمة غير موجودة' }
   }
 
-  const debtor = (task as any).debtors
+  let debtor: {
+    id: string
+    full_name: string
+    branch_id: string | null
+    latitude: number | null
+    longitude: number | null
+  } | null = null
+
+  if (task.debtor_id) {
+    const { data: debtorRow, error: debtorErr } = await supabase
+      .from('debtors')
+      .select('id, full_name, branch_id, latitude, longitude')
+      .eq('id', task.debtor_id)
+      .maybeSingle()
+
+    if (debtorErr) {
+      return { ok: false, error: debtorErr.message }
+    }
+    debtor = debtorRow
+  }
+
   const branchId = task.branch_id ?? debtor?.branch_id ?? null
 
   const { data: gpsFields } = await supabase

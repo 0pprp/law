@@ -6,21 +6,24 @@ import { insertWalletTransaction } from '@/lib/lawyer-wallet'
 import { fetchLawyerPayoutRequests } from '@/lib/lawyer-payout-requests'
 import { formatMoney } from '@/lib/money-input'
 
-/** مكافأة ثابتة لمدير القانونية عند اعتماد كل إنجاز (د.ع) */
-export const LEGAL_MANAGER_TASK_BONUS = 1000
+/** نسبة مسؤول القانونية من أتعاب المهمة عند اعتماد الإنجاز */
+export const LEGAL_MANAGER_FEE_RATE = 0.05
 
 export const LEGAL_MANAGER_WALLET: LawyerWalletKind = 'legal_manager'
 
+export const LEGAL_MANAGER_PERCENTAGE_FEE_TYPE = 'legal_manager_percentage_fee' as const
+
+/** @deprecated — للعرض في السجلات القديمة فقط */
 export const LEGAL_MANAGER_BONUS_TYPE = 'legal_manager_task_bonus' as const
 
-export const LEGAL_MANAGER_BONUS_NOTES =
-  'إضافة 1,000 د.ع إلى محفظة مدير القانونية مقابل اعتماد إنجاز مهمة'
+export const LEGAL_MANAGER_PERCENTAGE_FEE_NOTES =
+  'نسبة 5% لمسؤول القانونية عند اعتماد إنجاز محامي'
 
 export const LEGAL_MANAGER_MANUAL_DEPOSIT_LABEL =
-  'إيداع يدوي من الإدارة إلى محفظة مدير القانونية'
+  'إيداع يدوي من الإدارة إلى محفظة مسؤول القانونية'
 
 export const LEGAL_MANAGER_MANUAL_WITHDRAWAL_LABEL =
-  'سحب يدوي من الإدارة من محفظة مدير القانونية'
+  'سحب يدوي من الإدارة من محفظة مسؤول القانونية'
 
 export interface LegalManagerWalletRow {
   id: string
@@ -38,13 +41,126 @@ export interface LegalManagerWalletRow {
   lawyer?: { full_name?: string } | null
 }
 
+const LEGAL_MANAGER_LEDGER_TYPES = new Set([
+  LEGAL_MANAGER_PERCENTAGE_FEE_TYPE,
+  LEGAL_MANAGER_BONUS_TYPE,
+  'legal_manager_withdrawal',
+  'legal_manager_manual_deposit',
+  'legal_manager_manual_withdrawal',
+])
+
+const LM_TX_SELECT_BASE =
+  'id, lawyer_id, type, wallet, amount, notes, reference_id, created_by, created_at, debtor_id'
+
+const LM_TX_SELECT_WITH_JOINS = `${LM_TX_SELECT_BASE}, creator:profiles!lawyer_wallet_transactions_created_by_fkey(full_name), debtor:debtors(full_name)`
+
+function pickProfileName(v: unknown): { full_name?: string } | null {
+  if (!v) return null
+  if (Array.isArray(v)) return (v[0] as { full_name?: string } | undefined) ?? null
+  return v as { full_name?: string }
+}
+
+function legalManagerTxLabel(type: string): string {
+  if (type === LEGAL_MANAGER_PERCENTAGE_FEE_TYPE) return 'نسبة 5% — اعتماد إنجاز'
+  if (type === LEGAL_MANAGER_BONUS_TYPE) return 'إضافة مقابل اعتماد مهمة'
+  if (type === 'legal_manager_withdrawal') return 'سحب معتمد'
+  if (type === 'legal_manager_manual_deposit') return 'إيداع يدوي'
+  if (type === 'legal_manager_manual_withdrawal') return 'سحب يدوي'
+  return type
+}
+
+function legalManagerTxDescription(type: string, notes: string | null, lawyerName?: string | null): string {
+  if (type === LEGAL_MANAGER_PERCENTAGE_FEE_TYPE || type === LEGAL_MANAGER_BONUS_TYPE) {
+    return buildPercentageFeeLedgerNote(lawyerName, notes)
+  }
+  if (notes?.trim()) return notes.trim()
+  if (type === 'legal_manager_withdrawal') return 'سحب معتمد — محفظة مسؤول القانونية'
+  if (type === 'legal_manager_manual_deposit') return LEGAL_MANAGER_MANUAL_DEPOSIT_LABEL
+  if (type === 'legal_manager_manual_withdrawal') return LEGAL_MANAGER_MANUAL_WITHDRAWAL_LABEL
+  return '—'
+}
+
+function extractFeeAmountSuffix(notes: string | null): string {
+  if (!notes) return ''
+  const match = notes.match(/\([\d,\.]+\s*د\.ع\s*من\s*[\d,\.]+\s*د\.ع\)/)
+  return match ? ` ${match[0]}` : ''
+}
+
+export function buildPercentageFeeLedgerNote(lawyerName: string | null | undefined, notes?: string | null): string {
+  const suffix = extractFeeAmountSuffix(notes ?? null)
+  const name = lawyerName?.trim()
+  if (name) {
+    return `نسبة 5% لمسؤول القانونية عند اعتماد إنجاز المحامي (${name})${suffix}`
+  }
+  if (notes?.trim()) return notes.trim()
+  return LEGAL_MANAGER_PERCENTAGE_FEE_NOTES
+}
+
+async function fetchLawyerNamesByTaskIds(
+  supabase: SupabaseClient,
+  taskIds: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  const ids = [...new Set(taskIds.filter(Boolean))]
+  if (!ids.length) return map
+
+  const { data } = await supabase
+    .from('tasks')
+    .select('id, assigned_to, lawyer:profiles!tasks_assigned_to_fkey(full_name)')
+    .in('id', ids)
+
+  for (const row of data ?? []) {
+    const lawyerRaw = (row as { lawyer?: unknown }).lawyer
+    const lawyer = pickProfileName(lawyerRaw)
+    if (lawyer?.full_name) map.set(row.id as string, lawyer.full_name)
+  }
+  return map
+}
+
+function unwrapTaskDef(raw: unknown): { fee_amount?: number; label?: string } | null {
+  if (!raw) return null
+  if (Array.isArray(raw)) return (raw[0] as { fee_amount?: number; label?: string }) ?? null
+  return raw as { fee_amount?: number; label?: string }
+}
+
+async function resolveTaskFeeForLegalManager(
+  supabase: SupabaseClient,
+  task: {
+    reward_amount?: number | null
+    task_definition_id?: string | null
+    task_definitions?: unknown
+  },
+): Promise<number> {
+  const fromReward = Number(task.reward_amount ?? 0)
+  if (fromReward > 0) return fromReward
+
+  const def = unwrapTaskDef(task.task_definitions)
+  const fromDef = Number(def?.fee_amount ?? 0)
+  if (fromDef > 0) return fromDef
+
+  if (task.task_definition_id) {
+    const { data } = await supabase
+      .from('task_definitions')
+      .select('fee_amount')
+      .eq('id', task.task_definition_id)
+      .maybeSingle()
+    return Number(data?.fee_amount ?? 0)
+  }
+  return 0
+}
+
+function calcLegalManagerFeeFromTaskFee(taskFee: number): number {
+  if (taskFee <= 0) return 0
+  return Math.round(taskFee * LEGAL_MANAGER_FEE_RATE)
+}
+
 const APPROVED_STATUSES = ['approved', 'completed'] as const
 
 function sumAmounts(rows: { amount?: number | null }[] | null | undefined): number {
   return (rows ?? []).reduce((s, r) => s + Number(r.amount ?? 0), 0)
 }
 
-/** من يستلم المكافأة: المعتمد إن كان مدير قانونية، وإلا مدير القانونية لفرع المهمة */
+/** من يستلم النسبة: المعتمد إن كان مسؤول قانونية، وإلا مسؤول القانونية لفرع المهمة */
 export async function resolveLegalManagerRecipient(
   supabase: SupabaseClient,
   reviewerId: string,
@@ -94,6 +210,7 @@ async function findExistingBonusTx(
     .select('id, amount')
     .eq('reference_id', taskId)
     .eq('wallet', LEGAL_MANAGER_WALLET)
+    .in('type', [LEGAL_MANAGER_PERCENTAGE_FEE_TYPE, LEGAL_MANAGER_BONUS_TYPE])
     .gt('amount', 0)
     .limit(1)
     .maybeSingle()
@@ -118,11 +235,10 @@ async function applyDebtorLegalManagerFeeDelta(
   }
 
   const newLmFees = Number(debtor.legal_manager_fees ?? 0) + delta
-  const newRequired = Number(debtor.required_amount ?? 0) + delta
 
   const { error } = await supabase
     .from('debtors')
-    .update({ legal_manager_fees: newLmFees, required_amount: newRequired } as Record<string, unknown>)
+    .update({ legal_manager_fees: newLmFees } as Record<string, unknown>)
     .eq('id', debtorId)
 
   if (error) return { ok: false, error: error.message }
@@ -154,15 +270,10 @@ export async function syncDebtorLegalManagerFees(
     return { ok: false, error: readErr?.message ?? 'المدين غير موجود' }
   }
 
-  const current = Number(debtor.legal_manager_fees ?? 0)
-  const delta = target - current
-  if (delta === 0) return { ok: true }
-
   const { error } = await supabase
     .from('debtors')
     .update({
       legal_manager_fees: target,
-      required_amount: Number(debtor.required_amount ?? 0) + delta,
     } as Record<string, unknown>)
     .eq('id', debtorId)
 
@@ -183,49 +294,50 @@ export async function fetchLegalManagerWalletTransactions(
   legalManagerUserId: string,
   limit = 100,
 ): Promise<LegalManagerWalletRow[]> {
-  const { data, error } = await supabase
+  let q = supabase
     .from('lawyer_wallet_transactions')
-    .select(`
-      id, lawyer_id, type, wallet, amount, notes, reference_id, created_by, created_at, debtor_id,
-      creator:profiles!lawyer_wallet_transactions_created_by_fkey(full_name),
-      debtor:debtors(full_name),
-      task:tasks(assigned_to, lawyer:profiles!tasks_assigned_to_fkey(full_name))
-    `)
+    .select(LM_TX_SELECT_WITH_JOINS)
     .eq('lawyer_id', legalManagerUserId)
     .eq('wallet', LEGAL_MANAGER_WALLET)
     .order('created_at', { ascending: false })
     .limit(limit)
 
-  if (error) return []
+  let { data, error } = await q
+  let rows: Record<string, unknown>[]
 
-  return (data ?? []).map(row => {
-    const r = row as Record<string, unknown>
-    const taskRaw = r.task
-    const task = Array.isArray(taskRaw) ? taskRaw[0] : taskRaw
-    const taskLawyer = task && typeof task === 'object'
-      ? (Array.isArray((task as { lawyer?: unknown }).lawyer)
-        ? (task as { lawyer: { full_name?: string }[] }).lawyer[0]
-        : (task as { lawyer?: { full_name?: string } }).lawyer)
-      : null
-    const pickName = (v: unknown) => {
-      if (!v) return null
-      if (Array.isArray(v)) return (v[0] as { full_name?: string } | undefined) ?? null
-      return v as { full_name?: string }
+  if (error) {
+    const fallback = await supabase
+      .from('lawyer_wallet_transactions')
+      .select(LM_TX_SELECT_BASE)
+      .eq('lawyer_id', legalManagerUserId)
+      .eq('wallet', LEGAL_MANAGER_WALLET)
+      .order('created_at', { ascending: false })
+      .limit(limit)
+    if (fallback.error) {
+      console.error('[legal-manager-wallet] fetch transactions:', fallback.error.message)
+      return []
     }
+    rows = (fallback.data ?? []) as Record<string, unknown>[]
+  } else {
+    rows = (data ?? []) as Record<string, unknown>[]
+  }
+
+  return rows.map(row => {
+    const r = row
     return {
       id: r.id as string,
       legal_manager_user_id: r.lawyer_id as string,
       task_id: (r.reference_id as string) ?? '',
       debtor_id: (r.debtor_id as string | null) ?? null,
-      assigned_lawyer_id: task && typeof task === 'object' ? ((task as { assigned_to?: string }).assigned_to ?? null) : null,
+      assigned_lawyer_id: null,
       type: r.type as string,
       amount: Number(r.amount),
       notes: (r.notes as string | null) ?? null,
       created_by: (r.created_by as string | null) ?? null,
       created_at: r.created_at as string,
-      creator: pickName(r.creator),
-      debtor: pickName(r.debtor),
-      lawyer: taskLawyer ?? null,
+      creator: pickProfileName(r.creator),
+      debtor: pickProfileName(r.debtor),
+      lawyer: null,
     }
   })
 }
@@ -251,34 +363,30 @@ export type LegalManagerLedgerRow = {
   amount: number
   balanceAfter: number
   performedBy?: string | null
+  isWalletMovement: boolean
 }
 
-export async function fetchLegalManagerAvailableBalance(
-  supabase: SupabaseClient,
-  legalManagerUserId: string,
-): Promise<number> {
-  const { fetchLawyerAvailablePayoutBalance } = await import('@/lib/lawyer-payout-requests')
-  return fetchLawyerAvailablePayoutBalance(supabase, legalManagerUserId, LEGAL_MANAGER_WALLET)
+export type LegalManagerLedgerResult = {
+  rows: LegalManagerLedgerRow[]
+  movementCount: number
 }
 
-export async function fetchLegalManagerPayoutRequests(
-  supabase: SupabaseClient,
-  legalManagerUserId: string,
-  limit = 50,
-) {
-  const all = await fetchLawyerPayoutRequests(supabase, legalManagerUserId, limit)
-  return all.filter(r => (r.wallet_kind ?? 'fees') === LEGAL_MANAGER_WALLET)
-}
-
-/** كشف محفظة مدير القانونية مع الرصيد بعد كل حركة */
 export async function fetchLegalManagerLedger(
   supabase: SupabaseClient,
   legalManagerUserId: string,
-): Promise<LegalManagerLedgerRow[]> {
+): Promise<LegalManagerLedgerResult> {
   const [txs, payoutReqs] = await Promise.all([
     fetchLegalManagerWalletTransactions(supabase, legalManagerUserId, 500),
     fetchLegalManagerPayoutRequests(supabase, legalManagerUserId, 200),
   ])
+
+  const feeTaskIds = txs
+    .filter(tx =>
+      (tx.type === LEGAL_MANAGER_PERCENTAGE_FEE_TYPE || tx.type === LEGAL_MANAGER_BONUS_TYPE)
+      && tx.task_id,
+    )
+    .map(tx => tx.task_id)
+  const lawyerByTask = await fetchLawyerNamesByTaskIds(supabase, feeTaskIds)
 
   type LedgerEvent = {
     id: string
@@ -293,47 +401,20 @@ export async function fetchLegalManagerLedger(
   const events: LedgerEvent[] = []
 
   for (const tx of txs) {
-    if (tx.type === LEGAL_MANAGER_BONUS_TYPE) {
-      events.push({
-        id: tx.id,
-        created_at: tx.created_at,
-        label: 'إضافة مقابل اعتماد مهمة',
-        description: tx.notes ?? LEGAL_MANAGER_BONUS_NOTES,
-        amount: Number(tx.amount),
-        affectsBalance: true,
-        performedBy: tx.creator?.full_name ?? null,
-      })
-    } else if (tx.type === 'legal_manager_withdrawal') {
-      events.push({
-        id: tx.id,
-        created_at: tx.created_at,
-        label: 'سحب معتمد',
-        description: tx.notes ?? 'سحب معتمد — محفظة مدير القانونية',
-        amount: Number(tx.amount),
-        affectsBalance: true,
-        performedBy: tx.creator?.full_name ?? null,
-      })
-    } else if (tx.type === 'legal_manager_manual_deposit') {
-      events.push({
-        id: tx.id,
-        created_at: tx.created_at,
-        label: 'إيداع يدوي',
-        description: tx.notes ?? LEGAL_MANAGER_MANUAL_DEPOSIT_LABEL,
-        amount: Number(tx.amount),
-        affectsBalance: true,
-        performedBy: tx.creator?.full_name ?? null,
-      })
-    } else if (tx.type === 'legal_manager_manual_withdrawal') {
-      events.push({
-        id: tx.id,
-        created_at: tx.created_at,
-        label: 'سحب يدوي',
-        description: tx.notes ?? LEGAL_MANAGER_MANUAL_WITHDRAWAL_LABEL,
-        amount: Number(tx.amount),
-        affectsBalance: true,
-        performedBy: tx.creator?.full_name ?? null,
-      })
-    }
+    if (!LEGAL_MANAGER_LEDGER_TYPES.has(tx.type)) continue
+    events.push({
+      id: tx.id,
+      created_at: tx.created_at,
+      label: legalManagerTxLabel(tx.type),
+      description: legalManagerTxDescription(
+        tx.type,
+        tx.notes,
+        tx.task_id ? lawyerByTask.get(tx.task_id) : null,
+      ),
+      amount: Number(tx.amount),
+      affectsBalance: true,
+      performedBy: tx.creator?.full_name ?? null,
+    })
   }
 
   for (const req of payoutReqs) {
@@ -373,10 +454,30 @@ export async function fetchLegalManagerLedger(
       amount: ev.amount,
       balanceAfter: balance,
       performedBy: ev.performedBy ?? null,
+      isWalletMovement: ev.affectsBalance,
     }
   })
 
-  return withBalance.reverse()
+  const movementCount = withBalance.filter(r => r.isWalletMovement).length
+
+  return { rows: withBalance.reverse(), movementCount }
+}
+
+export async function fetchLegalManagerAvailableBalance(
+  supabase: SupabaseClient,
+  legalManagerUserId: string,
+): Promise<number> {
+  const { fetchLawyerAvailablePayoutBalance } = await import('@/lib/lawyer-payout-requests')
+  return fetchLawyerAvailablePayoutBalance(supabase, legalManagerUserId, LEGAL_MANAGER_WALLET)
+}
+
+export async function fetchLegalManagerPayoutRequests(
+  supabase: SupabaseClient,
+  legalManagerUserId: string,
+  limit = 50,
+) {
+  const all = await fetchLawyerPayoutRequests(supabase, legalManagerUserId, limit)
+  return all.filter(r => (r.wallet_kind ?? 'fees') === LEGAL_MANAGER_WALLET)
 }
 
 async function assertActiveLegalManager(
@@ -389,7 +490,7 @@ async function assertActiveLegalManager(
     .eq('id', legalManagerUserId)
     .single()
 
-  if (error || !profile) return { ok: false, error: 'مدير القانونية غير موجود' }
+  if (error || !profile) return { ok: false, error: 'مسؤول القانونية غير موجود' }
   if (profile.role !== 'viewer' || profile.is_active === false) {
     return { ok: false, error: 'المستخدم ليس مدير قانونية نشطاً' }
   }
@@ -466,7 +567,7 @@ export async function manualWithdrawLegalManagerWallet(
 }
 
 /**
- * إضافة 1,000 د.ع لدرج محفظة مدير القانونية (داخل lawyer_wallet_transactions) عند اعتماد الإنجاز.
+ * إضافة نسبة 5% من أتعاب المهمة لمحفظة مسؤول القانونية عند اعتماد الإنجاز.
  * idempotent: مرة واحدة لكل task_id.
  */
 export async function creditLegalManagerBonusOnApproval(
@@ -490,7 +591,7 @@ export async function creditLegalManagerBonusOnApproval(
 
   const { data: task, error: taskErr } = await supabase
     .from('tasks')
-    .select('id, task_status, debtor_id, branch_id, task_definition_id, assigned_to, lawyer_id')
+    .select('id, task_status, debtor_id, branch_id, task_definition_id, assigned_to, reward_amount, task_definitions(fee_amount, label)')
     .eq('id', taskId)
     .single()
 
@@ -510,7 +611,7 @@ export async function creditLegalManagerBonusOnApproval(
       ok: true,
       amount: 0,
       skipped: true,
-      reason: 'المهمة بدون محامٍ أو مدين — لا مكافأة لمدير القانونية',
+      reason: 'المهمة بدون محامٍ أو مدين — لا نسبة لمسؤول القانونية',
     }
   }
 
@@ -522,30 +623,67 @@ export async function creditLegalManagerBonusOnApproval(
 
   if (!recipientId) {
     console.warn(
-      `[legal-manager-wallet] لا يوجد مدير قانونية لفرع المهمة ${task.branch_id ?? '—'} — task ${taskId}`,
+      `[legal-manager-wallet] لا يوجد مسؤول قانونية لفرع المهمة ${task.branch_id ?? '—'} — task ${taskId}`,
     )
     return {
       ok: true,
       amount: 0,
       skipped: true,
-      reason: 'لا يوجد مدير قانونية مرتبط بالفرع',
+      reason: 'لا يوجد مسؤول قانونية مرتبط بالفرع',
     }
   }
 
-  const amount = LEGAL_MANAGER_TASK_BONUS
+  const taskFee = await resolveTaskFeeForLegalManager(supabase, task)
+  const amount = calcLegalManagerFeeFromTaskFee(taskFee)
 
-  const insertResult = await insertWalletTransaction(supabase, {
+  if (amount <= 0) {
+    return {
+      ok: true,
+      amount: 0,
+      skipped: true,
+      reason: 'لا أتعاب للمهمة — لا نسبة لمسؤول القانونية',
+    }
+  }
+
+  const { data: lawyerProfile } = await supabase
+    .from('profiles')
+    .select('full_name')
+    .eq('id', assignedLawyerId)
+    .maybeSingle()
+  const lawyerName = (lawyerProfile?.full_name as string | undefined)?.trim() || 'محامٍ'
+
+  const feeNotes = buildPercentageFeeLedgerNote(
+    lawyerName,
+    `(${formatMoney(amount)} من ${formatMoney(taskFee)})`,
+  )
+
+  let insertResult = await insertWalletTransaction(supabase, {
     lawyer_id: recipientId,
-    type: LEGAL_MANAGER_BONUS_TYPE,
+    type: LEGAL_MANAGER_PERCENTAGE_FEE_TYPE,
     wallet: LEGAL_MANAGER_WALLET,
     amount,
-    notes: LEGAL_MANAGER_BONUS_NOTES,
+    notes: feeNotes,
     reference_id: taskId,
     created_by: reviewerId,
     debtor_id: debtorId,
     task_definition_id: task.task_definition_id ?? null,
     source: 'task_completion',
   })
+
+  if (!insertResult.ok && insertResult.typeRejected) {
+    insertResult = await insertWalletTransaction(supabase, {
+      lawyer_id: recipientId,
+      type: LEGAL_MANAGER_BONUS_TYPE,
+      wallet: LEGAL_MANAGER_WALLET,
+      amount,
+      notes: feeNotes,
+      reference_id: taskId,
+      created_by: reviewerId,
+      debtor_id: debtorId,
+      task_definition_id: task.task_definition_id ?? null,
+      source: 'task_completion',
+    })
+  }
 
   if (!insertResult.ok) {
     if (insertResult.error?.includes('duplicate') || insertResult.error?.includes('23505')) {
@@ -557,7 +695,7 @@ export async function creditLegalManagerBonusOnApproval(
       await syncDebtorLegalManagerFees(supabase, debtorId)
       return { ok: true, amount: 0, alreadyCredited: true }
     }
-    return { ok: false, amount: 0, error: insertResult.error ?? 'فشل تسجيل حركة محفظة مدير القانونية' }
+    return { ok: false, amount: 0, error: insertResult.error ?? 'فشل تسجيل حركة محفظة مسؤول القانونية' }
   }
 
   const debtorUpdate = await applyDebtorLegalManagerFeeDelta(supabase, debtorId, amount)
@@ -571,7 +709,7 @@ export async function creditLegalManagerBonusOnApproval(
       action: 'legal_manager_task_bonus',
       entity_type: 'task',
       entity_id: taskId,
-      description: LEGAL_MANAGER_BONUS_NOTES,
+      description: feeNotes,
       metadata: {
         legal_manager_user_id: recipientId,
         lawyer_id: assignedLawyerId,

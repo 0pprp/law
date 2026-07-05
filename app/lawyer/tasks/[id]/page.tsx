@@ -5,8 +5,12 @@ import { checkLawyerTaskAccess } from '@/lib/lawyer-task-access'
 import { lawyerTaskStatusLabel, isLawyerAchievedTask } from '@/lib/lawyer-task-display'
 import { isTaskOverdue, isTaskDueToday } from '@/lib/local-date'
 import { resolveTaskLabel, formatRequiredFieldLabel, type TaskRequiredFieldDisplay } from '@/lib/task-display-label'
-import { fetchTaskDefinitionExpensesForTask } from '@/lib/task-definition-expenses'
-import type { TaskDefinitionExpense } from '@/lib/task-definition-expenses'
+import {
+  getTaskExpenses,
+  fetchExpensesViaDefinitionEmbed,
+  normalizeExpenseRows,
+  type TaskDefinitionExpense,
+} from '@/lib/task-definition-expenses'
 import TaskUpdateForm from '@/components/TaskUpdateForm'
 import TaskAcceptanceActions from '@/components/TaskAcceptanceActions'
 import LawyerTaskRequirements from '@/components/LawyerTaskRequirements'
@@ -16,7 +20,7 @@ import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { fmtMoney, fmtDate } from '@/lib/utils'
-import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   assignment_pending_acceptance: 'warning',
@@ -63,11 +67,12 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     case_id?: string | null
     assignment_expires_at?: string | null
     task_definition_id?: string | null
+    task_label?: string | null
   }
 
   const { data: debtor } = await supabase
     .from('debtors')
-    .select('full_name, phone, address, governorate, receipt_type, receipt_number, receipt_amount, remaining_amount, required_amount, latitude, longitude, location_captured_at')
+    .select('full_name, phone, address, governorate, receipt_type, receipt_amount, remaining_amount, latitude, longitude, location_captured_at')
     .eq('id', task.debtor_id)
     .single()
 
@@ -78,7 +83,7 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     supabase.from('debtor_attachments').select('*').eq('debtor_id', task.debtor_id).order('created_at', { ascending: false }),
     supabase.from('expenses').select('id, amount, expense_type, description, expense_date, created_at, status, rejection_reason').eq('task_id', id).order('created_at', { ascending: false }),
     task.task_definition_id
-      ? supabase.from('task_definitions').select('label, fee_amount').eq('id', task.task_definition_id).maybeSingle()
+      ? supabase.from('task_definitions').select('label, fee_amount, task_type').eq('id', task.task_definition_id).maybeSingle()
       : Promise.resolve({ data: null }),
     task.task_definition_id
       ? supabase.from('task_required_fields').select('field_key, field_type, field_label, is_required, sort_order').eq('task_definition_id', task.task_definition_id).order('sort_order')
@@ -92,11 +97,35 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     fieldType: f.field_type,
   }))
 
-  const expenseDefs: TaskDefinitionExpense[] = await fetchTaskDefinitionExpensesForTask(supabase, {
-    task_definition_id: task.task_definition_id,
-    task_type: task.task_type,
-    branch_id: task.branch_id,
-  })
+  let expenseDefs: TaskDefinitionExpense[] = []
+
+  if (task.task_definition_id) {
+    const { data: defWithExpenses } = await supabase
+      .from('task_definitions')
+      .select('id, label, fee_amount, task_type, task_definition_expenses(id, task_definition_id, name, max_amount, sort_order)')
+      .eq('id', task.task_definition_id)
+      .maybeSingle()
+
+    if (defWithExpenses) {
+      expenseDefs = normalizeExpenseRows(
+        (defWithExpenses as { task_definition_expenses?: unknown }).task_definition_expenses,
+      )
+    }
+  }
+
+  if (expenseDefs.length === 0) {
+    const { expenses } = await getTaskExpenses(supabase, {
+      taskDefinitionId: task.task_definition_id,
+      taskName: taskDefinition?.label ?? task.task_label,
+      branchId: task.branch_id,
+      taskType: taskDefinition?.task_type ?? task.task_type,
+    })
+    expenseDefs = expenses
+  }
+
+  if (expenseDefs.length === 0 && task.task_definition_id) {
+    expenseDefs = await fetchExpensesViaDefinitionEmbed(supabase, task.task_definition_id)
+  }
 
   const taskAttachments = await Promise.all(
     (rawTaskAtts ?? []).map(async att => {
@@ -118,14 +147,17 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     address?: string | null
     governorate?: string | null
     receipt_type?: string
-    receipt_number?: string | null
     receipt_amount?: number
     remaining_amount?: number
-    required_amount?: number
     latitude?: number | null
     longitude?: number | null
     location_captured_at?: string | null
   } | null
+
+  const primaryDebtorFile =
+    debtorAttachments.find(att => att.signedUrl && att.mime_type === 'application/pdf')
+    ?? debtorAttachments.find(att => att.signedUrl)
+    ?? null
 
   const status = task.task_status
   const isOverdue = task.due_date && isTaskOverdue(task.due_date) && !['completed', 'closed', 'failed', 'approved'].includes(status)
@@ -183,12 +215,29 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
         <div className="px-4 py-0.5">
           <InfoRow label="الاسم" value={d?.full_name} />
           {d?.phone && <InfoRow label="الهاتف" value={d.phone} href={`tel:${d.phone}`} dir="ltr" />}
-          <InfoRow label={RECEIPT_TYPE_LABEL} value={d ? (RECEIPT_TYPE_LABELS[d.receipt_type as keyof typeof RECEIPT_TYPE_LABELS] ?? d.receipt_type) : null} />
-          <InfoRow label={RECEIPT_NUMBER_LABEL} value={d?.receipt_number} dir="ltr" />
+          <InfoRow
+            label={RECEIPT_TYPE_LABEL}
+            value={d ? (RECEIPT_TYPE_LABELS[d.receipt_type as keyof typeof RECEIPT_TYPE_LABELS] ?? d.receipt_type) : null}
+          />
           {Number(d?.receipt_amount) > 0 && <InfoRow label={RECEIPT_AMOUNT_LABEL} value={fmtMoney(d!.receipt_amount!)} />}
           {Number(d?.remaining_amount) > 0 && <InfoRow label="المبلغ المتبقي" value={fmtMoney(d!.remaining_amount!)} />}
           {d?.address && <InfoRow label="العنوان" value={d.address} />}
           {d?.governorate && <InfoRow label="المحافظة" value={d.governorate} />}
+          <div className="flex justify-between items-center gap-4 py-2.5 border-b border-slate-100 last:border-0">
+            <span className="text-sm text-slate-400 shrink-0 min-w-[90px]">ملف المدين</span>
+            {primaryDebtorFile?.signedUrl ? (
+              <a
+                href={primaryDebtorFile.signedUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[#2C8780] text-sm font-semibold hover:underline shrink-0"
+              >
+                فتح ملف المدين
+              </a>
+            ) : (
+              <span className="text-sm text-slate-400">لا يوجد ملف</span>
+            )}
+          </div>
         </div>
       </Card>
 
@@ -233,27 +282,6 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
           </div>
         )}
       </Card>
-
-      {/* ملف PDF المدين */}
-      {debtorAttachments.length > 0 && (
-        <Card>
-          <div className="px-4 py-3 bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.1)]">
-            <h2 className="font-bold text-slate-700 text-sm">ملف المدين ({debtorAttachments.length})</h2>
-          </div>
-          <div className="px-4 py-0.5">
-            {debtorAttachments.map(att => (
-              <div key={att.id} className="flex items-center gap-3 py-2.5 border-b border-slate-100 last:border-0">
-                <span className="text-lg shrink-0">{att.mime_type === 'application/pdf' ? '📄' : '🖼️'}</span>
-                <p className="flex-1 text-sm text-slate-700 font-medium truncate min-w-0">{att.file_name}</p>
-                {att.signedUrl ? (
-                  <a href={att.signedUrl} target="_blank" rel="noreferrer"
-                    className="text-xs font-semibold text-[#2C8780] border border-[#2C8780]/30 hover:bg-[#2C8780]/5 px-2.5 py-1 rounded-lg transition-colors shrink-0">فتح</a>
-                ) : <span className="text-xs text-slate-400 shrink-0">غير متاح</span>}
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
 
       {/* 4–6. المطلوبات + تم الإنجاز + مرفقات المهمة الحالية */}
       {!awaitingAcceptance && (

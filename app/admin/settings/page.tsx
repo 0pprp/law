@@ -8,6 +8,8 @@ import type { RequiredField } from '@/lib/types'
 import { APPROVED_BRANCH_NAMES, filterSelectableBranches } from '@/lib/branch-constants'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useAdminRole } from '@/context/admin-role'
+import { canAddBranchReferenceData, canModifyBranchReferenceData } from '@/lib/permissions'
 import { formatMoney } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 
@@ -121,7 +123,9 @@ interface Branch { id: string; name: string; city: string | null }
 interface Court { id: string; name: string; branch_id: string | null; is_active: boolean }
 
 function CourtsTab({ branches }: { branches: Branch[] }) {
-  const readOnly = !useCanWrite()
+  const role = useAdminRole()
+  const canAdd = canAddBranchReferenceData(role)
+  const canModify = canModifyBranchReferenceData(role)
   const branchId = useBranchId()
   const [courts, setCourts] = useState<Court[]>([])
   const [loading, setLoading] = useState(true)
@@ -142,11 +146,12 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
 
   useEffect(() => { load() }, [load])
 
-  function openAdd() { if (readOnly) return; setForm({ name: '' }); setEditingId(null); setErr('') }
-  function openEdit(c: Court) { if (readOnly) return; setForm({ name: c.name }); setEditingId(c.id); setErr('') }
+  function openAdd() { if (!canAdd) return; setForm({ name: '' }); setEditingId(null); setErr('') }
+  function openEdit(c: Court) { if (!canModify) return; setForm({ name: c.name }); setEditingId(c.id); setErr('') }
 
   async function save() {
-    if (readOnly) return
+    if (!canAdd) return
+    if (editingId && !canModify) return
     if (!form?.name.trim()) { setErr('اسم المحكمة مطلوب'); return }
     setSaving(true); setErr('')
     // branch_id is always the current branch from context — no manual selection
@@ -161,13 +166,13 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
   }
 
   async function toggle(c: Court) {
-    if (readOnly) return
+    if (!canModify) return
     await createClient().from('courts').update({ is_active: !c.is_active }).eq('id', c.id)
     setCourts(cs => cs.map(x => x.id === c.id ? { ...x, is_active: !x.is_active } : x))
   }
 
   async function del(c: Court) {
-    if (readOnly) return
+    if (!canModify) return
     await createClient().from('courts').delete().eq('id', c.id)
     setDeleting(null); load()
   }
@@ -178,7 +183,8 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-[#767676]">المحاكم المرتبطة بالفرع</p>
-        {!readOnly && <AddBtn label="إضافة محكمة" onClick={openAdd} />}
+        {!canAdd && !canModify && <p className="text-xs text-amber-700">عرض فقط — لا صلاحية تعديل</p>}
+        {canAdd && <AddBtn label="إضافة محكمة" onClick={openAdd} />}
       </div>
 
       <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-hidden">
@@ -207,7 +213,7 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {!readOnly && (
+                      {canModify && (
                       <div className="flex items-center justify-center gap-1.5">
                         <button onClick={() => openEdit(c)} className="text-[11px] px-2.5 py-1 rounded-lg border border-[rgba(118,118,118,0.2)] text-[#231F20] hover:border-[#2C8780]/40 hover:text-[#2C8780] transition-colors">تعديل</button>
                         <button onClick={() => toggle(c)} className={`text-[11px] px-2.5 py-1 rounded-lg border transition-colors ${c.is_active ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-green-200 text-green-600 hover:bg-green-50'}`}>
@@ -247,7 +253,9 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
 interface ExecDept { id: string; name: string; court_id: string | null; branch_id: string | null; is_active: boolean }
 
 function ExecDeptsTab({ branches }: { branches: Branch[] }) {
-  const readOnly = !useCanWrite()
+  const role = useAdminRole()
+  const canAdd = canAddBranchReferenceData(role)
+  const canModify = canModifyBranchReferenceData(role)
   const branchId = useBranchId()
   const [depts, setDepts] = useState<ExecDept[]>([])
   const [courts, setCourts] = useState<Court[]>([])
@@ -287,11 +295,12 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
 
   useEffect(() => { load() }, [load])
 
-  function openAdd() { if (readOnly) return; setForm({ name: '', court_id: '' }); setEditingId(null); setErr('') }
-  function openEdit(d: ExecDept) { if (readOnly) return; setForm({ name: d.name, court_id: d.court_id ?? '' }); setEditingId(d.id); setErr('') }
+  function openAdd() { if (!canAdd) return; setForm({ name: '', court_id: '' }); setEditingId(null); setErr('') }
+  function openEdit(d: ExecDept) { if (!canModify) return; setForm({ name: d.name, court_id: d.court_id ?? '' }); setEditingId(d.id); setErr('') }
 
   async function save() {
-    if (readOnly) return
+    if (!canAdd) return
+    if (editingId && !canModify) return
     if (!form?.name.trim()) { setErr('اسم الدائرة مطلوب'); return }
     setSaving(true); setErr('')
     // Always save branch_id so the dept stays visible in the current branch
@@ -305,13 +314,13 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
   }
 
   async function toggle(d: ExecDept) {
-    if (readOnly) return
+    if (!canModify) return
     await createClient().from('execution_departments').update({ is_active: !d.is_active }).eq('id', d.id)
     setDepts(ds => ds.map(x => x.id === d.id ? { ...x, is_active: !x.is_active } : x))
   }
 
   async function del(d: ExecDept) {
-    if (readOnly) return
+    if (!canModify) return
     await createClient().from('execution_departments').delete().eq('id', d.id)
     setDeleting(null); load()
   }
@@ -326,7 +335,7 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-[#767676]">دوائر التنفيذ المرتبطة بالمحاكم</p>
-        {!readOnly && <AddBtn label="إضافة دائرة" onClick={openAdd} />}
+        {canAdd && <AddBtn label="إضافة دائرة" onClick={openAdd} />}
       </div>
 
       <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-hidden">
@@ -357,6 +366,7 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
                       </span>
                     </td>
                     <td className="px-4 py-3">
+                      {canModify ? (
                       <div className="flex items-center justify-center gap-1.5">
                         <button onClick={() => openEdit(d)} className="text-[11px] px-2.5 py-1 rounded-lg border border-[rgba(118,118,118,0.2)] text-[#231F20] hover:border-[#2C8780]/40 hover:text-[#2C8780] transition-colors">تعديل</button>
                         <button onClick={() => toggle(d)} className={`text-[11px] px-2.5 py-1 rounded-lg border transition-colors ${d.is_active ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-green-200 text-green-600 hover:bg-green-50'}`}>
@@ -364,6 +374,7 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
                         </button>
                         <button onClick={() => setDeleting(d)} className="text-[11px] px-2.5 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors">حذف</button>
                       </div>
+                      ) : <span className="text-[10px] text-[#767676]">—</span>}
                     </td>
                   </tr>
                 )

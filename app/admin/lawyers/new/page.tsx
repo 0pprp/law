@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { useBranchId, useBranch } from '@/context/branch'
 import { useAdminRole } from '@/context/admin-role'
-import { canManageUsers } from '@/lib/permissions'
+import { canCreateLawyerUser, isLegalManager } from '@/lib/permissions'
 import { isMainBranchName } from '@/lib/branch-constants'
 import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
@@ -18,7 +18,7 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
-const ROLE_OPTIONS = [
+const ALL_ROLE_OPTIONS = [
   { value: 'lawyer', label: USER_ROLE_LABELS.lawyer },
   { value: 'accountant', label: USER_ROLE_LABELS.accountant },
   { value: 'viewer', label: USER_ROLE_LABELS.viewer },
@@ -49,7 +49,11 @@ export default function NewLawyerPage() {
   const branchId = useBranchId()
   const { branchName } = useBranch()
   const role = useAdminRole()
-  const readOnly = !canManageUsers(role)
+  const readOnly = !canCreateLawyerUser(role)
+  const legalOfficerMode = isLegalManager(role)
+  const roleOptions = legalOfficerMode
+    ? [{ value: 'lawyer', label: USER_ROLE_LABELS.lawyer }]
+    : ALL_ROLE_OPTIONS
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -143,8 +147,8 @@ export default function NewLawyerPage() {
   return (
     <div className="max-w-2xl space-y-5">
       <PageHeader
-        title="إضافة مستخدم جديد"
-        breadcrumb={[{ label: 'المستخدمون', href: '/admin/lawyers' }, { label: 'مستخدم جديد' }]}
+        title={legalOfficerMode ? 'إضافة محامي جديد' : 'إضافة مستخدم جديد'}
+        breadcrumb={[{ label: 'المستخدمون', href: '/admin/lawyers' }, { label: legalOfficerMode ? 'محامي جديد' : 'مستخدم جديد' }]}
       />
 
       {readOnly && (
@@ -157,11 +161,14 @@ export default function NewLawyerPage() {
         {branchId && branchName && !isMainBranchName(branchName) ? (
           <p className="text-xs text-[#767676] bg-[#F3F1F2] rounded-lg px-3 py-2">
             الفرع / المحافظة: <span className="font-bold text-[#231F20]">{branchName}</span>
-            {userRole === 'accountant' && (
+            {legalOfficerMode && (
+              <span className="block mt-1 text-[#2C8780]">مسؤول القانونية يطلع على كل الفروع — يمكنه إضافة محامين فقط.</span>
+            )}
+            {userRole === 'accountant' && !legalOfficerMode && (
               <span className="block mt-1 text-[#2C8780]">سيُربط المحاسب تلقائياً بهذا الفرع فقط.</span>
             )}
-            {isViewerRole && (
-              <span className="block mt-1 text-[#2C8780]">مدير القانونية يطلع على كل الفروع — تكليف ومراجعة إنجازات بدون إعدادات أو حذف.</span>
+            {isViewerRole && !legalOfficerMode && (
+              <span className="block mt-1 text-[#2C8780]">مسؤول القانونية يطلع على كل الفروع — تكليف ومراجعة إنجازات بدون إعدادات أو حذف.</span>
             )}
           </p>
         ) : (
@@ -177,7 +184,8 @@ export default function NewLawyerPage() {
               <PremiumSelect
                 value={userRole}
                 onChange={v => setUserRole(v as 'lawyer' | 'accountant' | 'viewer')}
-                options={ROLE_OPTIONS}
+                options={roleOptions}
+                disabled={legalOfficerMode}
               />
             </Field>
           </div>
@@ -187,7 +195,7 @@ export default function NewLawyerPage() {
           <CardHeader title="بيانات الحساب" />
           <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label="الاسم الكامل" required>
-              <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={INP} placeholder={isLawyer ? 'اسم المحامي الكامل' : isViewerRole ? 'اسم مدير القانونية الكامل' : 'اسم المحاسب الكامل'} />
+              <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={INP} placeholder={isLawyer ? 'اسم المحامي الكامل' : isViewerRole ? 'اسم مسؤول القانونية الكامل' : 'اسم المحاسب الكامل'} />
             </Field>
             <Field label="اسم المستخدم" required hint="أحرف إنجليزية صغيرة، أرقام، نقطة، شرطة سفلية فقط — يُستخدم لتسجيل الدخول">
               <input type="text" value={form.username}

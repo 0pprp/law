@@ -38,8 +38,8 @@ export default function LawyerWalletHistory({ title, transactions, emptyMessage 
                   <p className={`text-sm font-black tabular-nums ${amt > 0 ? 'text-emerald-700' : 'text-red-600'}`} dir="ltr">
                     {amt > 0 ? '+' : ''}{fmtMoney(amt)}
                   </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    {tx.type === 'approved_task_payment' && tx.notes
+                  <p className="text-[11px] text-slate-500 mt-0.5 whitespace-pre-line">
+                    {(tx.type === 'approved_task_payment' || tx.type === 'lawyer_expense_wallet_deduction') && tx.notes
                       ? tx.notes
                       : walletTransactionLabel(tx.type as WalletTransactionType, wallet)}
                   </p>

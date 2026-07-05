@@ -173,6 +173,7 @@ export default function NewDebtorPage() {
       receipt_number: form.receipt_number.trim(),
       receipt_amount: parseMoneyInput(form.receipt_amount),
       remaining_amount: parseMoneyInput(form.remaining_amount),
+      required_amount: parseMoneyInput(form.remaining_amount),
       lawyer_fees: 0,
       penalty_amount: form.has_contract ? parseMoneyInput(form.penalty_amount) : 0,
       receipt_signed_legal_costs: form.receipt_signed_legal_costs,
