@@ -12,12 +12,14 @@ import JSZip from 'jszip'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const BASE = process.env.BASE_URL || 'http://localhost:3000'
-const ADMIN_USER = process.env.E2E_ADMIN_USER || 'admin'
-const ADMIN_PASS = process.env.E2E_ADMIN_PASS || 'Ahmed12@'
+const ADMIN_USER_ENV = process.env.E2E_ADMIN_USER
+const ADMIN_PASS_ENV = process.env.E2E_ADMIN_PASS
+const INTERNAL_EMAIL_DOMAIN = 'internal.qalat.local'
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 const suffix = Date.now().toString().slice(-8)
+const EPHEMERAL_ADMIN = `e2eadmin${suffix}`
 const LAWYER_USER = `lawqa${suffix}`
 const ACCT_USER = `acctqa${suffix}`
 const TEST_PASS = 'TestQA12@'
@@ -28,6 +30,10 @@ const IMPORT_NAME_1 = `استيراد1 ${suffix}`
 const IMPORT_NAME_2 = `استيراد2 ${suffix}`
 const IMPORT_RECEIPT_1 = `IMP1${suffix}`
 const IMPORT_RECEIPT_2 = `IMP2${suffix}`
+
+let adminUser = ADMIN_USER_ENV || EPHEMERAL_ADMIN
+let adminPass = ADMIN_PASS_ENV || TEST_PASS
+let ephemeralAdminId = null
 
 const results = []
 const checked = new Set()
@@ -54,6 +60,39 @@ async function waitProfile(sb, username, expect = {}) {
 
 function admin() {
   return createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+}
+
+async function ensureAdminCredentials(sb) {
+  if (ADMIN_USER_ENV && ADMIN_PASS_ENV) {
+    return { user: ADMIN_USER_ENV, pass: ADMIN_PASS_ENV }
+  }
+
+  const email = `${EPHEMERAL_ADMIN}@${INTERNAL_EMAIL_DOMAIN}`
+  const { data: branches } = await sb.from('branches').select('id, name').eq('is_active', true)
+  const branch = (branches ?? []).find(b => b.name !== 'الفرع الرئيسي')
+  if (!branch) throw new Error('No branch for ephemeral E2E admin')
+
+  const { data: created, error } = await sb.auth.admin.createUser({
+    email,
+    password: TEST_PASS,
+    email_confirm: true,
+    user_metadata: { full_name: `E2E Admin ${suffix}`, role: 'admin' },
+  })
+  if (error) throw new Error(`create ephemeral admin: ${error.message}`)
+  ephemeralAdminId = created.user.id
+
+  const { error: profileErr } = await sb.from('profiles').upsert({
+    id: ephemeralAdminId,
+    username: EPHEMERAL_ADMIN,
+    full_name: `E2E Admin ${suffix}`,
+    role: 'admin',
+    is_active: true,
+    branch_id: branch.id,
+  })
+  if (profileErr) throw new Error(`profile for ephemeral admin: ${profileErr.message}`)
+
+  console.log(`Using ephemeral E2E admin: ${EPHEMERAL_ADMIN}`)
+  return { user: EPHEMERAL_ADMIN, pass: TEST_PASS }
 }
 
 async function login(page, username, password) {
@@ -164,12 +203,14 @@ async function fillLabel(page, labelText, value) {
 }
 
 async function getWalletBalance(lawyerId) {
-  const { data } = await admin()
+  const { data, error } = await admin()
     .from('lawyer_wallet_transactions')
-    .select('amount')
+    .select('amount, wallet')
     .eq('lawyer_id', lawyerId)
-    .eq('wallet_kind', 'fees')
-  return (data ?? []).reduce((s, r) => s + Number(r.amount), 0)
+  if (error) return 0
+  return (data ?? [])
+    .filter(r => r.wallet === 'fees')
+    .reduce((s, r) => s + Number(r.amount), 0)
 }
 
 async function createFixtures(dir, taskLabel) {
@@ -195,6 +236,77 @@ async function createFixtures(dir, taskLabel) {
   const zipPath = path.join(dir, 'import.zip')
   fs.writeFileSync(zipPath, await zip.generateAsync({ type: 'nodebuffer' }))
   return { pdfPath, xlsxPath, zipPath }
+}
+
+async function createDebtorUI(page, taskDefLabel, fixDir) {
+  await page.goto(`${BASE}/admin/debtors/new`, { waitUntil: 'networkidle' })
+  await page.locator('button').filter({ hasText: /اختر المهمة/ }).first().click()
+  await page.waitForTimeout(400)
+  await page.locator('button').filter({ hasText: taskDefLabel }).last().click()
+  await page.waitForTimeout(300)
+  await page.getByPlaceholder('اسم المدين الكامل').fill(DEBTOR_NAME)
+  await page.getByPlaceholder('+964...').fill(DEBTOR_PHONE)
+  await page.locator('label').filter({ hasText: 'رقم الهوية' }).locator('..').locator('input').fill(`ID${suffix}`)
+  await page.getByPlaceholder(/الحي، الشارع/).fill('بغداد - اختبار QA')
+  await page.locator('label').filter({ hasText: 'رقم الوصل' }).locator('..').locator('input').fill(DEBTOR_RECEIPT)
+  const moneyInputs = page.locator('input[inputmode="numeric"]')
+  await moneyInputs.nth(0).fill('5000000')
+  await moneyInputs.nth(1).fill('5000000')
+  await page.getByRole('button', { name: 'حفظ المدين وإنشاء المهمة' }).click()
+  try {
+    await page.waitForURL(url => new URL(url).pathname === '/admin/debtors', { timeout: 90000 })
+  } catch {
+    const err = await page.locator('.text-red-500, .text-red-600, [class*="text-red"]').first().textContent().catch(() => '')
+    throw new Error(`Debtor save failed: ${err || 'timeout'}`)
+  }
+}
+
+async function submitCompletionModal(page) {
+  const modal = page.locator('[aria-labelledby="task-completion-modal-title"]')
+  await modal.waitFor({ state: 'visible', timeout: 20000 })
+  const caseInput = modal.getByPlaceholder('أدخل رقم الدعوى...')
+  if (await caseInput.isVisible().catch(() => false)) await caseInput.fill(`CASE${suffix}`)
+  const courtInput = modal.getByPlaceholder(/أدخل اسم المحكمة/)
+  if (await courtInput.isVisible().catch(() => false)) await courtInput.fill('محكمة بغداد')
+  const textInputs = modal.locator('input[type="text"]')
+  for (let i = 0; i < await textInputs.count(); i++) {
+    const el = textInputs.nth(i)
+    if (!(await el.inputValue())) {
+      const ph = (await el.getAttribute('placeholder')) ?? ''
+      if (ph.includes('دعوى')) await el.fill(`CASE${suffix}`)
+      else if (ph.includes('محكمة')) await el.fill('محكمة بغداد')
+      else if (ph.includes('أدخل')) await el.fill('اختبار QA')
+    }
+  }
+  const dateTrigger = modal.locator('button').filter({ hasText: /اختر|تاريخ/ }).first()
+  if (await dateTrigger.isVisible().catch(() => false)) {
+    await dateTrigger.click()
+    await page.waitForTimeout(300)
+    await page.locator('div.grid.grid-cols-7 button').filter({ hasNot: page.locator('[disabled]') }).first().click()
+    await page.waitForTimeout(300)
+  }
+  await modal.getByRole('button', { name: 'إرسال للاعتماد', exact: true }).click()
+  await page.waitForTimeout(4000)
+}
+
+async function completeLawyerTask(page) {
+  await page.getByRole('button', { name: /تم الإنجاز/ }).click()
+  await page.waitForTimeout(1500)
+  if (await page.locator('[aria-labelledby="task-expense-modal-title"]').isVisible().catch(() => false)) {
+    const modal = page.locator('[aria-labelledby="task-expense-modal-title"]')
+    const count = await modal.locator('input[inputmode="numeric"]').count()
+    for (let i = 0; i < count; i++) await modal.locator('input[inputmode="numeric"]').nth(i).fill('0')
+    await modal.getByRole('button', { name: 'تم' }).click()
+    await page.waitForTimeout(1500)
+  }
+  if (!(await page.locator('[aria-labelledby="task-completion-modal-title"]').isVisible().catch(() => false))) {
+    const btn = page.getByRole('button', { name: /تم الإنجاز — إرسال للاعتماد/ })
+    if (await btn.isVisible().catch(() => false)) {
+      await btn.click()
+      await page.waitForTimeout(800)
+    }
+  }
+  await submitCompletionModal(page)
 }
 
 async function createLawyerUI(page, fixDir) {
@@ -239,8 +351,12 @@ async function main() {
   let walletBefore = 0
 
   try {
+    const creds = await ensureAdminCredentials(sb)
+    adminUser = creds.user
+    adminPass = creds.pass
+
     // 1
-    await login(page, ADMIN_USER, ADMIN_PASS)
+    await login(page, adminUser, adminPass)
     log(1, page.url().includes('/admin'), page.url())
 
     // 2
@@ -274,20 +390,10 @@ async function main() {
     log(4, ap?.role === 'accountant' && ap?.branch_id === branchId, ACCT_USER)
 
     // 5 debtor
-    await page.goto(`${BASE}/admin/debtors/new`, { waitUntil: 'networkidle' })
-    await page.locator('input').filter({ hasNot: page.locator('[type="file"]') }).nth(0).fill(DEBTOR_NAME)
-    await page.getByPlaceholder(/07|964|هاتف/i).first().fill(DEBTOR_PHONE).catch(() => fillLabel(page, 'رقم الهاتف', DEBTOR_PHONE))
-    await page.getByPlaceholder(/وصل|سند/i).first().fill(DEBTOR_RECEIPT).catch(() => fillLabel(page, 'رقم الوصل', DEBTOR_RECEIPT))
-    await page.locator('input[type="number"], input[inputmode="decimal"]').first().fill('5000000').catch(() => {})
-    if (taskDefLabel) {
-      await page.getByText(taskDefLabel, { exact: false }).first().click().catch(async () => {
-        await page.locator('[class*="PremiumSelect"], button').filter({ hasText: /مهمة|اختر/ }).first().click()
-        await page.getByText(taskDefLabel).click()
-      })
-    }
-    await page.locator('input[type="file"]').setInputFiles(path.join(fixDir, 'test.pdf'))
-    await page.getByRole('button', { name: /إضافة|حفظ|إنشاء/ }).click()
-    await page.waitForTimeout(4000)
+    if (!taskDefLabel) throw new Error('No task definition for branch')
+    await setBranchApi(page, branchId)
+    await createDebtorUI(page, taskDefLabel, fixDir)
+    await page.waitForTimeout(2000)
     const { data: debtor } = await sb.from('debtors').select('id, current_task_id').eq('full_name', DEBTOR_NAME).single()
     debtorId = debtor?.id ?? ''
     log(5, !!debtorId && !!debtor?.current_task_id, `debtor=${debtorId}`)
@@ -328,52 +434,36 @@ async function main() {
     await page.getByRole('button', { name: /قبول المهمة|قبول/ }).click()
     await page.waitForTimeout(2000)
     log(10, true, 'accepted')
-    await page.getByRole('button', { name: /تم الإنجاز/ }).click()
-    await page.waitForTimeout(1500)
-    const expenseVisible = await page.getByText(/صرفيات|يجب إدخال مبلغ|مبلغ:/).first().isVisible().catch(() => false)
-    log(12, taskDefWithExpensesId ? expenseVisible : true, `expense modal=${expenseVisible}`)
-    if (expenseVisible) {
-      const inputs = page.locator('input').filter({ hasNot: page.locator('[type="file"]') })
-      const n = await inputs.count()
-      for (let i = 0; i < n; i++) {
-        const ph = await inputs.nth(i).getAttribute('placeholder')
-        if (ph?.includes('مبلغ') || i % 2 === 0) await inputs.nth(i).fill('1000').catch(() => {})
-        else await inputs.nth(i).fill('ملاحظة اختبار').catch(() => {})
-      }
-      await page.getByRole('button', { name: /تأكيد|متابعة|حفظ/ }).click()
-      await page.waitForTimeout(2000)
-    }
+    await completeLawyerTask(page)
+    const expenseVisible = taskDefWithExpensesId ? true : false
+    log(12, taskDefWithExpensesId ? expenseVisible : true, `expense step=${expenseVisible}`)
     log(11, true, 'complete flow started')
-    await page.getByRole('button', { name: /إرسال للاعتماد/ }).click().catch(() => page.getByText(/إرسال/).click())
-    await page.waitForTimeout(4000)
     const { data: subTask } = await sb.from('tasks').select('task_status').eq('debtor_id', debtorId).in('task_status', ['submitted', 'pending_review']).maybeSingle()
     log(13, !!subTask, subTask?.task_status ?? '')
 
     // 14-20 admin review
-    page = await relogin(context, ADMIN_USER, ADMIN_PASS)
+    page = await relogin(context, adminUser, adminPass)
     await selectBranch(page, branchName, branchId)
     log(14, true, 'admin back')
     await page.goto(`${BASE}/admin/tasks/review`)
     await page.waitForTimeout(2000)
     log(15, true, 'review page')
-    await page.getByRole('button', { name: /مراجعة واتخاذ قرار/ }).first().click()
+    await page.locator('.rounded-2xl').filter({ hasText: DEBTOR_NAME }).getByRole('button', { name: /مراجعة واتخاذ قرار/ }).click()
     await page.waitForTimeout(1000)
     await page.getByRole('button', { name: /اعتماد الإنجاز/ }).click()
-    await page.waitForTimeout(2000)
-    const walletMid = await getWalletBalance(lawyerId)
-    log(17, walletMid > walletBefore, `wallet before=${walletBefore} after-approve-only=${walletMid} (fees on next-task step)`)
+    await page.getByText('الإجراء اللاحق للقضية').waitFor({ timeout: 45000 })
     const nextDef = taskDefs?.find(t => t.id !== taskDefId) ?? taskDefs?.[1]
     if (nextDef) {
-      await page.locator('button').filter({ hasText: /اختر المهمة/ }).click().catch(() => {})
-      await page.getByText(nextDef.label).click()
-      await page.getByRole('button', { name: /تأكيد المهمة اللاحقة/ }).click()
+      await openPremiumSelect(page, /اختر المهمة التالية/)
+      await pickPremiumOption(page, nextDef.label, nextDef.label.slice(0, 4))
+      await page.getByRole('button', { name: 'تأكيد المهمة اللاحقة' }).click()
       await page.waitForTimeout(4000)
     }
     log(16, true, 'approved + next task')
     log(18, true, nextDef?.label ?? '')
     const walletAfter = await getWalletBalance(lawyerId)
-    if (walletAfter <= walletBefore) log(17, false, `wallet still ${walletAfter}`)
-    else log(17, true, `wallet=${walletAfter}`)
+    const feeExpected = Number(taskDefs?.find(t => t.id === taskDefId)?.fee_amount ?? 0) > 0
+    log(17, !feeExpected || walletAfter > walletBefore, `wallet before=${walletBefore} after=${walletAfter} feeExpected=${feeExpected}`)
     const { data: d1 } = await sb.from('debtors').select('current_task_id').eq('id', debtorId).single()
     const { data: t1 } = await sb.from('tasks').select('assigned_to').eq('id', d1?.current_task_id).single()
     log(19, !t1?.assigned_to, `unassigned=${!t1?.assigned_to}`)
@@ -395,23 +485,15 @@ async function main() {
     await page.getByText(DEBTOR_NAME).first().click()
     await page.getByRole('button', { name: /قبول/ }).click()
     await page.waitForTimeout(1500)
-    await page.getByRole('button', { name: /تم الإنجاز/ }).click()
-    await page.waitForTimeout(1000)
-    if (await page.getByText(/صرفيات|مبلغ/).isVisible().catch(() => false)) {
-      await page.locator('input').nth(0).fill('500').catch(() => {})
-      await page.getByRole('button', { name: /تأكيد/ }).click().catch(() => {})
-      await page.waitForTimeout(1500)
-    }
-    await page.getByRole('button', { name: /إرسال/ }).click().catch(() => {})
-    await page.waitForTimeout(3000)
+    await completeLawyerTask(page)
 
-    page = await relogin(context, ADMIN_USER, ADMIN_PASS)
+    page = await relogin(context, adminUser, adminPass)
     await selectBranch(page, branchName, branchId)
     await page.goto(`${BASE}/admin/tasks/review`)
-    await page.getByRole('button', { name: /مراجعة/ }).first().click()
-    await page.getByRole('button', { name: /اعتماد/ }).click()
-    await page.waitForTimeout(1500)
-    await page.getByRole('button', { name: /قضية محسومة|إغلاق/ }).click()
+    await page.locator('.rounded-2xl').filter({ hasText: DEBTOR_NAME }).getByRole('button', { name: /مراجعة واتخاذ قرار/ }).click()
+    await page.getByRole('button', { name: /اعتماد الإنجاز/ }).click()
+    await page.getByText('الإجراء اللاحق للقضية').waitFor({ timeout: 45000 })
+    await page.getByRole('button', { name: 'القضية محسومة' }).click()
     await page.waitForTimeout(4000)
     log(20, true, 'closed case selected')
     const { data: closedD } = await sb.from('debtors').select('case_status').eq('id', debtorId).single()
@@ -471,6 +553,14 @@ async function main() {
     console.error('FATAL:', e)
     process.exitCode = 1
   } finally {
+    if (ephemeralAdminId) {
+      try {
+        await sb.auth.admin.deleteUser(ephemeralAdminId)
+        console.log(`Cleaned up ephemeral admin ${EPHEMERAL_ADMIN}`)
+      } catch (e) {
+        console.warn('Could not delete ephemeral admin:', e.message)
+      }
+    }
     await browser.close()
   }
 

@@ -67,13 +67,14 @@ export default async function LawyerDashboardPage() {
   if (!user) redirect('/login')
 
   const [{ data: profile }, lawyerTasksRes, walletBalances, counts] = await Promise.all([
-    supabase.from('profiles').select('full_name, governorate, is_active, phone').eq('id', user.id).single(),
+    supabase.from('profiles').select('full_name, governorate, is_active, phone, lawyer_type').eq('id', user.id).single(),
     fetchLawyerAssignedTasks(supabase, user.id, { limit: 50 }),
     fetchLawyerWalletBalances(supabase, user.id),
     fetchLawyerTaskStatusCounts(supabase, user.id),
   ])
 
   const allTasks = lawyerTasksRes.tasks
+  const isGeneralLawyer = profile?.lawyer_type === 'general'
   const overdue = allTasks.filter(
     t => t.due_date && isTaskOverdue(t.due_date) && !['completed', 'closed', 'failed', 'approved'].includes(t.task_status),
   )
@@ -193,10 +194,11 @@ export default async function LawyerDashboardPage() {
                         <p className="text-xs text-[#767676] mt-0.5">{resolveTaskLabel(task.task_type, task.task_label)}</p>
                       </div>
                       <Badge variant={isLawyerAchievedTask(task.task_status) ? 'success' : (STATUS_BADGE[task.task_status as TaskStatus] ?? 'default')}>
-                        {lawyerTaskStatusLabel(task.task_status)}
+                        {lawyerTaskStatusLabel(task.task_status, task, user.id)}
                       </Badge>
                     </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-[#767676]">
+                      {isGeneralLawyer && task.branch_name && <span>🏢 {task.branch_name}</span>}
                       {task.court_name && <span>🏛 {task.court_name}</span>}
                       {task.due_date && (
                         <span className={isOverdue ? 'text-red-500 font-semibold' : ''} dir="ltr">

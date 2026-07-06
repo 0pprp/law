@@ -12,7 +12,7 @@ import {
   CURRENT_TASK_PAGE_SIZE,
 } from '@/lib/task-assignment'
 import { assignTasksViaApi } from '@/lib/task-operations-api'
-import { fetchBranchProfiles, filterLawyerProfiles } from '@/lib/branch-profiles'
+import { fetchAssignmentLawyers } from '@/lib/branch-profiles'
 import { formatErrorMessage } from '@/lib/format-error'
 import { scheduleBranchMaintenance } from '@/lib/branch-maintenance'
 import { cacheGet, cacheSet, cacheDelete, CACHE_TTL } from '@/lib/query-cache'
@@ -28,6 +28,8 @@ import { fetchActiveTaskDefinitions } from '@/lib/task-definitions'
 import { DatePicker } from '@/components/ui/date-picker'
 import { useAdminRole } from '@/context/admin-role'
 import { canAssignTasks, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { BranchListFilterSelect } from '@/components/BranchListSelect'
+import { useBranchLists } from '@/hooks/use-branch-lists'
 
 type TaskView = 'waiting' | 'assigned'
 
@@ -76,6 +78,14 @@ export default function TasksPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [filterDef, setFilterDef] = useState('')
+  const [filterListId, setFilterListId] = useState('')
+  const { lists: branchLists } = useBranchLists(branchId)
+
+  useEffect(() => {
+    setFilterListId('')
+    setSearch('')
+    setDebouncedSearch('')
+  }, [branchId])
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkLawyerId, setBulkLawyerId] = useState('')
@@ -108,10 +118,10 @@ export default function TasksPage() {
     }
 
     const offset = offsetOverride ?? 0
-    const cacheKey = `tasks:assign:${branchId}:${taskView}:${filterDef}:${debouncedSearch}:${offset}`
+    const cacheKey = `tasks:assign:${branchId}:${taskView}:${filterDef}:${filterListId}:${debouncedSearch}:${offset}`
 
     if (!append) {
-      const cacheKey = `tasks:assign:${branchId}:${taskView}:${filterDef}:${debouncedSearch}:${offset}`
+      const cacheKey = `tasks:assign:${branchId}:${taskView}:${filterDef}:${filterListId}:${debouncedSearch}:${offset}`
       const cached = cacheGet<TasksPageCache>(cacheKey)
       if (cached) {
         setTasks(cached.tasks)
@@ -148,26 +158,27 @@ export default function TasksPage() {
         return
       }
 
-      const [defs, page, profilesResult] = await Promise.all([
+      const [defs, page, lawyersResult] = await Promise.all([
         append ? Promise.resolve(null) : fetchActiveTaskDefinitions(supabase, branchId, 'id, label'),
         fetchCurrentBranchTaskRowsPaginated(supabase, branchId, {
           assigned: taskView === 'assigned',
           taskDefinitionId: filterDef || null,
+          branchListId: filterListId || null,
           debtorIds,
           offset,
           limit: CURRENT_TASK_PAGE_SIZE,
         }),
-        append ? Promise.resolve(null) : fetchBranchProfiles(supabase, branchId),
+        append ? Promise.resolve(null) : fetchAssignmentLawyers(supabase, branchId),
       ])
 
-      if (profilesResult?.error) {
-        setError(formatErrorMessage(profilesResult.error))
+      if (lawyersResult?.error) {
+        setError(formatErrorMessage(lawyersResult.error))
       }
 
       setTasks(prev => {
         const nextTasks = append ? [...prev, ...page.rows] : page.rows
-        const lawyerList = profilesResult
-          ? filterLawyerProfiles(profilesResult.profiles).map(({ id, full_name }) => ({ id, full_name }))
+        const lawyerList = lawyersResult
+          ? lawyersResult.lawyers
           : lawyersRef.current
         const defsList = (defs as { id: string; label: string }[] | null) ?? taskDefsRef.current
 
@@ -180,7 +191,7 @@ export default function TasksPage() {
           assignedTotal: page.assignedTotal,
         }, CACHE_TTL.list)
 
-        if (profilesResult) setLawyers(lawyerList)
+        if (lawyersResult) setLawyers(lawyerList)
         if (defs) setTaskDefs(defsList)
 
         return nextTasks
@@ -199,7 +210,7 @@ export default function TasksPage() {
     }
     setLoading(false)
     setLoadingMore(false)
-  }, [branchId, taskView, filterDef, debouncedSearch])
+  }, [branchId, taskView, filterDef, filterListId, debouncedSearch])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -210,7 +221,7 @@ export default function TasksPage() {
   useEffect(() => {
     setPageOffset(0)
     load(false, 0)
-  }, [branchId, taskView, filterDef, debouncedSearch, load])
+  }, [branchId, taskView, filterDef, filterListId, debouncedSearch, load])
 
   function loadMore() {
     if (loadingMore || tasks.length >= total) return
@@ -302,17 +313,19 @@ export default function TasksPage() {
     setSingleLawyerId('')
     setSelected(new Set())
     if (branchId) {
-      cacheDelete(`tasks:assign:${branchId}:${taskView}:${filterDef}:${debouncedSearch}:0`)
+      cacheDelete(`tasks:assign:${branchId}:${taskView}:${filterDef}:${filterListId}:${debouncedSearch}:0`)
       cacheDelete(`dashboard:${branchId}`)
     }
     setPageOffset(0)
     await load(false, 0)
   }
 
-  const hasFilters = search || filterDef
+  const hasFilters = search || filterDef || filterListId
   function clearFilters() {
     setSearch('')
+    setDebouncedSearch('')
     setFilterDef('')
+    setFilterListId('')
   }
 
   return (
@@ -355,13 +368,11 @@ export default function TasksPage() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <input
-          type="search"
-          placeholder={DEBTOR_SEARCH_PLACEHOLDER}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className={SEL}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <BranchListFilterSelect
+          value={filterListId}
+          onChange={setFilterListId}
+          lists={branchLists}
         />
         <PremiumSelect
           value={filterDef}
@@ -371,8 +382,16 @@ export default function TasksPage() {
             ...taskDefs.map(d => ({ value: d.id, label: d.label })),
           ]}
           placeholder="كل أنواع المهام"
+          fieldLabel="نوع المهمة"
           headerTitle="تصفية حسب نوع المهمة"
           searchPlaceholder="بحث..."
+        />
+        <input
+          type="search"
+          placeholder={DEBTOR_SEARCH_PLACEHOLDER}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className={SEL}
         />
       </div>
 

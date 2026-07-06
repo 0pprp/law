@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { isGeneralLawyerType } from '@/lib/lawyer-type'
 
 /** Same query base as /admin/lawyers (users page): profiles in branch, no role filter in SQL. */
 export interface BranchProfileRow {
@@ -6,9 +7,17 @@ export interface BranchProfileRow {
   full_name: string
   role: string | null
   branch_id: string | null
+  lawyer_type?: string | null
   is_active?: boolean | null
   active?: boolean | null
   status?: string | null
+}
+
+export interface LawyerOption {
+  id: string
+  full_name: string
+  lawyer_type?: string | null
+  is_general?: boolean
 }
 
 const LAWYER_ROLES = new Set(['lawyer', 'محامي', 'attorney'])
@@ -33,6 +42,14 @@ export function filterLawyerProfiles(profiles: BranchProfileRow[]): BranchProfil
   return profiles.filter(p => isLawyerRole(p.role) && isProfileActive(p))
 }
 
+export function filterNormalLawyerProfiles(profiles: BranchProfileRow[]): BranchProfileRow[] {
+  return filterLawyerProfiles(profiles).filter(p => !isGeneralLawyerType(p.lawyer_type))
+}
+
+export function filterGeneralLawyerProfiles(profiles: BranchProfileRow[]): BranchProfileRow[] {
+  return filterLawyerProfiles(profiles).filter(p => isGeneralLawyerType(p.lawyer_type))
+}
+
 export async function fetchBranchProfiles(
   supabase: SupabaseClient,
   branchId: string | null,
@@ -41,13 +58,78 @@ export async function fetchBranchProfiles(
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, full_name, role, branch_id, is_active')
+    .select('id, full_name, role, branch_id, lawyer_type, is_active')
     .eq('branch_id', branchId)
     .order('full_name')
 
   return { profiles: (data ?? []) as BranchProfileRow[], error: error ?? null }
 }
 
-export function toLawyerOptions(profiles: BranchProfileRow[]): { id: string; full_name: string }[] {
-  return filterLawyerProfiles(profiles).map(({ id, full_name }) => ({ id, full_name }))
+export async function fetchGeneralLawyers(
+  supabase: SupabaseClient,
+): Promise<{ profiles: BranchProfileRow[]; error: unknown | null }> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, full_name, role, branch_id, lawyer_type, is_active')
+    .eq('role', 'lawyer')
+    .eq('lawyer_type', 'general')
+    .eq('is_active', true)
+    .order('full_name')
+
+  return { profiles: (data ?? []) as BranchProfileRow[], error: error ?? null }
+}
+
+/** For task assignment: branch normal lawyers + all general lawyers. */
+export async function fetchAssignmentLawyers(
+  supabase: SupabaseClient,
+  branchId: string | null,
+): Promise<{ lawyers: LawyerOption[]; error: unknown | null }> {
+  if (!branchId) return { lawyers: [], error: null }
+
+  const [branchRes, generalRes] = await Promise.all([
+    fetchBranchProfiles(supabase, branchId),
+    fetchGeneralLawyers(supabase),
+  ])
+
+  const error = branchRes.error ?? generalRes.error
+  if (error) return { lawyers: [], error }
+
+  const normal = filterNormalLawyerProfiles(branchRes.profiles)
+  const general = filterGeneralLawyerProfiles(generalRes.profiles)
+
+  const seen = new Set<string>()
+  const lawyers: LawyerOption[] = []
+
+  for (const p of normal) {
+    if (seen.has(p.id)) continue
+    seen.add(p.id)
+    lawyers.push({ id: p.id, full_name: p.full_name, lawyer_type: p.lawyer_type ?? 'normal' })
+  }
+
+  for (const p of general) {
+    if (seen.has(p.id)) continue
+    seen.add(p.id)
+    lawyers.push({
+      id: p.id,
+      full_name: `${p.full_name} (محامي عام)`,
+      lawyer_type: 'general',
+      is_general: true,
+    })
+  }
+
+  lawyers.sort((a, b) => a.full_name.localeCompare(b.full_name, 'ar'))
+  return { lawyers, error: null }
+}
+
+export function toLawyerOptions(profiles: BranchProfileRow[]): LawyerOption[] {
+  return filterLawyerProfiles(profiles).map(({ id, full_name, lawyer_type }) => ({
+    id,
+    full_name: isGeneralLawyerType(lawyer_type) ? `${full_name} (محامي عام)` : full_name,
+    lawyer_type: lawyer_type ?? 'normal',
+    is_general: isGeneralLawyerType(lawyer_type),
+  }))
+}
+
+export function lawyerOptionLabel(option: LawyerOption): string {
+  return option.full_name
 }

@@ -15,12 +15,19 @@ import { fmtMoney, fmtDate } from '@/lib/utils'
 import { debtorSearchOrFilter, DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
 import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL } from '@/lib/ui-labels'
 import DebtorImportModal from '@/components/DebtorImportModal'
+import { BranchListFilterSelect } from '@/components/BranchListSelect'
+import { useBranchLists } from '@/hooks/use-branch-lists'
 import { useAdminRole } from '@/context/admin-role'
 import { canAddDebtor, canDelete, canEditRecords, canImportDebtors, isLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
 
 const PAGE_SIZE = 50
-const COLS = 'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status'
+const COLS = 'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, branch_list_id'
+const SELECT_COLS = `${COLS}, branch_list:branch_lists(name)`
+
+function debtorListName(debtor: { branch_list?: { name?: string } | null }): string {
+  return debtor.branch_list?.name?.trim() || '—'
+}
 
 function SearchIcon() {
   return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
@@ -29,7 +36,7 @@ function SearchIcon() {
 function SkeletonRow() {
   return (
     <TR>
-      {[1,2,3,4,5,6,7,8].map(i => (
+      {[1,2,3,4,5,6,7,8,9].map(i => (
         <TD key={i}><div className="h-4 bg-[rgba(118,118,118,0.1)] rounded animate-pulse" style={{ width: `${50 + (i * 13) % 40}%` }} /></TD>
       ))}
     </TR>
@@ -56,23 +63,31 @@ export default function DebtorsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+  const [filterListId, setFilterListId] = useState('')
   const [importOpen, setImportOpen] = useState(false)
+  const { lists: branchLists } = useBranchLists(branchId)
+
+  useEffect(() => {
+    setFilterListId('')
+    setSearch('')
+  }, [branchId])
   const [showAllDebtors, setShowAllDebtors] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Server-side fetch with optional search
-  const fetchDebtors = useCallback(async (searchTerm: string, offset = 0, append = false) => {
+  const fetchDebtors = useCallback(async (searchTerm: string, listId: string, offset = 0, append = false) => {
     if (offset === 0 && !append) setLoading(true)
     else setLoadingMore(true)
 
     const supabase = createClient()
     let q = supabase
       .from('debtors')
-      .select(COLS, { count: 'exact' })
+      .select(SELECT_COLS, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1)
 
     if (branchId) q = (q as any).eq('branch_id', branchId)
+    if (listId) q = (q as any).eq('branch_list_id', listId)
 
     if (searchTerm.trim()) {
       const s = searchTerm.trim()
@@ -91,23 +106,21 @@ export default function DebtorsPage() {
     setLoadingMore(false)
   }, [branchId])
 
-  // Initial load + branch change
   useEffect(() => {
-    fetchDebtors('')
-  }, [fetchDebtors])
+    fetchDebtors(search, filterListId)
+  }, [fetchDebtors, filterListId])
 
-  // Debounced search — 300ms
   function handleSearch(val: string) {
     setSearch(val)
     setShowAllDebtors(false)
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      fetchDebtors(val)
+      fetchDebtors(val, filterListId)
     }, 300)
   }
 
   function loadMore() {
-    fetchDebtors(search, debtors.length, true)
+    fetchDebtors(search, filterListId, debtors.length, true)
   }
 
   async function deleteDebtor(id: string, name: string) {
@@ -120,7 +133,7 @@ export default function DebtorsPage() {
     if (dbErr) { setError(`فشل الحذف: ${dbErr.message}`); setDeletingId(null); return }
     await logActivity({ action: 'delete_debtor', entity_type: 'debtor', entity_id: id, description: `حذف مدين: ${name}` }, supabase)
     setDeletingId(null)
-    fetchDebtors(search)
+    fetchDebtors(search, filterListId)
   }
 
   const hasMore = debtors.length < total
@@ -150,27 +163,36 @@ export default function DebtorsPage() {
 
       {/* Search bar */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
-        <div className="relative max-w-sm">
-          <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-[#767676]">
-            <SearchIcon />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="relative">
+            <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-[#767676]">
+              <SearchIcon />
+            </div>
+            <input
+              type="text"
+              value={search}
+              onChange={e => handleSearch(e.target.value)}
+              placeholder={DEBTOR_SEARCH_PLACEHOLDER}
+              className={INP}
+            />
+            {search && (
+              <button onClick={() => handleSearch('')}
+                className="absolute inset-y-0 left-3 text-[#767676] hover:text-[#231F20] text-lg leading-none">
+                ×
+              </button>
+            )}
           </div>
-          <input
-            type="text"
-            value={search}
-            onChange={e => handleSearch(e.target.value)}
-            placeholder={DEBTOR_SEARCH_PLACEHOLDER}
-            className={INP}
+          <BranchListFilterSelect
+            value={filterListId}
+            onChange={setFilterListId}
+            lists={branchLists}
           />
-          {search && (
-            <button onClick={() => handleSearch('')}
-              className="absolute inset-y-0 left-3 text-[#767676] hover:text-[#231F20] text-lg leading-none">
-              ×
-            </button>
-          )}
         </div>
-        {search && !loading && (
+        {(search || filterListId) && !loading && (
           <p className="text-xs text-[#767676] mt-2">
-            {total === 0 ? 'لا نتائج' : `${total} نتيجة`} للبحث عن "{search}"
+            {total === 0 ? 'لا نتائج' : `${total} نتيجة`}
+            {search ? ` للبحث عن "${search}"` : ''}
+            {filterListId ? ' ضمن القائمة المحددة' : ''}
           </p>
         )}
       </div>
@@ -187,7 +209,7 @@ export default function DebtorsPage() {
               <Table>
                 <THead>
                   <tr>
-                    <TH>الاسم</TH><TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
+                    <TH>الاسم</TH><TH>القائمة</TH><TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
                     <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
                   </tr>
                 </THead>
@@ -220,6 +242,7 @@ export default function DebtorsPage() {
                 <THead>
                   <tr>
                     <TH>الاسم</TH>
+                    <TH>القائمة</TH>
                     <TH>رقم الهوية</TH>
                     <TH>{RECEIPT_NUMBER_LABEL}</TH>
                     <TH>{RECEIPT_TYPE_LABEL}</TH>
@@ -242,6 +265,7 @@ export default function DebtorsPage() {
                           )}
                         </div>
                       </TD>
+                      <TD><span className="text-xs text-[#767676]">{debtorListName(debtor)}</span></TD>
                       <TD><span className="font-mono text-xs" dir="ltr">{debtor.id_number ?? '—'}</span></TD>
                       <TD><span className="font-mono text-xs" dir="ltr">{debtor.receipt_number ?? '—'}</span></TD>
                       <TD>
@@ -287,6 +311,7 @@ export default function DebtorsPage() {
                     <Badge variant="default" className="shrink-0">{RECEIPT_TYPE_LABELS[debtor.receipt_type as keyof typeof RECEIPT_TYPE_LABELS]}</Badge>
                   </div>
                   {debtor.id_number && <p className="text-xs text-[#767676] font-mono mb-1" dir="ltr">{debtor.id_number}</p>}
+                  <p className="text-xs text-[#767676] mb-1">القائمة: {debtorListName(debtor)}</p>
                   {debtor.receipt_number && <p className="text-xs text-[#767676] font-mono mb-2" dir="ltr">{RECEIPT_NUMBER_LABEL}: {debtor.receipt_number}</p>}
                   <div className="grid grid-cols-2 gap-2 text-sm mb-3">
                     <div>
@@ -347,7 +372,7 @@ export default function DebtorsPage() {
       <DebtorImportModal
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onComplete={() => fetchDebtors(search)}
+        onComplete={() => fetchDebtors(search, filterListId)}
       />
     </div>
   )

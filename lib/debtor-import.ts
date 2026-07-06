@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ReceiptType } from '@/lib/types'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
+import { findOrCreateBranchList } from '@/lib/branch-lists'
 
 export const IMPORT_EXCEL_HEADERS = [
   'الاسم الكامل',
@@ -17,6 +18,7 @@ export const IMPORT_EXCEL_HEADERS = [
   'ملاحظات',
   'المهمة المطلوبة',
   'اسم ملف PDF',
+  'القائمة',
 ] as const
 
 export const IMPORT_EXPENSES_GROUP_LABEL = 'مجموع صرفيات سابق من Excel'
@@ -39,6 +41,7 @@ export interface ParsedImportRow {
   notes: string
   task_label: string
   pdf_filename: string
+  list_name_raw: string
 }
 
 export interface ImportPreviewRow extends ParsedImportRow {
@@ -57,6 +60,7 @@ export interface ImportPreviewRow extends ParsedImportRow {
   penalty_amount: number
   task_definition_id: string | null
   pdfBlob: Blob | null
+  list_name: string | null
 }
 
 export interface TaskDefRef {
@@ -204,6 +208,7 @@ export async function parseImportExcel(file: File): Promise<ParsedImportRow[]> {
       notes: cellStr(row['ملاحظات']),
       task_label,
       pdf_filename: cellStr(row['اسم ملف PDF']),
+      list_name_raw: cellStr(row['القائمة']),
     })
   })
 
@@ -374,6 +379,7 @@ export function validateImportRows(
       penalty_amount,
       task_definition_id,
       pdfBlob,
+      list_name: row.list_name_raw.trim() || null,
     }
   })
 }
@@ -484,7 +490,12 @@ export async function executeDebtorImport(
 
   for (let offset = 0; offset < validRows.length; offset += BATCH_SIZE) {
     const batch = validRows.slice(offset, offset + BATCH_SIZE)
-    const debtorPayloads = batch.map(row => ({
+    const listRefs = await Promise.all(
+      batch.map(row =>
+        row.list_name ? findOrCreateBranchList(supabase, ctx.branchId, row.list_name) : Promise.resolve(null),
+      ),
+    )
+    const debtorPayloads = batch.map((row, i) => ({
       full_name: row.full_name,
       phone: row.phone,
       id_number: row.id_number.trim() || null,
@@ -501,6 +512,7 @@ export async function executeDebtorImport(
       notes: row.notes || null,
       created_by: ctx.userId,
       branch_id: ctx.branchId,
+      branch_list_id: listRefs[i]?.id ?? null,
     }))
 
     const { data: debtors, error: dErr } = await supabase

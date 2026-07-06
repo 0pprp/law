@@ -99,6 +99,8 @@ interface Props {
   total: number
   onLoadMore: () => void
   emptyMessage?: string
+  showBranch?: boolean
+  lawyerId?: string | null
 }
 
 export default function LawyerTasksGrid({
@@ -109,6 +111,8 @@ export default function LawyerTasksGrid({
   total,
   onLoadMore,
   emptyMessage = 'لا توجد مهام',
+  showBranch = false,
+  lawyerId = null,
 }: Props) {
   const router = useRouter()
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -367,11 +371,12 @@ export default function LawyerTasksGrid({
                             variant={isLawyerAchievedTask(task.task_status) ? 'success' : (STATUS_BADGE[task.task_status as TaskStatus] ?? 'default')}
                             className="shrink-0"
                           >
-                            {lawyerTaskStatusLabel(task.task_status)}
+                            {lawyerTaskStatusLabel(task.task_status, task, lawyerId)}
                           </Badge>
                         </div>
                       <p className="text-xs text-slate-400 mb-2.5 font-semibold">{resolveTaskLabel(task.task_type, task.task_label)}</p>
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400 mb-auto">
+                        {showBranch && task.branch_name && <span>🏢 {task.branch_name}</span>}
                         {task.debtors?.governorate && <span>📍 {task.debtors.governorate}</span>}
                         {task.court_name && <span>🏛 {task.court_name}</span>}
                         {task.due_date && (

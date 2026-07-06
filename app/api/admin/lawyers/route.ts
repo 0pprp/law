@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   const {
     temporary_password, full_name, phone, is_active,
     governorate, identity_number, identity_category,
-    username, branch_id: bodyBranchId, role: bodyRole,
+    username, branch_id: bodyBranchId, role: bodyRole, lawyer_type: bodyLawyerType,
   } = await request.json()
 
   const { branchId: cookieBranchId } = await getBranchContext()
@@ -97,6 +97,9 @@ export async function POST(request: NextRequest) {
     identity_type: null,
     identity_number: userRole === 'lawyer' ? String(identity_number).trim() : null,
     identity_category: userRole === 'lawyer' ? String(identity_category).trim() : null,
+    lawyer_type: userRole === 'lawyer'
+      ? (bodyLawyerType === 'general' ? 'general' : 'normal')
+      : 'normal',
     branch_id: branchId,
   }
 

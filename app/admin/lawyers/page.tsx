@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getBranchContext } from '@/lib/branch-context'
-import { USER_ROLE_LABELS } from '@/lib/types'
-import type { UserRole } from '@/lib/types'
+import { USER_ROLE_LABELS, LAWYER_TYPE_LABELS } from '@/lib/types'
+import type { UserRole, LawyerType } from '@/lib/types'
 import Link from 'next/link'
 import LawyerActions from '@/components/LawyerActions'
 import { Badge } from '@/components/ui/badge'
@@ -84,6 +84,7 @@ export default async function LawyersPage() {
                     <TH>الاسم</TH>
                     <TH>اسم المستخدم</TH>
                     <TH>الدور</TH>
+                    <TH>نوع المحامي</TH>
                     {showAllBranches && <TH>الفرع</TH>}
                     <TH>الهاتف</TH>
                     <TH>الحالة</TH>
@@ -120,6 +121,15 @@ export default async function LawyersPage() {
                         <Badge variant={ROLE_BADGE[user.role as UserRole] ?? 'default'}>
                           {USER_ROLE_LABELS[user.role as UserRole] ?? user.role}
                         </Badge>
+                      </TD>
+                      <TD>
+                        {user.role === 'lawyer' ? (
+                          <Badge variant={user.lawyer_type === 'general' ? 'purple' : 'info'}>
+                            {LAWYER_TYPE_LABELS[(user.lawyer_type as LawyerType) ?? 'normal']}
+                          </Badge>
+                        ) : (
+                          <span className="text-[rgba(118,118,118,0.3)] text-xs">—</span>
+                        )}
                       </TD>
                       {showAllBranches && (
                         <TD><span className="text-xs text-[#767676]">{branchNameMap.get(user.branch_id) ?? '—'}</span></TD>
@@ -169,8 +179,13 @@ export default async function LawyersPage() {
                     </div>
                     <Badge variant={user.is_active ? 'success' : 'danger'}>{user.is_active ? 'نشط' : 'موقوف'}</Badge>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant={ROLE_BADGE[user.role as UserRole] ?? 'default'}>{USER_ROLE_LABELS[user.role as UserRole] ?? user.role}</Badge>
+                    {user.role === 'lawyer' && (
+                      <Badge variant={user.lawyer_type === 'general' ? 'purple' : 'info'}>
+                        {LAWYER_TYPE_LABELS[(user.lawyer_type as LawyerType) ?? 'normal']}
+                      </Badge>
+                    )}
                     {showAllBranches && user.branch_id && (
                       <span className="text-xs text-[#767676]">{branchNameMap.get(user.branch_id) ?? '—'}</span>
                     )}

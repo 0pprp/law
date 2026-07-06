@@ -18,9 +18,11 @@ import {
   buildAchievementByLawyer,
   type ReportSnapshot,
 } from '@/lib/reports-data'
+import { BranchListFilterSelect } from '@/components/BranchListSelect'
+import { useBranchLists } from '@/hooks/use-branch-lists'
 
-interface Filters { dateFrom: string; dateTo: string; debtorId: string; lawyerId: string }
-const EMPTY: Filters = { dateFrom: '', dateTo: '', debtorId: '', lawyerId: '' }
+interface Filters { dateFrom: string; dateTo: string; debtorId: string; lawyerId: string; branchListId: string }
+const EMPTY: Filters = { dateFrom: '', dateTo: '', debtorId: '', lawyerId: '', branchListId: '' }
 
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
@@ -31,6 +33,7 @@ function IconTask() { return <svg className="w-6 h-6 text-white" fill="none" str
 
 export default function ReportsPage() {
   const branchId = useBranchId()
+  const { lists: branchLists } = useBranchLists(branchId)
   const [snapshot, setSnapshot] = useState<ReportSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState<Filters>(EMPTY)
@@ -119,7 +122,7 @@ export default function ReportsPage() {
 
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-5">
         <p className="text-xs font-bold text-[#767676] uppercase tracking-wider mb-3">معايير التقرير</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
           <div className="md:col-span-1">
             <DateRangePicker
               dateFrom={draft.dateFrom}
@@ -153,6 +156,13 @@ export default function ReportsPage() {
               headerTitle="تصفية حسب المحامي"
               searchPlaceholder="بحث بالاسم..."
               searchable
+            />
+          </div>
+          <div>
+            <BranchListFilterSelect
+              value={draft.branchListId}
+              onChange={v => d('branchListId', v)}
+              lists={branchLists}
             />
           </div>
         </div>

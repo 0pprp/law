@@ -15,6 +15,8 @@ import { isMainBranchName } from '@/lib/branch-constants'
 import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { LAWYER_TYPE_OPTIONS } from '@/lib/lawyer-type'
+import { uploadLawyerAttachment } from '@/lib/lawyer-attachments'
 
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
@@ -63,6 +65,7 @@ export default function NewLawyerPage() {
   const [form, setForm] = useState({
     full_name: '', username: '', temporary_password: '',
     phone: '', identity_number: '', identity_category: '', is_active: true,
+    lawyer_type: 'normal' as 'normal' | 'general',
   })
 
   const isLawyer = userRole === 'lawyer'
@@ -116,6 +119,7 @@ export default function NewLawyerPage() {
         is_active: form.is_active,
         identity_number: isLawyer ? form.identity_number.trim() : undefined,
         identity_category: isLawyer ? form.identity_category.trim() : undefined,
+        lawyer_type: isLawyer ? form.lawyer_type : undefined,
         branch_id: branchId,
         role: userRole,
       }),
@@ -124,15 +128,15 @@ export default function NewLawyerPage() {
     if (!res.ok) { setError(data.error ?? 'حدث خطأ غير متوقع'); setSaving(false); return }
     const userId: string = data.lawyerId
     if (isLawyer && pendingFiles.length > 0) {
-      const supabase = createClient()
+      const uploadFailures: string[] = []
       for (const { file, description } of pendingFiles) {
-        const ext = file.name.split('.').pop() ?? 'bin'
-        const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-        const filePath = `${userId}/${safeName}`
-        const { error: uploadErr } = await supabase.storage.from('lawyer-files').upload(filePath, file, { contentType: file.type })
-        if (uploadErr) { setError(`تم إنشاء الحساب لكن فشل رفع "${file.name}": ${uploadErr.message}`); setSaving(false); return }
-        await supabase.from('lawyer_attachments').insert({ lawyer_id: userId, file_name: file.name, file_path: filePath, file_size: file.size, mime_type: file.type, description: description || null })
-        await logActivity({ action: 'upload_lawyer_file', entity_type: 'lawyer', entity_id: userId, description: `رفع مستمسك محامي: ${file.name}` }, supabase)
+        const result = await uploadLawyerAttachment(userId, file, description)
+        if (!result.ok) uploadFailures.push(`${file.name}: ${result.error}`)
+      }
+      if (uploadFailures.length > 0) {
+        setError(`تم إنشاء الحساب لكن فشل رفع بعض المستمسكات:\n${uploadFailures.join('\n')}`)
+        setSaving(false)
+        return
       }
     }
     await logActivity({
@@ -220,6 +224,13 @@ export default function NewLawyerPage() {
             <Card>
               <CardHeader title="بيانات الهوية" />
               <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Field label="نوع المحامي" required>
+                  <PremiumSelect
+                    value={form.lawyer_type}
+                    onChange={v => set('lawyer_type', v)}
+                    options={LAWYER_TYPE_OPTIONS}
+                  />
+                </Field>
                 <Field label="رقم الهوية" required>
                   <input type="text" value={form.identity_number} onChange={e => set('identity_number', e.target.value)} required className={INP} dir="ltr" placeholder="رقم الهوية أو الإجازة" />
                 </Field>

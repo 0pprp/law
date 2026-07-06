@@ -12,6 +12,8 @@ import { assignTasksViaApi } from '@/lib/task-operations-api'
 import { fetchBranchLawyers, taskLawyerId } from '@/lib/task-assignment'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { BranchListFilterSelect } from '@/components/BranchListSelect'
+import { useBranchLists } from '@/hooks/use-branch-lists'
 import { useAdminRole } from '@/context/admin-role'
 import { canAssignTasks, PERMISSION_DENIED_MSG } from '@/lib/permissions'
 
@@ -26,6 +28,7 @@ interface StageDebtor {
   receiptNumber: string | null
   remaining: number
   taskCreatedAt: string | null
+  branchListId: string | null
 }
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
@@ -48,12 +51,14 @@ interface Lawyer { id: string; full_name: string }
 export default function StageDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: stageId } = use(params)
   const branchId = useBranchId()
+  const { lists: branchLists } = useBranchLists(branchId)
   const role = useAdminRole()
   const canAssign = canAssignTasks(role)
   const [stageLabel, setStageLabel] = useState('')
   const [debtors, setDebtors] = useState<StageDebtor[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [filterListId, setFilterListId] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [matchingIds, setMatchingIds] = useState<string[] | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -76,7 +81,7 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
     let q = supabase
       .from('debtors')
       .select(`
-        id, full_name, phone, receipt_type, receipt_number,
+        id, full_name, phone, receipt_type, receipt_number, branch_list_id,
         remaining_amount, case_status, current_task_id,
         current_task:tasks!current_task_id(
           id, task_status, assigned_to, created_at, task_definition_id, branch_id,
@@ -109,6 +114,7 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
         receiptNumber: d.receipt_number ?? null,
         remaining: Number(d.remaining_amount ?? 0),
         taskCreatedAt: d.current_task.created_at ?? null,
+        branchListId: d.branch_list_id ?? null,
       }))
 
     setDebtors(mapped)
@@ -141,9 +147,11 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
     return () => { cancelled = true }
   }, [debouncedSearch, branchId])
 
-  const filtered = matchingIds !== null
-    ? debtors.filter(d => matchingIds.includes(d.debtorId))
-    : debtors
+  const filtered = debtors.filter(d => {
+    if (matchingIds !== null && !matchingIds.includes(d.debtorId)) return false
+    if (filterListId && d.branchListId !== filterListId) return false
+    return true
+  })
 
   const allSelected = filtered.length > 0 && filtered.every(d => selected.has(d.taskId))
 
@@ -189,13 +197,20 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
         ]}
       />
 
-      <div className="bg-white rounded-xl border px-4 py-2.5 flex items-center gap-3">
-        <svg className="w-4 h-4 text-[#767676] shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input type="search" value={search} onChange={e => setSearch(e.target.value)}
-          placeholder={DEBTOR_SEARCH_PLACEHOLDER}
-          className="flex-1 text-sm bg-transparent focus:outline-none" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="bg-white rounded-xl border px-4 py-2.5 flex items-center gap-3">
+          <svg className="w-4 h-4 text-[#767676] shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input type="search" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder={DEBTOR_SEARCH_PLACEHOLDER}
+            className="flex-1 text-sm bg-transparent focus:outline-none" />
+        </div>
+        <BranchListFilterSelect
+          value={filterListId}
+          onChange={setFilterListId}
+          lists={branchLists}
+        />
       </div>
 
       {/* Bulk assign bar */}

@@ -14,7 +14,9 @@ import { fmtDate } from '@/lib/utils'
 import { useBranchId, useBranch } from '@/context/branch'
 import { useAdminRole } from '@/context/admin-role'
 import { canEditLawyerProfile, canManageUsers, isLegalManager } from '@/lib/permissions'
+import { LAWYER_TYPE_OPTIONS } from '@/lib/lawyer-type'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { uploadLawyerAttachment } from '@/lib/lawyer-attachments'
 
 const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer', 'viewer']
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
@@ -66,6 +68,7 @@ export default function EditLawyerPage() {
     username: '', full_name: '', phone: '', governorate: '',
     identity_type: '', identity_number: '', identity_category: '',
     role: 'lawyer' as UserRole, is_active: true,
+    lawyer_type: 'normal' as 'normal' | 'general',
   })
   const [profileBranchId, setProfileBranchId] = useState<string | null>(null)
 
@@ -78,7 +81,7 @@ export default function EditLawyerPage() {
       ])
       if (data) {
         setProfileBranchId(data.branch_id ?? null)
-        setForm({ username: data.username ?? '', full_name: data.full_name ?? '', phone: data.phone ?? '', governorate: data.governorate ?? '', identity_type: data.identity_type ?? '', identity_number: data.identity_number ?? '', identity_category: data.identity_category ?? '', role: data.role ?? 'lawyer', is_active: data.is_active ?? true })
+        setForm({ username: data.username ?? '', full_name: data.full_name ?? '', phone: data.phone ?? '', governorate: data.governorate ?? '', identity_type: data.identity_type ?? '', identity_number: data.identity_number ?? '', identity_category: data.identity_category ?? '', role: data.role ?? 'lawyer', is_active: data.is_active ?? true, lawyer_type: data.lawyer_type === 'general' ? 'general' : 'normal' })
         setTargetRole((data.role ?? 'lawyer') as UserRole)
       }
       setAttachments(files ?? [])
@@ -111,6 +114,7 @@ export default function EditLawyerPage() {
       identity_number: form.identity_number || null, identity_category: form.identity_category || null,
       is_active: form.is_active,
     }
+    if (form.role === 'lawyer') updatePayload.lawyer_type = form.lawyer_type
     if (!legalOfficerMode) updatePayload.role = form.role
     if (!profileBranchId && branchId) updatePayload.branch_id = branchId
 
@@ -128,15 +132,16 @@ export default function EditLawyerPage() {
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true); setError('')
-    const supabase = createClient()
-    const ext = file.name.split('.').pop() ?? 'bin'
-    const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-    const filePath = `${id}/${safeName}`
-    const { error: uploadErr } = await supabase.storage.from('lawyer-files').upload(filePath, file, { contentType: file.type })
-    if (uploadErr) { setError(`فشل رفع الملف: ${uploadErr.message}`); setUploading(false); if (fileInputRef.current) fileInputRef.current.value = ''; return }
-    const { data: newRow } = await supabase.from('lawyer_attachments').insert({ lawyer_id: id, file_name: file.name, file_path: filePath, file_size: file.size, mime_type: file.type, description: uploadDesc || null }).select().single()
-    await logActivity({ action: 'upload_lawyer_file', entity_type: 'lawyer', entity_id: id, description: `رفع مستمسك محامي: ${file.name}` }, supabase)
-    if (newRow) setAttachments(prev => [newRow as Attachment, ...prev])
+    const result = await uploadLawyerAttachment(id, file, uploadDesc)
+    if (!result.ok) {
+      setError(`فشل رفع الملف: ${result.error}`)
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+    if (result.attachment) {
+      setAttachments(prev => [result.attachment as unknown as Attachment, ...prev])
+    }
     setUploadDesc(''); setUploading(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -241,6 +246,15 @@ export default function EditLawyerPage() {
             <Field label="فئة الهوية">
               <input type="text" value={form.identity_category} onChange={e => set('identity_category', e.target.value)} className={INP} placeholder="محامي مرافع / مستشار..." />
             </Field>
+            {form.role === 'lawyer' && (
+              <Field label="نوع المحامي" required>
+                <PremiumSelect
+                  value={form.lawyer_type}
+                  onChange={v => set('lawyer_type', v)}
+                  options={LAWYER_TYPE_OPTIONS}
+                />
+              </Field>
+            )}
           </div>
         </Card>
         </fieldset>

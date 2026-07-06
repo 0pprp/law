@@ -17,6 +17,9 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { cn } from '@/lib/utils'
 import { useAdminRole } from '@/context/admin-role'
+import BranchListSelect from '@/components/BranchListSelect'
+import { fetchBranchLists } from '@/lib/branch-lists'
+import type { BranchList } from '@/lib/branch-lists'
 import { canEditRecords } from '@/lib/permissions'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
@@ -36,12 +39,15 @@ export default function EditDebtorPage() {
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [createdAt, setCreatedAt] = useState<string | null>(null)
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null)
+  const [debtorBranchId, setDebtorBranchId] = useState<string | null>(null)
+  const [branchLists, setBranchLists] = useState<BranchList[]>([])
 
   const [form, setForm] = useState({
     full_name: '', phone: '', address: '', id_number: '',
     receipt_type: 'check' as ReceiptType,
     receipt_number: '', receipt_amount: '', remaining_amount: '', lawyer_fees: '',
     penalty_amount: '', has_contract: false, receipt_signed_legal_costs: false, notes: '',
+    branch_list_id: '',
   })
 
   useEffect(() => {
@@ -53,6 +59,7 @@ export default function EditDebtorPage() {
       ])
       if (data) {
         setCreatedAt(data.created_at ?? null)
+        setDebtorBranchId(data.branch_id ?? null)
         const hasPenalty = parseMoneyInput(data.penalty_amount) > 0
         setForm({
           full_name: data.full_name ?? '',
@@ -68,7 +75,11 @@ export default function EditDebtorPage() {
           has_contract: hasPenalty,
           receipt_signed_legal_costs: Boolean(data.receipt_signed_legal_costs),
           notes: data.notes ?? '',
+          branch_list_id: data.branch_list_id ?? '',
         })
+        if (data.branch_id) {
+          fetchBranchLists(supabase, data.branch_id).then(setBranchLists)
+        }
       }
       setAttachments(files ?? [])
       setLoading(false)
@@ -112,6 +123,7 @@ export default function EditDebtorPage() {
       penalty_amount: form.has_contract ? parseMoneyInput(form.penalty_amount) : 0,
       receipt_signed_legal_costs: form.receipt_signed_legal_costs,
       notes: form.notes || null,
+      branch_list_id: form.branch_list_id || null,
     }).eq('id', id)
     if (dbError) { setError(dbError.message); setSaving(false); return }
     await logActivity({ action: 'update_debtor', entity_type: 'debtor', entity_id: id, description: `تعديل بيانات المدين: ${form.full_name}` }, supabase)
@@ -164,6 +176,14 @@ export default function EditDebtorPage() {
               </FormField>
               <FormField label="العنوان" className="md:col-span-2">
                 <input type="text" value={form.address} onChange={e => set('address', e.target.value)} className={formInputClass} />
+              </FormField>
+              <FormField label="القائمة" className="md:col-span-2">
+                <BranchListSelect
+                  value={form.branch_list_id}
+                  onChange={v => set('branch_list_id', v)}
+                  lists={branchLists}
+                  disabled={!debtorBranchId}
+                />
               </FormField>
             </div>
           </FormFlowStep>

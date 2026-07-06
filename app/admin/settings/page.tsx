@@ -10,13 +10,14 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useAdminRole } from '@/context/admin-role'
 import { canAddBranchReferenceData, canModifyBranchReferenceData } from '@/lib/permissions'
+import BranchListsTab from '@/components/settings/BranchListsTab'
 import { formatMoney } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 
 // ── Shared styles ──────────────────────────────────────────────
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/20 focus:border-[#2C8780] transition-all'
 const SEL = INP + ' cursor-pointer'
-type Tab = 'courts' | 'exec-depts' | 'task-defs' | 'expense-types'
+type Tab = 'courts' | 'exec-depts' | 'task-defs' | 'expense-types' | 'branch-lists'
 
 // ── Shared Modal Wrapper ───────────────────────────────────────
 function Modal({ title, onClose, children, footer }: {
@@ -1007,6 +1008,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'exec-depts',    label: 'دوائر التنفيذ' },
   { id: 'task-defs',     label: 'أنواع المهام' },
   { id: 'expense-types', label: 'أنواع الصرفيات' },
+  { id: 'branch-lists',  label: 'قوائم الفرع' },
 ]
 
 export default function SettingsPage() {
@@ -1049,6 +1051,7 @@ export default function SettingsPage() {
       {tab === 'exec-depts'    && <ExecDeptsTab branches={branches} />}
       {tab === 'task-defs'     && <TaskDefsTab />}
       {tab === 'expense-types' && <ExpenseTypesTab />}
+      {tab === 'branch-lists'  && <BranchListsTab />}
     </div>
   )
 }

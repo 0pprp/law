@@ -42,7 +42,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const allowPayments = canAddPayments(userRole)
 
   const [{ data: debtor }, { data: payments }, { data: expenses }, { data: files }, { data: taskRows }] = await Promise.all([
-    supabase.from('debtors').select('*').eq('id', id).single(),
+    supabase.from('debtors').select('*, branch_list:branch_lists(name)').eq('id', id).single(),
     supabase.from('debtor_payments').select('*').eq('debtor_id', id).order('payment_date', { ascending: false }),
     supabase.from('expenses').select('*, task:tasks!expenses_task_id_fkey(task_type)').eq('debtor_id', id).order('expense_date', { ascending: false }),
     supabase.from('debtor_attachments').select('id, file_name, file_size, mime_type, created_at').eq('debtor_id', id).order('created_at', { ascending: false }),
@@ -99,6 +99,10 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
             <InfoRow label="الصرفيات" value={fmtMoney(totalExpensesSum)} />
             <InfoRow label="أتعاب المحامين" value={fmtMoney(debtor.lawyer_fees)} />
             <InfoRow label="أتعاب مسؤول القانونية" value={fmtMoney(debtor.legal_manager_fees ?? 0)} />
+            <InfoRow
+              label="القائمة"
+              value={(debtor as { branch_list?: { name?: string } | null }).branch_list?.name ?? '—'}
+            />
             {debtor.address && <InfoRow label="العنوان" value={debtor.address} />}
             {debtor.export_date && <InfoRow label={LEGAL_ISSUE_DATE_LABEL} value={fmtDate(debtor.export_date)} mono />}
             <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} mono />

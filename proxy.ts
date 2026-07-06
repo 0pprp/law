@@ -30,10 +30,14 @@ export default async function proxy(request: NextRequest) {
 
   const isLoginPage = pathname === '/login'
   const isPublicAuthApi = pathname.startsWith('/api/auth/')
+  const isApiRoute = pathname.startsWith('/api/')
   const isAdminRoute = pathname.startsWith('/admin')
   const isLawyerRoute = pathname.startsWith('/lawyer')
 
   if (!user && !isLoginPage && !isPublicAuthApi) {
+    if (isApiRoute) {
+      return NextResponse.json({ error: 'غير مصرح' }, { status: 401 })
+    }
     return NextResponse.redirect(new URL('/login', request.url))
   }
 

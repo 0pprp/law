@@ -8,7 +8,8 @@ import { Badge } from '@/components/ui/badge'
 import { fmtDate } from '@/lib/utils'
 import { logActivity } from '@/lib/activity-log'
 import { useBranchId } from '@/context/branch'
-import { buildAssignPayload } from '@/lib/task-assignment'
+import { assignTasksViaApi } from '@/lib/task-operations-api'
+import { fetchAssignmentLawyers } from '@/lib/branch-profiles'
 import { ACTIVE_CASE_BLOCK_MSG, hasActiveCurrentTask } from '@/lib/debtor-current-task'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DatePicker } from '@/components/ui/date-picker'
@@ -236,28 +237,22 @@ function AssignModal({ taskId, taskLabel, onClose, onAssigned }: {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    const supabase = createClient()
-    let q = supabase.from('profiles').select('id, full_name, governorate')
-      .eq('role', 'lawyer').eq('is_active', true).order('full_name')
-    if (branchId) q = (q as any).eq('branch_id', branchId)
-    q.then(({ data }) => setLawyers(data ?? []))
+    if (!branchId) { setLawyers([]); return }
+    fetchAssignmentLawyers(createClient(), branchId).then(({ lawyers: list }) => setLawyers(list))
   }, [branchId])
 
   async function assign() {
     if (!lawyerId) { setError('اختر محامياً'); return }
     setSaving(true)
     setError('')
-    const supabase = createClient()
-    const { error: err } = await supabase.from('tasks').update(
-      buildAssignPayload(lawyerId) as any
-    ).eq('id', taskId)
-    if (err) { setError(err.message); setSaving(false); return }
+    const result = await assignTasksViaApi([taskId], lawyerId)
+    if (!result.ok) { setError(result.error ?? 'فشل التكليف'); setSaving(false); return }
     await logActivity({
       action: 'assign_task',
       entity_type: 'task',
       entity_id: taskId,
       description: `تكليف مهمة: ${taskLabel}`,
-    }, supabase)
+    }, createClient())
     onAssigned()
     onClose()
   }

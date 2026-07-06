@@ -1,4 +1,5 @@
 export type UserRole = 'admin' | 'employee' | 'accountant' | 'lawyer' | 'viewer'
+export type LawyerType = 'normal' | 'general'
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent'
 export type ReceiptStatus = 'pending' | 'approved' | 'rejected'
 export type WalletTransactionType = 'accountant_transfer' | 'approved_task_payment' | 'manual_adjustment' | 'fee_payout' | 'transfer_from_savings' | 'savings_withdrawal' | 'task_expense_deduction' | 'lawyer_expense_wallet_deduction' | 'legal_manager_task_bonus' | 'legal_manager_percentage_fee' | 'legal_manager_withdrawal' | 'legal_manager_manual_deposit' | 'legal_manager_manual_withdrawal'
@@ -75,6 +76,8 @@ export interface Profile {
   identity_type: string | null
   identity_number: string | null
   identity_category: string | null
+  lawyer_type?: LawyerType | null
+  branch_id?: string | null
   avatar_url: string | null
   is_active: boolean
   created_at: string
@@ -88,6 +91,8 @@ export interface Debtor {
   phone: string | null
   address: string | null
   employer: string | null
+  branch_id?: string | null
+  branch_list_id?: string | null
   receipt_type: ReceiptType
   receipt_number: string | null
   receipt_amount: number
@@ -156,6 +161,7 @@ export interface Task {
   completion_data: Record<string, unknown> | null
   given_up_at: string | null
   give_up_reason: string | null
+  assignment_rejected_by?: string | null
   accepted_at: string | null
   assignment_expires_at?: string | null
   acceptance_method?: string | null
@@ -172,6 +178,14 @@ export interface Branch {
   phone: string | null
   is_active: boolean
   created_at: string
+}
+
+export interface BranchList {
+  id: string
+  branch_id: string
+  name: string
+  created_at: string
+  updated_at: string
 }
 
 export interface TaskPaymentReceipt {
@@ -304,6 +318,11 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   accountant: 'محاسب',
   lawyer: 'محامي',
   viewer: 'مسؤول القانونية',
+}
+
+export const LAWYER_TYPE_LABELS: Record<LawyerType, string> = {
+  normal: 'محامي عادي',
+  general: 'محامي عام',
 }
 
 export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {

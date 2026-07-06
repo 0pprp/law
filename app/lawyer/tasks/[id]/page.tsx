@@ -52,6 +52,23 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
   const access = await checkLawyerTaskAccess(supabase, user.id, id)
   if (!access.ok) return <LawyerAccessDenied />
 
+  const { data: lawyerProfile } = await supabase
+    .from('profiles')
+    .select('lawyer_type')
+    .eq('id', user.id)
+    .single()
+
+  const isGeneral = lawyerProfile?.lawyer_type === 'general'
+  let branchName: string | null = null
+  if (access.task.branch_id) {
+    const { data: branchRow } = await supabase
+      .from('branches')
+      .select('name')
+      .eq('id', access.task.branch_id as string)
+      .maybeSingle()
+    branchName = branchRow?.name ?? null
+  }
+
   const task = access.task as Record<string, unknown> & {
     id: string
     debtor_id: string
@@ -66,6 +83,8 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     branch_id?: string | null
     case_id?: string | null
     assignment_expires_at?: string | null
+    assignment_rejected_by?: string | null
+    give_up_reason?: string | null
     task_definition_id?: string | null
     task_label?: string | null
   }
@@ -183,10 +202,13 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
             <div className="flex items-center gap-2 flex-wrap mb-0.5">
               <h1 className="font-bold text-slate-800 text-base leading-tight">{taskLabel}</h1>
               <Badge variant={isLawyerAchievedTask(status) ? 'success' : (STATUS_BADGE[status] ?? 'default')}>
-                {lawyerTaskStatusLabel(status)}
+                {lawyerTaskStatusLabel(status, task, user.id)}
               </Badge>
             </div>
             {d?.full_name && <p className="text-xs text-slate-500 truncate">{d.full_name}</p>}
+            {isGeneral && branchName && (
+              <p className="text-xs text-[#2C8780] font-semibold mt-0.5">الفرع: {branchName}</p>
+            )}
             {isOverdue && <p className="text-xs text-red-500 font-semibold mt-0.5">متأخرة عن الموعد</p>}
             {isLastDay && !isOverdue && <p className="text-xs text-amber-700 font-semibold mt-0.5">اليوم آخر يوم لإنجاز المهمة</p>}
           </div>

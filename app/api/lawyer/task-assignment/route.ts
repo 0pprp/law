@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { acceptTaskAssignment, rejectTaskAssignment } from '@/lib/task-assignment'
 import { formatErrorMessage } from '@/lib/format-error'
 
@@ -40,7 +41,8 @@ export async function POST(request: NextRequest) {
       if (!reason?.trim()) {
         return NextResponse.json({ error: 'سبب الرفض مطلوب' }, { status: 400 })
       }
-      const { error } = await rejectTaskAssignment(supabase, taskId, reason)
+      const admin = createAdminClient()
+      const { error } = await rejectTaskAssignment(admin, taskId, reason, user.id)
       if (error) return NextResponse.json({ error: formatErrorMessage(error) }, { status: 400 })
       return NextResponse.json({ success: true })
     }

@@ -17,6 +17,8 @@ import { cn } from '@/lib/utils'
 import { formatMoneyInput, parseMoneyInput } from '@/lib/money-input'
 import { canAddDebtor } from '@/lib/permissions'
 import { useAdminRole } from '@/context/admin-role'
+import BranchListSelect from '@/components/BranchListSelect'
+import { useBranchLists } from '@/hooks/use-branch-lists'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
 
@@ -45,6 +47,7 @@ export default function NewDebtorPage() {
   const readOnly = !canAddDebtor(role)
   const branchId = useBranchId()
   const { branchName } = useBranch()
+  const { lists: branchLists } = useBranchLists(branchId)
   const today = new Date().toISOString().split('T')[0]
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -52,6 +55,7 @@ export default function NewDebtorPage() {
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [taskDefs, setTaskDefs] = useState<TaskDef[]>([])
   const [selectedTaskDefId, setSelectedTaskDefId] = useState('')
+  const [branchListId, setBranchListId] = useState('')
 
   const [form, setForm] = useState({
     full_name: '',
@@ -180,6 +184,7 @@ export default function NewDebtorPage() {
       notes: form.notes.trim() || null,
       created_by: user.id,
       branch_id: branchId,
+      branch_list_id: branchListId || null,
     }).select('id').single()
 
     if (dbError || !newDebtor) {
@@ -343,6 +348,14 @@ export default function NewDebtorPage() {
               </FormField>
               <FormField label="العنوان التفصيلي" required error={fieldErrors.address}>
                 <input type="text" value={form.address} onChange={e => set('address', e.target.value)} className={inputClass('address')} placeholder="الحي، الشارع، رقم الدار" />
+              </FormField>
+              <FormField label="القائمة">
+                <BranchListSelect
+                  value={branchListId}
+                  onChange={setBranchListId}
+                  lists={branchLists}
+                  disabled={!branchId}
+                />
               </FormField>
             </div>
           </FormFlowStep>

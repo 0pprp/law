@@ -237,6 +237,7 @@ export default function DebtorImportModal({ open, onClose, onComplete }: Props) 
                 {' '}عمود <span className="font-semibold">المبلغ المتبقي</span> هو المتبقي من الوصل (بعد تسديدات سابقة على السند).
                 {' '}المبلغ المطلوب عند الإضافة = المتبقي من الوصل + مجموع الصرفيات، ويساوي المتبقي في النظام.
                 {' '}عمود <span className="font-semibold">مجموع الصرفيات</span> اختياري.
+                {' '}عمود <span className="font-semibold">القائمة</span> اختياري — يُربط المدين بقائمة الفرع أو يُنشأ تلقائياً إن لم تكن موجودة.
                 {' '}رقم الهوية <span className="font-semibold">اختياري</span>.
                 {' '}ملف PDF <span className="font-semibold">اختياري</span> — ارفع ZIP للمجموعة أو ملفات PDF فردية.
               </p>

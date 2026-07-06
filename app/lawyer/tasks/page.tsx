@@ -11,6 +11,8 @@ import {
 } from '@/lib/task-assignment'
 import LawyerWalletSummary from '@/components/LawyerWalletSummary'
 import LawyerTasksGrid from '@/components/LawyerTasksGrid'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { isGeneralLawyerType } from '@/lib/lawyer-type'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
 
 const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
@@ -42,6 +44,9 @@ export default function LawyerTasksPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [lawyerId, setLawyerId] = useState<string | null>(null)
+  const [isGeneralLawyer, setIsGeneralLawyer] = useState(false)
+  const [branchFilter, setBranchFilter] = useState('')
+  const [branchOptions, setBranchOptions] = useState<{ value: string; label: string }[]>([])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -75,6 +80,7 @@ export default function LawyerTasksPage() {
       limit: LAWYER_TASK_PAGE_SIZE,
       status: filter,
       debtorIds,
+      branchId: branchFilter || null,
     })
 
     if (page.error) {
@@ -88,13 +94,30 @@ export default function LawyerTasksPage() {
     setPageOffset(offset + page.tasks.length)
     setLoading(false)
     setLoadingMore(false)
-  }, [lawyerId, filter, debouncedSearch])
+  }, [lawyerId, filter, debouncedSearch, branchFilter])
 
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
       setLawyerId(user.id)
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('lawyer_type')
+        .eq('id', user.id)
+        .single()
+
+      const general = isGeneralLawyerType(profile?.lawyer_type)
+      setIsGeneralLawyer(general)
+
+      if (general) {
+        const { data: branches } = await supabase.from('branches').select('id, name').eq('is_active', true).order('name')
+        setBranchOptions([
+          { value: '', label: 'كل الفروع' },
+          ...(branches ?? []).map(b => ({ value: b.id, label: b.name })),
+        ])
+      }
 
       const [walletRes, counts] = await Promise.all([
         fetch('/api/lawyer/wallet').then(r => r.json()).catch(() => null),
@@ -123,7 +146,7 @@ export default function LawyerTasksPage() {
     if (!lawyerId) return
     setPageOffset(0)
     loadPage(false, 0)
-  }, [filter, debouncedSearch, lawyerId, loadPage])
+  }, [filter, debouncedSearch, branchFilter, lawyerId, loadPage])
 
   const counts = statusCounts
   const hasMore = tasks.length < total
@@ -145,6 +168,19 @@ export default function LawyerTasksPage() {
           </span>
         </div>
       </div>
+
+      {isGeneralLawyer && branchOptions.length > 1 && (
+        <div className="px-4 py-2 bg-white border-b border-slate-100">
+          <PremiumSelect
+            value={branchFilter}
+            onChange={setBranchFilter}
+            options={branchOptions}
+            fieldLabel="الفرع"
+            headerTitle="فلترة حسب الفرع"
+            searchable
+          />
+        </div>
+      )}
 
       <div className="overflow-x-auto bg-white border-b border-slate-100">
         <div className="flex gap-1.5 px-4 py-2.5 min-w-max">
@@ -183,7 +219,17 @@ export default function LawyerTasksPage() {
         hasMore={hasMore}
         total={total}
         onLoadMore={() => loadPage(true, pageOffset)}
-        emptyMessage={search ? `لا نتائج للبحث عن "${search}"` : filter === 'all' ? 'لا توجد مهام' : 'لا توجد مهام بهذه الحالة'}
+        showBranch={isGeneralLawyer}
+        lawyerId={lawyerId}
+        emptyMessage={
+          search
+            ? `لا نتائج للبحث عن "${search}"`
+            : filter === 'rejected'
+              ? `لديك ${counts.rejected ?? 0} تكليفاً مرفوضاً — لا تُعرض تفاصيل المدين بعد الرفض`
+              : filter === 'all'
+                ? 'لا توجد مهام'
+                : 'لا توجد مهام بهذه الحالة'
+        }
       />
     </div>
   )
