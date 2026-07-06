@@ -10,7 +10,8 @@ import {
   activityActionLabel,
   activityEntityLabel,
   activityLogDescription,
-  fmtActivityDateTime,
+  fmtActivityDate,
+  fmtActivityTime,
 } from '@/lib/activity-labels'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +19,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DateRangePicker } from '@/components/ui/date-range-picker'
+import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
 
 export default function ActivityPage() {
   const branchId = useBranchId()
@@ -70,6 +72,14 @@ export default function ActivityPage() {
     setDateFrom('')
     setDateTo('')
   }
+
+  const {
+    visibleItems: visibleLogs,
+    expanded: logsExpanded,
+    toggle: toggleLogs,
+    hasMore: logsHasMore,
+    total: logsTotal,
+  } = useShowMore(filtered, LOG_PREVIEW_LIMIT)
 
   return (
     <div className="space-y-5">
@@ -145,7 +155,8 @@ export default function ActivityPage() {
               <Table>
                 <THead>
                   <tr>
-                    <TH>التاريخ والوقت</TH>
+                    <TH>التاريخ</TH>
+                    <TH>الوقت</TH>
                     <TH>المستخدم</TH>
                     <TH>الدور</TH>
                     <TH>نوع العملية</TH>
@@ -154,11 +165,16 @@ export default function ActivityPage() {
                   </tr>
                 </THead>
                 <TBody>
-                  {filtered.map((log: any) => (
+                  {visibleLogs.map((log: any) => (
                     <TR key={log.id}>
                       <TD>
-                        <span className="text-xs font-mono text-[#767676]" dir="ltr">
-                          {fmtActivityDateTime(log.created_at)}
+                        <span className="text-xs font-mono text-[#231F20] font-semibold whitespace-nowrap" dir="ltr">
+                          {fmtActivityDate(log.created_at)}
+                        </span>
+                      </TD>
+                      <TD>
+                        <span className="text-xs font-mono text-[#767676] whitespace-nowrap" dir="ltr">
+                          {fmtActivityTime(log.created_at)}
                         </span>
                       </TD>
                       <TD className="font-semibold text-[#231F20] whitespace-nowrap">
@@ -185,7 +201,7 @@ export default function ActivityPage() {
             </div>
 
             <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
-              {filtered.map((log: any) => (
+              {visibleLogs.map((log: any) => (
                 <div key={log.id} className="px-4 py-3 flex gap-3">
                   <div className="w-1.5 mt-2 shrink-0">
                     <div className="w-1.5 h-1.5 rounded-full bg-[#2C8780]" />
@@ -195,8 +211,10 @@ export default function ActivityPage() {
                       <Badge variant={ACTIVITY_ACTION_BADGE[log.action] ?? 'orange'}>
                         {activityActionLabel(log.action)}
                       </Badge>
-                      <span className="text-[10px] text-[#767676] font-mono shrink-0" dir="ltr">
-                        {fmtActivityDateTime(log.created_at)}
+                      <span className="text-[10px] text-[#767676] font-mono shrink-0 text-left" dir="ltr">
+                        {fmtActivityDate(log.created_at)}
+                        <span className="mx-1">·</span>
+                        {fmtActivityTime(log.created_at)}
                       </span>
                     </div>
                     <p className="text-sm text-[#231F20]">{activityLogDescription(log)}</p>
@@ -209,6 +227,12 @@ export default function ActivityPage() {
                 </div>
               ))}
             </div>
+            <ShowMoreFooter
+              hasMore={logsHasMore}
+              expanded={logsExpanded}
+              onToggle={toggleLogs}
+              total={logsTotal}
+            />
           </>
         )}
       </div>

@@ -10,8 +10,7 @@ export const IMPORT_EXCEL_HEADERS = [
   'نوع السند',
   'مبلغ السند',
   'المبلغ المتبقي',
-  'مجموعة التسديدات',
-  'مجموعة الصرفيات',
+  'مجموع الصرفيات',
   'يوجد عقد',
   'الشرط الجزائي',
   'العنوان',
@@ -20,8 +19,7 @@ export const IMPORT_EXCEL_HEADERS = [
   'اسم ملف PDF',
 ] as const
 
-export const IMPORT_PAYMENTS_GROUP_NOTE = 'مجموعة تسديدات سابقة من Excel'
-export const IMPORT_EXPENSES_GROUP_LABEL = 'مجموعة صرفيات سابقة من Excel'
+export const IMPORT_EXPENSES_GROUP_LABEL = 'مجموع صرفيات سابق من Excel'
 
 export type ImportExcelHeader = (typeof IMPORT_EXCEL_HEADERS)[number]
 
@@ -34,8 +32,7 @@ export interface ParsedImportRow {
   receipt_type_raw: string
   receipt_amount_raw: string
   remaining_amount_raw: string
-  payments_group_raw: string
-  expenses_group_raw: string
+  expenses_total_raw: string
   has_contract_raw: string
   penalty_amount_raw: string
   address: string
@@ -51,10 +48,11 @@ export interface ImportPreviewRow extends ParsedImportRow {
   pdfStatus: 'موجود' | 'غير موجود' | 'ليس PDF' | 'بدون ملف' | '—'
   receipt_type: ReceiptType | null
   receipt_amount: number | null
-  original_remaining_amount: number | null
-  payments_group: number
-  expenses_group: number
-  remaining_amount: number | null
+  /** المتبقي من الوصل (من Excel — بعد تسديدات سابقة على السند) */
+  receipt_remaining: number | null
+  expenses_total: number
+  /** المبلغ المطلوب = المتبقي من الوصل + مجموع الصرفيات؛ ويساوي المتبقي عند الإضافة */
+  required_amount: number | null
   has_contract: boolean
   penalty_amount: number
   task_definition_id: string | null
@@ -122,13 +120,18 @@ export function normalizeReceiptTypeInput(raw: string): string {
   return raw.trim()
 }
 
-/** المبلغ المتبقي النهائي = الأصلي + مجموعة الصرفيات − مجموعة التسديدات */
-export function computeFinalRemainingAmount(
-  originalRemaining: number,
-  paymentsGroup: number,
-  expensesGroup: number,
+/** المبلغ المطلوب عند الاستيراد = المتبقي من الوصل + مجموع الصرفيات */
+export function computeImportRequiredAmount(
+  receiptRemaining: number,
+  expensesTotal: number,
 ): number {
-  return originalRemaining + expensesGroup - paymentsGroup
+  return receiptRemaining + expensesTotal
+}
+
+function readExpensesTotalCell(row: Record<string, unknown>): string {
+  const primary = cellStr(row['مجموع الصرفيات'])
+  if (primary) return primary
+  return cellStr(row['مجموعة الصرفيات'])
 }
 
 function normalizeFileName(name: string): string {
@@ -194,8 +197,7 @@ export async function parseImportExcel(file: File): Promise<ParsedImportRow[]> {
       receipt_type_raw: cellStr(row['نوع السند']),
       receipt_amount_raw: cellStr(row['مبلغ السند']),
       remaining_amount_raw: cellStr(row['المبلغ المتبقي']),
-      payments_group_raw: cellStr(row['مجموعة التسديدات']),
-      expenses_group_raw: cellStr(row['مجموعة الصرفيات']),
+      expenses_total_raw: readExpensesTotalCell(row),
       has_contract_raw: cellStr(row['يوجد عقد']),
       penalty_amount_raw: cellStr(row['الشرط الجزائي']),
       address: cellStr(row['العنوان']),
@@ -315,17 +317,14 @@ export function validateImportRows(
     if (!receiptAmt.ok) errors.push(receiptAmt.error)
     const remainAmt = parseAmount(row.remaining_amount_raw, 'المبلغ المتبقي')
     if (!remainAmt.ok) errors.push(remainAmt.error)
-    const paymentsGroup = parseAmount(row.payments_group_raw, 'مجموعة التسديدات')
-    if (!paymentsGroup.ok) errors.push(paymentsGroup.error)
-    const expensesGroup = parseAmount(row.expenses_group_raw, 'مجموعة الصرفيات')
-    if (!expensesGroup.ok) errors.push(expensesGroup.error)
+    const expensesTotal = parseAmount(row.expenses_total_raw, 'مجموع الصرفيات')
+    if (!expensesTotal.ok) errors.push(expensesTotal.error)
 
-    const original_remaining_amount = remainAmt.ok ? remainAmt.value : null
-    const payments_group = paymentsGroup.ok ? paymentsGroup.value : 0
-    const expenses_group = expensesGroup.ok ? expensesGroup.value : 0
-    const remaining_amount =
-      original_remaining_amount != null
-        ? computeFinalRemainingAmount(original_remaining_amount, payments_group, expenses_group)
+    const receipt_remaining = remainAmt.ok ? remainAmt.value : null
+    const expenses_total = expensesTotal.ok ? expensesTotal.value : 0
+    const required_amount =
+      receipt_remaining != null
+        ? computeImportRequiredAmount(receipt_remaining, expenses_total)
         : null
 
     const has_contract = parseBool(row.has_contract_raw)
@@ -368,10 +367,9 @@ export function validateImportRows(
       pdfStatus,
       receipt_type: receipt_type ?? 'check',
       receipt_amount: receiptAmt.ok ? receiptAmt.value : null,
-      original_remaining_amount,
-      payments_group,
-      expenses_group,
-      remaining_amount,
+      receipt_remaining,
+      expenses_total,
+      required_amount,
       has_contract,
       penalty_amount,
       task_definition_id,
@@ -427,37 +425,42 @@ async function cleanupDebtor(
   await supabase.from('debtors').delete().eq('id', debtorId)
 }
 
-async function importAggregateRecords(
+async function importImportExpenseRecord(
   supabase: SupabaseClient,
   debtorId: string,
   row: ImportPreviewRow,
   ctx: { branchId: string; userId: string; today: string },
 ): Promise<string | null> {
-  if (row.payments_group > 0) {
-    const { error } = await supabase.from('debtor_payments').insert({
-      debtor_id: debtorId,
-      amount: row.payments_group,
-      payment_date: ctx.today,
-      notes: IMPORT_PAYMENTS_GROUP_NOTE,
-      branch_id: ctx.branchId,
-    })
-    if (error) return error.message
-  }
+  if (row.expenses_total <= 0) return null
 
-  if (row.expenses_group > 0) {
-    const { error } = await supabase.from('expenses').insert({
-      debtor_id: debtorId,
-      amount: row.expenses_group,
-      expense_type: IMPORT_EXPENSES_GROUP_LABEL,
-      description: IMPORT_EXPENSES_GROUP_LABEL,
-      expense_date: ctx.today,
-      created_by: ctx.userId,
-      status: 'approved',
-      branch_id: ctx.branchId,
-    } as any)
-    if (error) return error.message
-  }
+  const { error } = await supabase.from('expenses').insert({
+    debtor_id: debtorId,
+    amount: row.expenses_total,
+    expense_type: IMPORT_EXPENSES_GROUP_LABEL,
+    description: IMPORT_EXPENSES_GROUP_LABEL,
+    expense_date: ctx.today,
+    created_by: ctx.userId,
+    status: 'approved',
+    branch_id: ctx.branchId,
+  } as any)
+  if (error) return error.message
 
+  return null
+}
+
+async function finalizeImportedDebtorBalances(
+  supabase: SupabaseClient,
+  debtorId: string,
+  row: ImportPreviewRow,
+): Promise<string | null> {
+  const balance = row.required_amount ?? row.receipt_remaining ?? 0
+
+  const { error } = await supabase
+    .from('debtors')
+    .update({ remaining_amount: balance, required_amount: balance })
+    .eq('id', debtorId)
+
+  if (error) return error.message
   return null
 }
 
@@ -491,8 +494,8 @@ export async function executeDebtorImport(
       receipt_type: row.receipt_type ?? 'check',
       receipt_number: row.receipt_number.trim(),
       receipt_amount: row.receipt_amount ?? 0,
-      remaining_amount: row.remaining_amount ?? 0,
-      required_amount: (row.remaining_amount ?? 0) + row.payments_group,
+      remaining_amount: row.receipt_remaining ?? 0,
+      required_amount: row.receipt_remaining ?? 0,
       lawyer_fees: 0,
       penalty_amount: row.penalty_amount,
       notes: row.notes || null,
@@ -588,14 +591,26 @@ export async function executeDebtorImport(
     const uploadItems: { row: ImportPreviewRow; debtorId: string; taskId: string }[] = []
 
     for (let i = 0; i < debtors.length; i++) {
-      const aggErr = await importAggregateRecords(supabase, debtors[i].id, batch[i], ctx)
+      const aggErr = await importImportExpenseRecord(supabase, debtors[i].id, batch[i], ctx)
       if (aggErr) {
         await cleanupDebtor(supabase, debtors[i].id, taskByDebtor.get(debtors[i].id)!, null)
         failures.push({
           rowNum: batch[i].rowNum,
           full_name: batch[i].full_name,
           receipt_number: batch[i].receipt_number,
-          errors: [`فشل حفظ مجموعة التسديدات/الصرفيات: ${aggErr}`],
+          errors: [`فشل حفظ مجموع الصرفيات: ${aggErr}`],
+        })
+        continue
+      }
+
+      const balanceErr = await finalizeImportedDebtorBalances(supabase, debtors[i].id, batch[i])
+      if (balanceErr) {
+        await cleanupDebtor(supabase, debtors[i].id, taskByDebtor.get(debtors[i].id)!, null)
+        failures.push({
+          rowNum: batch[i].rowNum,
+          full_name: batch[i].full_name,
+          receipt_number: batch[i].receipt_number,
+          errors: [`فشل ضبط أرصدة المدين: ${balanceErr}`],
         })
         continue
       }

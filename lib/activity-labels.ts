@@ -6,6 +6,7 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   create_task: 'إنشاء مهمة',
   update_task: 'تعديل مهمة',
   submit_task: 'تسليم إنجاز',
+  submit_task_expenses: 'تسجيل صرفيات المهمة',
   complete_task: 'إنجاز مهمة',
   approve_task_transition: 'اعتماد إنجاز',
   approve_task: 'اعتماد إنجاز',
@@ -29,11 +30,16 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   upload_debtor_file: 'رفع ملف مدين',
   delete_debtor_file: 'حذف ملف مدين',
   create_lawyer: 'إضافة محامي',
+  create_accountant: 'إضافة محاسب',
+  create_viewer: 'إضافة مسؤول قانونية',
+  create_employee: 'إضافة موظف',
   update_lawyer_identity: 'تحديث بيانات محامي',
   upload_lawyer_file: 'رفع مستمسك محامي',
   delete_lawyer_file: 'حذف مستمسك محامي',
   deactivate_lawyer: 'تعطيل محامي',
-  lawyer_wallet_credit: 'صرفيات محامي',
+  activate_lawyer: 'تفعيل محامي',
+  lawyer_wallet_credit: 'إيداع محفظة صرفيات محامي',
+  lawyer_wallet_deposit: 'إيداع محفظة صرفيات محامي',
   lawyer_savings_withdraw: 'سحب صرفيات محامي',
   lawyer_fee_payout: 'صرف أتعاب محامي',
   submit_lawyer_payout_request: 'طلب صرف أتعاب',
@@ -64,13 +70,22 @@ export const ACTIVITY_ACTION_BADGE: Record<string, 'success' | 'info' | 'warning
   complete_task: 'success',
   approve_task_transition: 'success',
   approve_task: 'success',
+  submit_task_expenses: 'info',
   legal_manager_task_bonus: 'success',
+  legal_manager_percentage_fee: 'success',
   approve_legal_manager_payout: 'success',
   reject_legal_manager_payout: 'danger',
   legal_manager_manual_deposit: 'success',
   legal_manager_manual_withdrawal: 'warning',
   approve_expense: 'success',
   add_payment: 'success',
+  create_debtor: 'success',
+  create_lawyer: 'success',
+  create_accountant: 'success',
+  create_viewer: 'success',
+  create_employee: 'success',
+  lawyer_wallet_credit: 'success',
+  lawyer_wallet_deposit: 'success',
   assign_task: 'info',
   bulk_assign_tasks: 'info',
   create_task: 'info',
@@ -84,6 +99,8 @@ export const ACTIVITY_ACTION_BADGE: Record<string, 'success' | 'info' | 'warning
   delete_payment: 'danger',
   delete_task: 'danger',
   delete_expense: 'danger',
+  deactivate_lawyer: 'danger',
+  activate_lawyer: 'success',
   close_case: 'navy',
 }
 
@@ -102,17 +119,36 @@ export function activityLogDescription(log: { new_data?: { description?: string 
   return desc?.trim() ? desc : '—'
 }
 
-export function fmtActivityDateTime(iso: string | null | undefined): string {
-  if (!iso) return '—'
+function parseActivityInstant(iso: string | null | undefined): Date | null {
+  if (!iso) return null
   const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString('ar-IQ', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    numberingSystem: 'latn',
-  })
+  if (Number.isNaN(date.getTime())) return null
+  return date
+}
+
+export function fmtActivityDate(iso: string | null | undefined): string {
+  const date = parseActivityInstant(iso)
+  if (!date) return '—'
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}/${m}/${d}`
+}
+
+export function fmtActivityTime(iso: string | null | undefined): string {
+  const date = parseActivityInstant(iso)
+  if (!date) return '—'
+  const hours24 = date.getHours()
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const period = hours24 < 12 ? 'ص' : 'م'
+  let hours12 = hours24 % 12
+  if (hours12 === 0) hours12 = 12
+  return `${hours12}:${minutes} ${period}`
+}
+
+export function fmtActivityDateTime(iso: string | null | undefined): string {
+  const date = fmtActivityDate(iso)
+  const time = fmtActivityTime(iso)
+  if (date === '—' && time === '—') return '—'
+  return `${date} · ${time}`
 }

@@ -23,6 +23,7 @@ import { parseMoneyInput } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { RECEIPT_STATUS_LABELS } from '@/lib/types'
+import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
 import PermissionDenied from '@/components/PermissionDenied'
 
 type ManualModal = 'deposit' | 'withdraw' | null
@@ -134,6 +135,14 @@ export default function LegalManagerWalletPage() {
     setManualSaving(false)
   }
 
+  const {
+    visibleItems: visibleLedger,
+    expanded: ledgerExpanded,
+    toggle: toggleLedger,
+    hasMore: ledgerHasMore,
+    total: ledgerTotal,
+  } = useShowMore(ledger, LOG_PREVIEW_LIMIT)
+
   if (!canViewLegalManagerWallet(role)) {
     return (
       <PermissionDenied message="رصيدك يظهر في لوحة التحكم فقط — لا يمكنك الوصول إلى صفحة المحفظة." />
@@ -219,8 +228,9 @@ export default function LegalManagerWalletPage() {
             لا توجد حركات بعد — تُضاف تلقائياً عند اعتماد إنجازات المهام.
           </div>
         ) : (
-          <div className="divide-y divide-[rgba(118,118,118,0.08)]">
-            {ledger.map(row => {
+          <>
+            <div className="divide-y divide-[rgba(118,118,118,0.08)]">
+              {visibleLedger.map(row => {
               const isCredit = row.amount > 0
               const isDebit = row.amount < 0
               const isNeutral = row.amount === 0
@@ -270,8 +280,15 @@ export default function LegalManagerWalletPage() {
                   </span>
                 </div>
               )
-            })}
-          </div>
+              })}
+            </div>
+            <ShowMoreFooter
+              hasMore={ledgerHasMore}
+              expanded={ledgerExpanded}
+              onToggle={toggleLedger}
+              total={ledgerTotal}
+            />
+          </>
         )}
       </Card>
 

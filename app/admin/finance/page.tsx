@@ -27,6 +27,7 @@ import { refreshAdminNotifications } from '@/lib/admin-notifications'
 import { PageHeader } from '@/components/ui/page-header'
 import { useAdminRole } from '@/context/admin-role'
 import { canManualWalletOps, canWriteData, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
 
 interface Lawyer {
   id: string
@@ -207,6 +208,14 @@ export default function FinancePage() {
   const walletBalance = balanceMap.get(selectedId) ?? 0
   const savingsBalance = savingsMap.get(selectedId) ?? 0
   const selectedLawyer = lawyers.find(l => l.id === selectedId)
+
+  const {
+    visibleItems: visibleWalletTxs,
+    expanded: walletTxsExpanded,
+    toggle: toggleWalletTxs,
+    hasMore: walletTxsHasMore,
+    total: walletTxsTotal,
+  } = useShowMore(walletTxs, LOG_PREVIEW_LIMIT)
 
   const unifiedRequests = useMemo((): UnifiedRequest[] => {
     const payoutItems: UnifiedRequest[] = allPayoutRequests.map(data => ({ kind: 'payout', data }))
@@ -566,11 +575,12 @@ export default function FinancePage() {
           ) : !walletTxs.length ? (
             <div className="text-center py-16 text-[#767676] text-sm">لا توجد حركات بعد</div>
           ) : (
-            <div className="divide-y divide-[rgba(118,118,118,0.08)]">
-              <div className="px-5 py-3 bg-[#F3F1F2]/50 text-xs text-[#767676]">
-                حركات محفظة: <span className="font-bold text-[#231F20]">{selectedLawyer?.full_name}</span>
-              </div>
-              {walletTxs.map(tx => {
+            <>
+              <div className="divide-y divide-[rgba(118,118,118,0.08)]">
+                <div className="px-5 py-3 bg-[#F3F1F2]/50 text-xs text-[#767676]">
+                  حركات محفظة: <span className="font-bold text-[#231F20]">{selectedLawyer?.full_name}</span>
+                </div>
+                {visibleWalletTxs.map(tx => {
                 const amt = Number(tx.amount)
                 const wallet = (tx.wallet ?? 'fees') as LawyerWalletKind
                 const iconKind = walletTransactionIconKind(tx.type as WalletTransactionType, wallet, amt)
@@ -598,7 +608,14 @@ export default function FinancePage() {
                   </div>
                 )
               })}
-            </div>
+              </div>
+              <ShowMoreFooter
+                hasMore={walletTxsHasMore}
+                expanded={walletTxsExpanded}
+                onToggle={toggleWalletTxs}
+                total={walletTxsTotal}
+              />
+            </>
           )}
         </div>
       )}

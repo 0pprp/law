@@ -9,6 +9,7 @@ import { canAddDebtor, isLegalManager } from '@/lib/permissions'
 import { fetchLegalManagerWalletBalance } from '@/lib/legal-manager-wallet'
 import { fmtMoney } from '@/lib/utils'
 import { activityActionLabel } from '@/lib/activity-labels'
+import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
 import { StatCard } from '@/components/ui/stat-card'
 import { stageAccent, stageIconBg } from '@/lib/stage-config'
 import { scheduleBranchMaintenance } from '@/lib/branch-maintenance'
@@ -129,6 +130,14 @@ export default function DashboardPage() {
   }, [legalManagerView])
 
   const stageTotal = stages.reduce((sum, s) => sum + s.count, 0)
+
+  const {
+    visibleItems: visibleActivity,
+    expanded: activityExpanded,
+    toggle: toggleActivity,
+    hasMore: activityHasMore,
+    total: activityTotal,
+  } = useShowMore(recentActivity, LOG_PREVIEW_LIMIT)
 
   return (
     <div className="space-y-6 w-full">
@@ -266,7 +275,7 @@ export default function DashboardPage() {
             <Link href="/admin/activity" className="text-xs text-[#2C8780] font-semibold hover:underline">السجل الكامل ←</Link>
           </div>
           <div className="divide-y divide-[rgba(118,118,118,0.06)]">
-            {recentActivity.map((a, i) => (
+            {visibleActivity.map((a, i) => (
               <div key={i} className="flex items-start gap-3 px-5 py-3">
                 <p className="text-xs text-[#231F20] flex-1">{activityActionLabel(a.action)}</p>
                 <span className="text-[10px] text-[#767676] shrink-0 tabular-nums" dir="ltr">
@@ -275,6 +284,12 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+          <ShowMoreFooter
+            hasMore={activityHasMore}
+            expanded={activityExpanded}
+            onToggle={toggleActivity}
+            total={activityTotal}
+          />
         </div>
       )}
     </div>

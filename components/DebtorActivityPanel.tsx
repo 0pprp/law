@@ -1,12 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { Card, CardHeader } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import {
-  ACTIVITY_ACTION_BADGE,
-  activityActionLabel,
-  activityLogDescription,
-  fmtActivityDateTime,
-} from '@/lib/activity-labels'
+import DebtorActivityList from '@/components/DebtorActivityList'
 
 interface Props {
   debtorId: string
@@ -33,30 +27,7 @@ export default async function DebtorActivityPanel({ debtorId, taskIds }: Props) 
   return (
     <Card>
       <CardHeader title={`سجل النشاط (${rows.length})`} />
-      {rows.length === 0 ? (
-        <div className="py-10 text-center text-[#767676] text-sm">لا يوجد نشاط مسجّل</div>
-      ) : (
-        <div className="divide-y divide-[rgba(118,118,118,0.08)]">
-          {rows.map((log: any) => (
-            <div key={log.id} className="px-5 py-3.5 flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap mb-1">
-                  <Badge variant={ACTIVITY_ACTION_BADGE[log.action] ?? 'default'}>
-                    {activityActionLabel(log.action)}
-                  </Badge>
-                  {log.user?.full_name && (
-                    <span className="text-xs text-[#767676]">{log.user.full_name}</span>
-                  )}
-                </div>
-                <p className="text-sm text-[#231F20]">{activityLogDescription(log)}</p>
-              </div>
-              <span className="text-xs text-[#767676] font-mono shrink-0" dir="ltr">
-                {fmtActivityDateTime(log.created_at)}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
+      <DebtorActivityList rows={rows as any} />
     </Card>
   )
 }

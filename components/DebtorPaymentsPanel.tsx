@@ -9,6 +9,7 @@ import { syncDebtorRemainingAfterPayments } from '@/lib/debtor-balances'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { canDelete, PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { useAdminRole } from '@/context/admin-role'
+import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
 
 export interface DebtorPaymentRow {
   id: string
@@ -32,6 +33,7 @@ export default function DebtorPaymentsPanel({ debtorId, debtorName, initialPayme
   const [error, setError] = useState('')
 
   const total = payments.reduce((s, p) => s + Number(p.amount), 0)
+  const { visibleItems, expanded, toggle, hasMore, total: paymentCount } = useShowMore(payments, LOG_PREVIEW_LIMIT)
 
   async function deletePayment(payment: DebtorPaymentRow) {
     if (!allowDelete) {
@@ -88,8 +90,9 @@ export default function DebtorPaymentsPanel({ debtorId, debtorName, initialPayme
       {!payments.length ? (
         <div className="py-8 text-center text-[#767676] text-sm">لا توجد تسديدات</div>
       ) : (
-        <div className="divide-y divide-[rgba(118,118,118,0.08)]">
-          {payments.map(p => (
+        <>
+          <div className="divide-y divide-[rgba(118,118,118,0.08)]">
+            {visibleItems.map(p => (
             <div key={p.id} className="px-5 py-3.5 flex items-center justify-between gap-4">
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-black text-emerald-700 tabular-nums" dir="ltr">
@@ -111,8 +114,10 @@ export default function DebtorPaymentsPanel({ debtorId, debtorName, initialPayme
                 )}
               </div>
             </div>
-          ))}
-        </div>
+            ))}
+          </div>
+          <ShowMoreFooter hasMore={hasMore} expanded={expanded} onToggle={toggle} total={paymentCount} />
+        </>
       )}
     </div>
   )

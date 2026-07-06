@@ -17,6 +17,7 @@ import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL } from '@/lib/ui-labels'
 import DebtorImportModal from '@/components/DebtorImportModal'
 import { useAdminRole } from '@/context/admin-role'
 import { canAddDebtor, canDelete, canEditRecords, canImportDebtors, isLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
 
 const PAGE_SIZE = 50
 const COLS = 'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status'
@@ -56,6 +57,7 @@ export default function DebtorsPage() {
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [importOpen, setImportOpen] = useState(false)
+  const [showAllDebtors, setShowAllDebtors] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Server-side fetch with optional search
@@ -97,6 +99,7 @@ export default function DebtorsPage() {
   // Debounced search — 300ms
   function handleSearch(val: string) {
     setSearch(val)
+    setShowAllDebtors(false)
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
       fetchDebtors(val)
@@ -121,6 +124,8 @@ export default function DebtorsPage() {
   }
 
   const hasMore = debtors.length < total
+  const visibleDebtors = showAllDebtors ? debtors : debtors.slice(0, DEBTOR_LIST_PREVIEW_LIMIT)
+  const canShowAllDebtors = debtors.length > DEBTOR_LIST_PREVIEW_LIMIT
 
   return (
     <div className="space-y-5">
@@ -225,7 +230,7 @@ export default function DebtorsPage() {
                   </tr>
                 </THead>
                 <TBody>
-                  {debtors.map(debtor => (
+                  {visibleDebtors.map(debtor => (
                     <TR key={debtor.id}>
                       <TD>
                         <div>
@@ -275,7 +280,7 @@ export default function DebtorsPage() {
 
             {/* Mobile cards */}
             <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
-              {debtors.map(debtor => (
+              {visibleDebtors.map(debtor => (
                 <div key={debtor.id} className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <Link href={`/admin/debtors/${debtor.id}/account`} className="font-semibold text-[#231F20]">{debtor.full_name}</Link>
@@ -312,6 +317,15 @@ export default function DebtorsPage() {
                 </div>
               ))}
             </div>
+
+            {canShowAllDebtors && (
+              <ShowMoreFooter
+                hasMore={canShowAllDebtors}
+                expanded={showAllDebtors}
+                onToggle={() => setShowAllDebtors(v => !v)}
+                total={debtors.length}
+              />
+            )}
           </>
         )}
       </div>
