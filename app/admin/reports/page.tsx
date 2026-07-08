@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
+import { useBranchId, useBranch } from '@/context/branch'
 import { PageHeader } from '@/components/ui/page-header'
 import { StatCard } from '@/components/ui/stat-card'
 import { Button } from '@/components/ui/button'
@@ -33,6 +33,7 @@ function IconTask() { return <svg className="w-6 h-6 text-white" fill="none" str
 
 export default function ReportsPage() {
   const branchId = useBranchId()
+  const { viewAllBranches } = useBranch()
   const { lists: branchLists } = useBranchLists(branchId)
   const [snapshot, setSnapshot] = useState<ReportSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
@@ -40,7 +41,8 @@ export default function ReportsPage() {
   const [applied, setApplied] = useState<Filters>(EMPTY)
 
   useEffect(() => {
-    if (!branchId) {
+    // branchId=null مع viewAll = كل الفروع؛ بدون viewAll وبدون فرع = لا تحميل
+    if (!branchId && !viewAllBranches) {
       setSnapshot(null)
       setLoading(false)
       return
@@ -57,7 +59,7 @@ export default function ReportsPage() {
     })
 
     return () => { cancelled = true }
-  }, [branchId, applied])
+  }, [branchId, viewAllBranches, applied])
 
   const achievements = snapshot?.achievements ?? []
   const lawyers = snapshot?.lawyers ?? []

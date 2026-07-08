@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useBranchId, useBranch } from '@/context/branch'
 import { isMainBranchName } from '@/lib/branch-constants'
 import { cacheDelete } from '@/lib/query-cache'
+import { appConfirm } from '@/lib/app-dialog'
 import { logActivity } from '@/lib/activity-log'
 import { Button } from '@/components/ui/button'
 import {
@@ -134,9 +135,11 @@ export default function DebtorImportModal({ open, onClose, onComplete }: Props) 
     if (pdfWarningRows.length > 0) {
       const names = pdfWarningRows.slice(0, 5).map(r => r.full_name).join('، ')
       const more = pdfWarningRows.length > 5 ? ` و${pdfWarningRows.length - 5} آخرين` : ''
-      const ok = window.confirm(
-        `${pdfWarningRows.length} مدين بدون ملف PDF (${names}${more}).\n\nهل تريد المتابعة؟ يمكنك إضافة PDF لاحقاً من بروفايل المدين.`,
-      )
+      const ok = await appConfirm({
+        title: 'مدينون بدون PDF',
+        message: `${pdfWarningRows.length} مدين بدون ملف PDF (${names}${more}).\n\nهل تريد المتابعة؟ يمكنك إضافة PDF لاحقاً من بروفايل المدين.`,
+        confirmLabel: 'متابعة',
+      })
       if (!ok) return
     }
 

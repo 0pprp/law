@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { fmtDate } from '@/lib/utils'
 import { useBranchId } from '@/context/branch'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { appAlert } from '@/lib/app-dialog'
 import { DatePicker } from '@/components/ui/date-picker'
 import { useCanWrite } from '@/hooks/use-can-write'
 
@@ -102,7 +103,7 @@ export default function EditTaskPage() {
       if (!res.ok) throw new Error()
       const { url } = await res.json()
       window.open(url, '_blank', 'noopener,noreferrer')
-    } catch { alert('فشل في فتح الملف') }
+    } catch { await appAlert({ message: 'فشل في فتح الملف', variant: 'error' }) }
     finally { setOpeningId(null) }
   }
 

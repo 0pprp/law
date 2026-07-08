@@ -4,14 +4,14 @@ import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { USER_ROLE_LABELS } from '@/lib/types'
+import { USER_ROLE_LABELS, displayRoleLabel } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { BranchProvider, useBranchId } from '@/context/branch'
 import { AdminRoleProvider } from '@/context/admin-role'
 import AdminRouteGuard from '@/components/AdminRouteGuard'
 import BranchSelector from '@/components/BranchSelector'
-import { isNavVisibleForRole, isAccountant, isViewer, canAccessFinance, accountantNotificationTotal } from '@/lib/permissions'
+import { isNavVisibleForRole, isAccountant, isViewer, canAccessFinance, canManageFinance, accountantNotificationTotal } from '@/lib/permissions'
 import {
   ADMIN_NOTIFICATIONS_REFRESH,
   fetchAdminNotificationCounts,
@@ -23,9 +23,11 @@ import {
 interface AdminShellProps {
   userName: string
   userRole: string
+  accountantType?: string | null
   userBranchId?: string
   initialBranchId?: string | null
   initialBranchName?: string | null
+  initialViewAll?: boolean
   children: ReactNode
 }
 
@@ -54,6 +56,9 @@ const sections = [
       )},
       { label: 'المستخدمون', href: '/admin/lawyers', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+      )},
+      { label: 'المندوبون', href: '/admin/delegates', icon: (
+        <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
       )},
     ],
   },
@@ -148,10 +153,14 @@ function HeaderNotifications({
   onClose: () => void
   userRole: string
 }) {
-  const financeVisible = canAccessFinance(userRole)
+  // إشعارات مالية تنفيذية لمن يستطيع الإدارة فقط؛ المحاسب يرى إشعاراته المالية
+  const financeActionVisible = canManageFinance(userRole)
+  const financeVisible = canAccessFinance(userRole) && (financeActionVisible || isAccountant(userRole))
   const total = isAccountant(userRole)
     ? accountantNotificationTotal(counts)
-    : totalAdminNotifications(counts)
+    : isViewer(userRole)
+      ? counts.pendingReview
+      : totalAdminNotifications(counts)
   if (!total) return null
 
   const financePending = pendingFinanceRequests(counts)
@@ -181,7 +190,7 @@ function HeaderNotifications({
               <p className="text-[11px] text-[#767676] mt-0.5">{total} بانتظار الإجراء</p>
             </div>
             <div className="py-1">
-              {counts.pendingReview > 0 && (
+              {counts.pendingReview > 0 && !isAccountant(userRole) && (
                 <Link
                   href="/admin/tasks/review"
                   onClick={onClose}
@@ -333,8 +342,9 @@ export default function AdminShell(props: AdminShellProps) {
     <BranchProvider
       initialBranchId={props.initialBranchId ?? null}
       initialBranchName={props.initialBranchName ?? null}
+      initialViewAll={props.initialViewAll}
     >
-      <AdminRoleProvider role={role}>
+      <AdminRoleProvider role={role} accountantType={props.accountantType}>
         <AdminShellInner {...props} />
       </AdminRoleProvider>
     </BranchProvider>
@@ -344,6 +354,7 @@ export default function AdminShell(props: AdminShellProps) {
 function AdminShellInner({
   userName,
   userRole,
+  accountantType,
   userBranchId,
   initialBranchId,
   initialBranchName,
@@ -419,7 +430,9 @@ function AdminShellInner({
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-white text-xs font-semibold truncate leading-none">{userName}</p>
-            <p className="text-white/30 text-[10px] mt-0.5 truncate">{USER_ROLE_LABELS[userRole as UserRole] ?? userRole}</p>
+            <p className="text-white/30 text-[10px] mt-0.5 truncate">
+              {displayRoleLabel(userRole, { accountant_type: accountantType })}
+            </p>
           </div>
         </div>
         <button
@@ -480,6 +493,7 @@ function AdminShellInner({
             <div className="hidden sm:block">
               <BranchSelector
                 userRole={userRole}
+                accountantType={accountantType}
                 userBranchId={userBranchId}
                 initialBranchId={initialBranchId ?? undefined}
                 initialBranchName={initialBranchName ?? undefined}
@@ -496,7 +510,9 @@ function AdminShellInner({
               />
               <div className="hidden sm:flex flex-col items-end">
                 <p className="text-sm font-bold text-[#231F20] leading-none">{userName}</p>
-                <p className="text-xs text-[#454042] mt-1 font-medium">{USER_ROLE_LABELS[userRole as UserRole] ?? userRole}</p>
+                <p className="text-xs text-[#454042] mt-1 font-medium">
+                  {displayRoleLabel(userRole, { accountant_type: accountantType })}
+                </p>
               </div>
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}>
                 {initials}

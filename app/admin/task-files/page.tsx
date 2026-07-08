@@ -11,6 +11,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtDate } from '@/lib/utils'
 import { useBranchId } from '@/context/branch'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
+import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DateRangePicker } from '@/components/ui/date-range-picker'
 
@@ -114,18 +115,24 @@ export default function TaskFilesPage() {
       if (!res.ok) throw new Error()
       const { url } = await res.json()
       window.open(url, '_blank', 'noopener,noreferrer')
-    } catch { alert('فشل في فتح الملف. يرجى المحاولة مجدداً.') }
+    } catch { await appAlert({ message: 'فشل في فتح الملف. يرجى المحاولة مجدداً.', variant: 'error' }) }
     finally { setOpeningId(null) }
   }
 
   async function deleteFile(fileId: string, filePath: string, fileName: string) {
-    if (!confirm(`هل تريد حذف هذا الملف؟\n"${fileName}"`)) return
+    const ok = await appConfirm({
+      title: 'تأكيد الحذف',
+      message: `هل تريد حذف هذا الملف؟\n«${fileName}»`,
+      confirmLabel: 'حذف',
+      danger: true,
+    })
+    if (!ok) return
     setDeletingId(fileId)
     try {
       const res = await fetch('/api/admin/delete-task-file', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileId, filePath, fileName }) })
-      if (!res.ok) { const { error } = await res.json(); alert(`فشل الحذف: ${error ?? 'خطأ غير معروف'}`) }
+      if (!res.ok) { const { error } = await res.json(); await appAlert({ message: `فشل الحذف: ${error ?? 'خطأ غير معروف'}`, variant: 'error' }) }
       else load()
-    } catch { alert('حدث خطأ أثناء حذف الملف') }
+    } catch { await appAlert({ message: 'حدث خطأ أثناء حذف الملف', variant: 'error' }) }
     finally { setDeletingId(null) }
   }
 

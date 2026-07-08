@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { approveTaskCompletion } from '@/lib/task-approval'
-import { STAFF_ROLES, isAccountant, canApproveCompletions, apiForbiddenResponse } from '@/lib/permissions'
+import { STAFF_ROLES, isAccountant, canApproveCompletions, apiForbiddenResponse, isGeneralAccountant } from '@/lib/permissions'
+import { fetchStaffRoleFields } from '@/lib/staff-profile'
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,13 +11,9 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'غير مصرح' }, { status: 401 })
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, branch_id')
-      .eq('id', user.id)
-      .single()
+    const profile = await fetchStaffRoleFields(supabase, user.id)
 
-    if (!profile || !STAFF_ROLES.includes(profile.role)) {
+    if (!profile?.role || !STAFF_ROLES.includes(profile.role as typeof STAFF_ROLES[number])) {
       return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
     }
 
@@ -32,7 +29,9 @@ export async function POST(request: NextRequest) {
 
     const admin = createAdminClient()
 
-    if (isAccountant(profile.role) || profile.role === 'employee') {
+    const branchScoped = (isAccountant(profile.role) && !isGeneralAccountant(profile.role, profile.accountant_type))
+      || profile.role === 'employee'
+    if (branchScoped) {
       const { data: taskRow } = await admin.from('tasks').select('branch_id').eq('id', taskId).single()
       if (!taskRow?.branch_id || taskRow.branch_id !== profile.branch_id) {
         return apiForbiddenResponse()

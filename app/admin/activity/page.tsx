@@ -3,8 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
-import { USER_ROLE_LABELS } from '@/lib/types'
-import type { UserRole } from '@/lib/types'
+import { displayRoleLabel } from '@/lib/types'
 import {
   ACTIVITY_ACTION_BADGE,
   activityActionLabel,
@@ -34,21 +33,48 @@ export default function ActivityPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    let lq = supabase
-      .from('activity_logs')
-      .select(`*, user:profiles!activity_logs_user_id_fkey(full_name, role)`)
-      .order('created_at', { ascending: false })
-      .limit(1000)
-    let uq = supabase.from('profiles').select('id, full_name').order('full_name')
-    if (branchId) {
-      lq = (lq as any).eq('branch_id', branchId)
-      uq = (uq as any).eq('branch_id', branchId)
+    let cancelled = false
+
+    async function load() {
+      setLoading(true)
+      const userSelectWithType =
+        '*, user:profiles!activity_logs_user_id_fkey(full_name, role, accountant_type, lawyer_type)'
+      const userSelectFallback =
+        '*, user:profiles!activity_logs_user_id_fkey(full_name, role, lawyer_type)'
+
+      let lq = supabase
+        .from('activity_logs')
+        .select(userSelectWithType)
+        .order('created_at', { ascending: false })
+        .limit(1000)
+      let uq = supabase.from('profiles').select('id, full_name').order('full_name')
+      if (branchId) {
+        lq = (lq as any).eq('branch_id', branchId)
+        uq = (uq as any).eq('branch_id', branchId)
+      }
+
+      let [{ data: l, error: lErr }, { data: u }] = await Promise.all([lq, uq])
+
+      if (lErr && String(lErr.message ?? '').includes('accountant_type')) {
+        let lq2 = supabase
+          .from('activity_logs')
+          .select(userSelectFallback)
+          .order('created_at', { ascending: false })
+          .limit(1000)
+        if (branchId) lq2 = (lq2 as any).eq('branch_id', branchId)
+        const retry = await lq2
+        l = retry.data
+      }
+
+      if (!cancelled) {
+        setLogs(l ?? [])
+        setUsers(u ?? [])
+        setLoading(false)
+      }
     }
-    Promise.all([lq, uq]).then(([{ data: l }, { data: u }]) => {
-      setLogs(l ?? [])
-      setUsers(u ?? [])
-      setLoading(false)
-    })
+
+    void load()
+    return () => { cancelled = true }
   }, [branchId])
 
   const filtered = useMemo(() => logs.filter(l => {
@@ -181,7 +207,10 @@ export default function ActivityPage() {
                         {log.user?.full_name ?? 'مستخدم غير معروف'}
                       </TD>
                       <TD className="text-[#767676] text-xs whitespace-nowrap">
-                        {log.user?.role ? (USER_ROLE_LABELS[log.user.role as UserRole] ?? '—') : '—'}
+                        {displayRoleLabel(log.user?.role, {
+                          accountant_type: log.user?.accountant_type,
+                          lawyer_type: log.user?.lawyer_type,
+                        })}
                       </TD>
                       <TD>
                         <Badge variant={ACTIVITY_ACTION_BADGE[log.action] ?? 'orange'}>

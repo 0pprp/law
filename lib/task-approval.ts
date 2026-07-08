@@ -291,7 +291,7 @@ export async function approveTaskCompletion(
 ): Promise<ApproveTaskResult> {
   const { data: task } = await supabase
     .from('tasks')
-    .select('id, task_status, completed_at, fee_status')
+    .select('id, task_status, completed_at, fee_status, assigned_to')
     .eq('id', taskId)
     .single()
 
@@ -300,6 +300,41 @@ export async function approveTaskCompletion(
   }
 
   const alreadyApproved = APPROVED_STATUSES.has(task.task_status)
+
+  let assigneeRole: string | null = null
+  if (task.assigned_to) {
+    const { data: assignee } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', task.assigned_to)
+      .maybeSingle()
+    assigneeRole = assignee?.role ?? null
+  }
+
+  // مندوب: اعتماد بدون صرفيات محامي، وأتعاب معلقة فقط
+  if (assigneeRole === 'delegate') {
+    if (!alreadyApproved) {
+      const { error: approveErr } = await supabase
+        .from('tasks')
+        .update({
+          task_status: 'approved',
+          completed_at: task.completed_at ?? new Date().toISOString(),
+        } as any)
+        .eq('id', taskId)
+      if (approveErr) {
+        return { ok: false, feeAmount: 0, error: approveErr.message }
+      }
+    }
+    const { creditDelegateAddressFeePending } = await import('@/lib/delegate-wallet')
+    const delegateFee = await creditDelegateAddressFeePending(supabase, taskId, reviewerId)
+    if (!delegateFee.ok) {
+      if (!alreadyApproved) {
+        await supabase.from('tasks').update({ task_status: 'submitted' } as any).eq('id', taskId)
+      }
+      return { ok: false, feeAmount: 0, error: delegateFee.error ?? 'فشل تسجيل أتعاب المندوب' }
+    }
+    return { ok: true, feeAmount: delegateFee.amount, legalManagerBonus: 0 }
+  }
 
   if (!alreadyApproved) {
     const { checkDisbursementBalanceForTask, approveTaskExpensesToWallet } = await import('@/lib/expense-wallet')

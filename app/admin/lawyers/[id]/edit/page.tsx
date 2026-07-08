@@ -13,10 +13,12 @@ import { Card, CardHeader } from '@/components/ui/card'
 import { fmtDate } from '@/lib/utils'
 import { useBranchId, useBranch } from '@/context/branch'
 import { useAdminRole } from '@/context/admin-role'
-import { canEditLawyerProfile, canManageUsers, isLegalManager } from '@/lib/permissions'
+import { canEditLawyerProfile, canDeleteUsers, isLegalManager } from '@/lib/permissions'
 import { LAWYER_TYPE_OPTIONS } from '@/lib/lawyer-type'
+import { ACCOUNTANT_TYPE_OPTIONS } from '@/lib/accountant-type'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { uploadLawyerAttachment } from '@/lib/lawyer-attachments'
+import { appAlert, appConfirm } from '@/lib/app-dialog'
 
 const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer', 'viewer']
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
@@ -51,7 +53,8 @@ export default function EditLawyerPage() {
   const legalOfficerMode = isLegalManager(adminRole)
   const [targetRole, setTargetRole] = useState<UserRole>('lawyer')
   const [targetLoaded, setTargetLoaded] = useState(false)
-  const readOnly = targetLoaded ? !canEditLawyerProfile(adminRole, targetRole) : !canManageUsers(adminRole)
+  const canDelete = canDeleteUsers(adminRole)
+  const readOnly = targetLoaded ? !canEditLawyerProfile(adminRole, targetRole) : !canEditLawyerProfile(adminRole, 'lawyer')
   const id = params.id as string
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -69,6 +72,7 @@ export default function EditLawyerPage() {
     identity_type: '', identity_number: '', identity_category: '',
     role: 'lawyer' as UserRole, is_active: true,
     lawyer_type: 'normal' as 'normal' | 'general',
+    accountant_type: 'branch' as 'branch' | 'general',
   })
   const [profileBranchId, setProfileBranchId] = useState<string | null>(null)
 
@@ -81,7 +85,14 @@ export default function EditLawyerPage() {
       ])
       if (data) {
         setProfileBranchId(data.branch_id ?? null)
-        setForm({ username: data.username ?? '', full_name: data.full_name ?? '', phone: data.phone ?? '', governorate: data.governorate ?? '', identity_type: data.identity_type ?? '', identity_number: data.identity_number ?? '', identity_category: data.identity_category ?? '', role: data.role ?? 'lawyer', is_active: data.is_active ?? true, lawyer_type: data.lawyer_type === 'general' ? 'general' : 'normal' })
+        setForm({
+          username: data.username ?? '', full_name: data.full_name ?? '', phone: data.phone ?? '',
+          governorate: data.governorate ?? '', identity_type: data.identity_type ?? '',
+          identity_number: data.identity_number ?? '', identity_category: data.identity_category ?? '',
+          role: data.role ?? 'lawyer', is_active: data.is_active ?? true,
+          lawyer_type: data.lawyer_type === 'general' ? 'general' : 'normal',
+          accountant_type: data.accountant_type === 'general' ? 'general' : 'branch',
+        })
         setTargetRole((data.role ?? 'lawyer') as UserRole)
       }
       setAttachments(files ?? [])
@@ -112,18 +123,32 @@ export default function EditLawyerPage() {
       username: cleanUsername || null, full_name: form.full_name, phone: form.phone || null,
       governorate: form.governorate || null, identity_type: form.identity_type || null,
       identity_number: form.identity_number || null, identity_category: form.identity_category || null,
-      is_active: form.is_active,
     }
+    if (canDelete) updatePayload.is_active = form.is_active
     if (form.role === 'lawyer') updatePayload.lawyer_type = form.lawyer_type
+    if (form.role === 'accountant') updatePayload.accountant_type = form.accountant_type
     if (!legalOfficerMode) updatePayload.role = form.role
     if (!profileBranchId && branchId) updatePayload.branch_id = branchId
 
     const { error: dbError } = await supabase.from('profiles').update(updatePayload).eq('id', id)
     if (dbError) {
-      setError(dbError.code === '23505' ? 'اسم المستخدم مستخدم مسبقاً — يرجى اختيار اسم آخر' : dbError.message)
-      setSaving(false); return
+      const missingAccountantCol = String(dbError.message ?? '').includes('accountant_type')
+      if (missingAccountantCol && 'accountant_type' in updatePayload) {
+        const { accountant_type: _a, ...rest } = updatePayload
+        const retry = await supabase.from('profiles').update(rest).eq('id', id)
+        if (retry.error) {
+          setError(retry.error.code === '23505' ? 'اسم المستخدم مستخدم مسبقاً — يرجى اختيار اسم آخر' : retry.error.message)
+          setSaving(false); return
+        }
+      } else {
+        setError(dbError.code === '23505' ? 'اسم المستخدم مستخدم مسبقاً — يرجى اختيار اسم آخر' : dbError.message)
+        setSaving(false); return
+      }
     }
-    await logActivity({ action: 'update_lawyer_identity', entity_type: 'lawyer', entity_id: id, description: `تحديث بيانات المحامي: ${form.full_name}` }, supabase)
+    const descRole = form.role === 'accountant' && form.accountant_type === 'general'
+      ? 'محاسب عام'
+      : USER_ROLE_LABELS[form.role]
+    await logActivity({ action: 'update_lawyer_identity', entity_type: 'lawyer', entity_id: id, description: `تحديث بيانات المستخدم (${descRole}): ${form.full_name}` }, supabase)
     router.push('/admin/lawyers')
   }
 
@@ -153,13 +178,19 @@ export default function EditLawyerPage() {
       if (!res.ok) throw new Error()
       const { url } = await res.json()
       window.open(url, '_blank', 'noopener,noreferrer')
-    } catch { alert('فشل في فتح الملف') }
+    } catch { await appAlert({ message: 'فشل في فتح الملف', variant: 'error' }) }
     finally { setOpeningId(null) }
   }
 
   async function deleteFile(att: Attachment) {
     if (readOnly) return
-    if (!confirm(`هل تريد حذف هذا الملف؟\n"${att.file_name}"`)) return
+    const ok = await appConfirm({
+      title: 'تأكيد الحذف',
+      message: `هل تريد حذف هذا الملف؟\n«${att.file_name}»`,
+      confirmLabel: 'حذف',
+      danger: true,
+    })
+    if (!ok) return
     setDeletingId(att.id)
     try {
       const res = await fetch('/api/admin/delete-lawyer-file', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileId: att.id, filePath: att.file_path, fileName: att.file_name }) })
@@ -218,10 +249,12 @@ export default function EditLawyerPage() {
               searchable={false}
             />
             )}
+            {canDelete && (
             <div className="flex items-center gap-2.5">
               <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => set('is_active', e.target.checked)} className="w-4 h-4 rounded accent-[#2C8780]" />
               <label htmlFor="is_active" className="text-sm font-semibold text-slate-700 select-none cursor-pointer">الحساب فعال</label>
             </div>
+            )}
           </div>
         </Card>
 
@@ -252,6 +285,15 @@ export default function EditLawyerPage() {
                   value={form.lawyer_type}
                   onChange={v => set('lawyer_type', v)}
                   options={LAWYER_TYPE_OPTIONS}
+                />
+              </Field>
+            )}
+            {form.role === 'accountant' && (
+              <Field label="نوع المحاسب" required>
+                <PremiumSelect
+                  value={form.accountant_type}
+                  onChange={v => set('accountant_type', v)}
+                  options={ACCOUNTANT_TYPE_OPTIONS}
                 />
               </Field>
             )}

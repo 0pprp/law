@@ -37,17 +37,17 @@ export interface ReportSnapshot {
 
 async function resolveScopedDebtorIds(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   filters: ReportFilters,
 ): Promise<string[] | null> {
   if (filters.debtorId) {
-    if (filters.branchListId) {
+    if (filters.branchListId && branchId) {
       const listIds = await resolveDebtorIdsByBranchList(supabase, branchId, filters.branchListId)
       if (!listIds.includes(filters.debtorId)) return []
     }
     return [filters.debtorId]
   }
-  if (filters.branchListId) {
+  if (filters.branchListId && branchId) {
     return resolveDebtorIdsByBranchList(supabase, branchId, filters.branchListId)
   }
   return null
@@ -67,7 +67,7 @@ function applyDebtorScope<T extends { eq: (col: string, val: string) => T; in: (
 async function sumColumnChunked(
   supabase: SupabaseClient,
   table: 'debtor_payments' | 'expenses',
-  branchId: string,
+  branchId: string | null,
   amountCol: 'amount',
   dateCol: 'payment_date' | 'expense_date',
   filters: ReportFilters,
@@ -83,9 +83,10 @@ async function sumColumnChunked(
     let q = supabase
       .from(table)
       .select(amountCol)
-      .eq('branch_id', branchId)
       .order(dateCol, { ascending: true })
       .range(offset, offset + CHUNK - 1)
+
+    if (branchId) q = q.eq('branch_id', branchId)
 
     const { dateFrom, dateTo, lawyerId } = filters
     if (dateFrom) q = q.gte(dateCol, dateFrom)
@@ -112,7 +113,7 @@ async function sumColumnChunked(
 
 async function sumRequiredAmount(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   scopedDebtorIds: string[] | null,
 ): Promise<number> {
   if (scopedDebtorIds && scopedDebtorIds.length === 0) return 0
@@ -124,9 +125,10 @@ async function sumRequiredAmount(
     let q = supabase
       .from('debtors')
       .select('required_amount')
-      .eq('branch_id', branchId)
       .order('id')
       .range(offset, offset + CHUNK - 1)
+
+    if (branchId) q = q.eq('branch_id', branchId)
 
     q = applyDebtorScope(q, 'id', scopedDebtorIds)
 
@@ -149,7 +151,7 @@ async function sumRequiredAmount(
 
 async function fetchAchievementTasks(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   filters: ReportFilters,
   scopedDebtorIds: string[] | null,
 ): Promise<AchievementTask[]> {
@@ -164,10 +166,11 @@ async function fetchAchievementTasks(
       .select(
         'id, task_type, task_status, assigned_to, debtor_id, completed_at, created_at, task_definition_id, reward_amount, task_definitions(label)',
       )
-      .eq('branch_id', branchId)
       .in('task_status', [...ACHIEVEMENT_STATUSES])
       .order('completed_at', { ascending: true, nullsFirst: false })
       .range(offset, offset + CHUNK - 1)
+
+    if (branchId) q = q.eq('branch_id', branchId)
 
     const { lawyerId, dateFrom, dateTo } = filters
     q = applyDebtorScope(q, 'debtor_id', scopedDebtorIds)
@@ -192,7 +195,7 @@ async function fetchAchievementTasks(
 
 async function countOpenTasks(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   filters: ReportFilters,
   scopedDebtorIds: string[] | null,
 ): Promise<number> {
@@ -205,10 +208,11 @@ async function countOpenTasks(
     let q = supabase
       .from('tasks')
       .select('id, task_status')
-      .eq('branch_id', branchId)
       .in('task_status', OPEN_STATUSES)
       .order('created_at', { ascending: true })
       .range(offset, offset + CHUNK - 1)
+
+    if (branchId) q = q.eq('branch_id', branchId)
 
     q = applyDebtorScope(q, 'debtor_id', scopedDebtorIds)
     if (filters.lawyerId) q = q.eq('assigned_to', filters.lawyerId)
@@ -227,10 +231,10 @@ async function countOpenTasks(
   return total
 }
 
-/** Active-case stage counts via chunked scan — no full debtor list in memory. */
+/** Active-case stage counts via chunked scan — no full debtor list in memory. branchId=null → كل الفروع. */
 async function fetchStageCounts(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   taskDefs: { id: string; label: string; sort_order: number }[],
 ): Promise<{ stageCounts: ReportSnapshot['stageCounts']; totalActive: number }> {
   const stageMap = new Map<string, { id: string; label: string; active: number; stalled: number }>()
@@ -242,14 +246,16 @@ async function fetchStageCounts(
   let offset = 0
 
   while (true) {
-    const { data: debtors, error } = await supabase
+    let debtorsQ = supabase
       .from('debtors')
       .select('current_task_id')
-      .eq('branch_id', branchId)
       .or('case_status.is.null,case_status.neq.closed')
       .not('current_task_id', 'is', null)
       .order('id')
       .range(offset, offset + CHUNK - 1)
+    if (branchId) debtorsQ = debtorsQ.eq('branch_id', branchId)
+
+    const { data: debtors, error } = await debtorsQ
 
     if (error) {
       console.error('[fetchStageCounts:debtors]', error.message ?? error)
@@ -259,11 +265,13 @@ async function fetchStageCounts(
 
     const taskIds = debtors.map(d => d.current_task_id).filter(Boolean) as string[]
     if (taskIds.length) {
-      const { data: tasks } = await supabase
+      let tasksQ = supabase
         .from('tasks')
         .select('id, task_definition_id, task_status')
-        .eq('branch_id', branchId)
         .in('id', taskIds)
+      if (branchId) tasksQ = tasksQ.eq('branch_id', branchId)
+
+      const { data: tasks } = await tasksQ
 
       for (const task of tasks ?? []) {
         if (!task.task_definition_id) continue
@@ -316,44 +324,60 @@ function buildTopTasks(achievements: AchievementTask[]): { label: string; count:
   return Array.from(map.values()).sort((a, b) => b.count - a.count).slice(0, 8)
 }
 
-/** Load report data on demand with branch-first filtered queries. */
+/** Load report data on demand. branchId=null → كل الفروع (محاسب عام). */
 export async function fetchReportSnapshot(
   supabase: SupabaseClient,
   branchId: string | null,
   filters: ReportFilters,
 ): Promise<ReportSnapshot | null> {
-  if (!branchId) return null
-
   const scopedDebtorIds = await resolveScopedDebtorIds(supabase, branchId, filters)
 
   let closedQ = supabase
     .from('debtors')
     .select('id', { count: 'exact', head: true })
-    .eq('branch_id', branchId)
     .eq('case_status', 'closed')
+  if (branchId) closedQ = closedQ.eq('branch_id', branchId)
   closedQ = applyDebtorScope(closedQ, 'id', scopedDebtorIds)
 
+  const branchLawyersPromise = branchId
+    ? supabase
+        .from('profiles')
+        .select('id, full_name, governorate, lawyer_type')
+        .eq('branch_id', branchId)
+        .eq('role', 'lawyer')
+        .eq('is_active', true)
+        .order('full_name')
+    : supabase
+        .from('profiles')
+        .select('id, full_name, governorate, lawyer_type')
+        .eq('role', 'lawyer')
+        .eq('is_active', true)
+        .order('full_name')
+
   const [branchLawyersRes, generalLawyersRes, taskDefsRes, closedRes] = await Promise.all([
-    supabase
-      .from('profiles')
-      .select('id, full_name, governorate, lawyer_type')
-      .eq('branch_id', branchId)
-      .eq('role', 'lawyer')
-      .eq('is_active', true)
-      .order('full_name'),
-    supabase
-      .from('profiles')
-      .select('id, full_name, governorate, lawyer_type')
-      .eq('role', 'lawyer')
-      .eq('lawyer_type', 'general')
-      .eq('is_active', true)
-      .order('full_name'),
-    supabase
-      .from('task_definitions')
-      .select('id, label, sort_order')
-      .eq('branch_id', branchId)
-      .eq('is_active', true)
-      .order('sort_order'),
+    branchLawyersPromise,
+    branchId
+      ? supabase
+          .from('profiles')
+          .select('id, full_name, governorate, lawyer_type')
+          .eq('role', 'lawyer')
+          .eq('lawyer_type', 'general')
+          .eq('is_active', true)
+          .order('full_name')
+      : Promise.resolve({ data: [] as { id: string; full_name: string; governorate: string | null; lawyer_type: string | null }[] }),
+    branchId
+      ? supabase
+          .from('task_definitions')
+          .select('id, label, sort_order')
+          .eq('branch_id', branchId)
+          .eq('is_active', true)
+          .order('sort_order')
+      : supabase
+          .from('task_definitions')
+          .select('id, label, sort_order')
+          .eq('is_active', true)
+          .order('sort_order')
+          .limit(200),
     closedQ,
   ])
 

@@ -30,11 +30,11 @@ export default function TaskExpensesReviewCard({ taskId }: { taskId: string }) {
       })
   }, [taskId])
 
-  if (!loaded) return <p className="text-xs text-[#767676]">جارٍ تحميل الصرفيات...</p>
+  if (!loaded) return <p className="text-sm text-[#767676]">جارٍ تحميل الصرفيات...</p>
   if (!expenses.length) {
     return (
       <div className="border border-[rgba(118,118,118,0.15)] rounded-xl px-4 py-3">
-        <p className="text-xs text-[#767676] italic">لا توجد صرفيات مسجّلة لهذه المهمة</p>
+        <p className="text-sm text-[#767676] italic">لا توجد صرفيات مسجّلة لهذه المهمة</p>
       </div>
     )
   }
@@ -45,10 +45,10 @@ export default function TaskExpensesReviewCard({ taskId }: { taskId: string }) {
 
   return (
     <div className="border border-sky-200 rounded-xl overflow-hidden">
-      <div className="bg-sky-50 px-4 py-2.5 flex items-center justify-between">
-        <span className="text-xs font-bold text-sky-900">صرفيات المهمة ({expenses.length})</span>
+      <div className="bg-sky-50 px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-sm font-bold text-sky-900">صرفيات المهمة ({expenses.length})</span>
         {pendingTotal > 0 && (
-          <span className="text-[10px] font-bold text-yellow-700 bg-yellow-100 px-2 py-0.5 rounded-full">
+          <span className="text-xs font-bold text-yellow-700 bg-yellow-100 px-2.5 py-1 rounded-full">
             ستُخصم عند الاعتماد: {fmtMoney(pendingTotal)}
           </span>
         )}
@@ -58,28 +58,43 @@ export default function TaskExpensesReviewCard({ taskId }: { taskId: string }) {
           const s = exp.status ?? 'pending_review'
           const badge = STATUS_BADGE[s] ?? STATUS_BADGE.pending_review
           return (
-            <div key={exp.id} className="px-4 py-2.5 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs font-bold text-[#231F20]">{exp.expense_type ?? 'صرفية'}</p>
+            <div key={exp.id} className="px-4 py-3 flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <p className="text-sm leading-relaxed">
+                  <span className="text-[#767676] font-semibold">نوع الصرفية: </span>
+                  <span className="font-bold text-[#231F20]">{exp.expense_type ?? 'صرفية'}</span>
+                </p>
                 {exp.description && (
-                  <p className="text-[10px] text-[#767676] mt-0.5">{exp.description}</p>
+                  <p className="text-sm leading-relaxed">
+                    <span className="text-[#767676] font-semibold">ملاحظة: </span>
+                    <span className="font-semibold text-[#231F20]">{exp.description}</span>
+                  </p>
                 )}
                 {exp.max_allowed_amount != null && (
-                  <p className="text-[10px] text-sky-600 mt-0.5">الحد: {fmtMoney(Number(exp.max_allowed_amount))}</p>
+                  <p className="text-sm leading-relaxed">
+                    <span className="text-[#767676] font-semibold">الحد الأقصى: </span>
+                    <span className="font-semibold text-sky-700" dir="ltr">{fmtMoney(Number(exp.max_allowed_amount))}</span>
+                  </p>
                 )}
-                <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${badge.cls}`}>
-                  {badge.label}
-                </span>
+                <p className="text-sm flex items-center gap-2 flex-wrap">
+                  <span className="text-[#767676] font-semibold">الحالة:</span>
+                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${badge.cls}`}>
+                    {badge.label}
+                  </span>
+                </p>
               </div>
-              <span className="text-sm font-black text-sky-700 tabular-nums shrink-0" dir="ltr">
-                {fmtMoney(Number(exp.amount))}
-              </span>
+              <div className="shrink-0 text-left">
+                <p className="text-xs text-[#767676] font-semibold mb-0.5">المبلغ</p>
+                <p className="text-base font-black text-sky-700 tabular-nums" dir="ltr">
+                  {fmtMoney(Number(exp.amount))}
+                </p>
+              </div>
             </div>
           )
         })}
       </div>
       {pendingTotal > 0 && (
-        <p className="text-[10px] text-sky-700 px-4 py-2 bg-sky-50/30 border-t border-sky-100">
+        <p className="text-xs text-sky-700 px-4 py-2.5 bg-sky-50/30 border-t border-sky-100 leading-relaxed">
           عند اعتماد الإنجاز تُخصم من محفظة صرفيات المحامي — تأكد من كفاية الرصيد
         </p>
       )}

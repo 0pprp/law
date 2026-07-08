@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getBranchContext } from '@/lib/branch-context'
-import { USER_ROLE_LABELS, LAWYER_TYPE_LABELS } from '@/lib/types'
-import type { UserRole, LawyerType } from '@/lib/types'
+import { USER_ROLE_LABELS, LAWYER_TYPE_LABELS, ACCOUNTANT_TYPE_LABELS, displayRoleLabel } from '@/lib/types'
+import type { UserRole, LawyerType, AccountantType } from '@/lib/types'
 import Link from 'next/link'
 import LawyerActions from '@/components/LawyerActions'
 import { Badge } from '@/components/ui/badge'
@@ -10,7 +10,8 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { fmtDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { canCreateLawyerUser, canEditLawyerProfile, canManageUsers, canViewAllUsersAcrossBranches } from '@/lib/permissions'
+import { canCreateLawyerUser, canEditLawyerProfile, canDeleteUsers, canViewAllUsersAcrossBranches } from '@/lib/permissions'
+import { fetchStaffRoleFields } from '@/lib/staff-profile'
 
 const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange' | 'purple' | 'gray'>> = {
   admin: 'purple',
@@ -25,13 +26,11 @@ export default async function LawyersPage() {
   const { branchId } = await getBranchContext()
 
   const { data: { user } } = await supabase.auth.getUser()
-  const { data: myProfile } = user
-    ? await supabase.from('profiles').select('role').eq('id', user.id).single()
-    : { data: null }
-  const canManage = canManageUsers(myProfile?.role)
+  const myProfile = user ? await fetchStaffRoleFields(supabase, user.id) : null
+  const canDelete = canDeleteUsers(myProfile?.role)
   const canAddUser = canCreateLawyerUser(myProfile?.role)
   const showUserActions = canAddUser
-  const showAllBranches = canViewAllUsersAcrossBranches(myProfile?.role)
+  const showAllBranches = canViewAllUsersAcrossBranches(myProfile?.role, myProfile?.accountant_type)
 
   let profilesQ = supabase.from('profiles').select('*').order('created_at', { ascending: false })
   if (branchId && !showAllBranches) profilesQ = (profilesQ as any).eq('branch_id', branchId)
@@ -84,7 +83,7 @@ export default async function LawyersPage() {
                     <TH>الاسم</TH>
                     <TH>اسم المستخدم</TH>
                     <TH>الدور</TH>
-                    <TH>نوع المحامي</TH>
+                    <TH>النوع</TH>
                     {showAllBranches && <TH>الفرع</TH>}
                     <TH>الهاتف</TH>
                     <TH>الحالة</TH>
@@ -119,13 +118,17 @@ export default async function LawyersPage() {
                       </TD>
                       <TD>
                         <Badge variant={ROLE_BADGE[user.role as UserRole] ?? 'default'}>
-                          {USER_ROLE_LABELS[user.role as UserRole] ?? user.role}
+                          {displayRoleLabel(user.role, { accountant_type: user.accountant_type, lawyer_type: user.lawyer_type })}
                         </Badge>
                       </TD>
                       <TD>
                         {user.role === 'lawyer' ? (
                           <Badge variant={user.lawyer_type === 'general' ? 'purple' : 'info'}>
                             {LAWYER_TYPE_LABELS[(user.lawyer_type as LawyerType) ?? 'normal']}
+                          </Badge>
+                        ) : user.role === 'accountant' ? (
+                          <Badge variant={user.accountant_type === 'general' ? 'purple' : 'info'}>
+                            {ACCOUNTANT_TYPE_LABELS[(user.accountant_type as AccountantType) ?? 'branch']}
                           </Badge>
                         ) : (
                           <span className="text-[rgba(118,118,118,0.3)] text-xs">—</span>
@@ -151,7 +154,8 @@ export default async function LawyersPage() {
                           userId={user.id}
                           isActive={user.is_active}
                           fullName={user.full_name}
-                          readOnly={!canManage}
+                          role={user.role}
+                          canDelete={canDelete}
                           showEdit={canEditLawyerProfile(myProfile?.role, user.role)}
                         />
                       </TD>
@@ -180,10 +184,17 @@ export default async function LawyersPage() {
                     <Badge variant={user.is_active ? 'success' : 'danger'}>{user.is_active ? 'نشط' : 'موقوف'}</Badge>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant={ROLE_BADGE[user.role as UserRole] ?? 'default'}>{USER_ROLE_LABELS[user.role as UserRole] ?? user.role}</Badge>
+                    <Badge variant={ROLE_BADGE[user.role as UserRole] ?? 'default'}>
+                      {displayRoleLabel(user.role, { accountant_type: user.accountant_type, lawyer_type: user.lawyer_type })}
+                    </Badge>
                     {user.role === 'lawyer' && (
                       <Badge variant={user.lawyer_type === 'general' ? 'purple' : 'info'}>
                         {LAWYER_TYPE_LABELS[(user.lawyer_type as LawyerType) ?? 'normal']}
+                      </Badge>
+                    )}
+                    {user.role === 'accountant' && (
+                      <Badge variant={user.accountant_type === 'general' ? 'purple' : 'info'}>
+                        {ACCOUNTANT_TYPE_LABELS[(user.accountant_type as AccountantType) ?? 'branch']}
                       </Badge>
                     )}
                     {showAllBranches && user.branch_id && (
@@ -197,7 +208,8 @@ export default async function LawyersPage() {
                     userId={user.id}
                     isActive={user.is_active}
                     fullName={user.full_name}
-                    readOnly={!canManage}
+                    role={user.role}
+                    canDelete={canDelete}
                     showEdit={canEditLawyerProfile(myProfile?.role, user.role)}
                   />
                 </div>

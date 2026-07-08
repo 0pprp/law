@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useBranch } from '@/context/branch'
 import { fetchSelectableBranches } from '@/lib/branches-cache'
 import { isMainBranchName, pickDefaultBranch } from '@/lib/branch-constants'
-import { canPickAnyBranch } from '@/lib/permissions'
+import { canPickAnyBranch, isGeneralAccountant } from '@/lib/permissions'
 
 interface Branch {
   id: string
@@ -14,6 +14,7 @@ interface Branch {
 
 interface Props {
   userRole: string
+  accountantType?: string | null
   userBranchId?: string
   initialBranchId?: string
   initialBranchName?: string
@@ -36,9 +37,15 @@ function CheckIcon({ className }: { className?: string }) {
   )
 }
 
-export default function BranchSelector({ userRole, userBranchId, initialBranchId, initialBranchName }: Props) {
-  const canPickBranch = canPickAnyBranch(userRole)
-  const { branchId, branchName, setBranch } = useBranch()
+export default function BranchSelector({
+  userRole,
+  accountantType,
+  initialBranchId,
+  initialBranchName,
+}: Props) {
+  const canPickBranch = canPickAnyBranch(userRole, accountantType)
+  const allowViewAll = isGeneralAccountant(userRole, accountantType)
+  const { branchId, branchName, viewAllBranches, setBranch, setViewAllBranches } = useBranch()
 
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -47,23 +54,23 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
   const ref = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
-  // Load branches list — official 11 names only (never الكرخ / الرصافة)
   useEffect(() => {
     fetchSelectableBranches(createClient()).then(list => {
       setBranches(list)
+      if (!canPickBranch) return
+      if (allowViewAll) return
       const currentIsInvalid =
         !branchId ||
         isMainBranchName(branchName ?? initialBranchName) ||
         isMainBranchName(list.find(b => b.id === branchId)?.name)
-      if (canPickBranch && currentIsInvalid && list.length > 0) {
+      if (currentIsInvalid && list.length > 0) {
         const def = pickDefaultBranch(list)
-        if (def) handleSelect(def.id, def.name)
+        if (def) void handleSelect(def.id, def.name)
       }
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return
     function onOutside(e: MouseEvent) {
@@ -76,7 +83,6 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
     return () => document.removeEventListener('mousedown', onOutside)
   }, [open])
 
-  // Focus search when opened
   useEffect(() => {
     if (open) setTimeout(() => searchRef.current?.focus(), 50)
   }, [open])
@@ -100,14 +106,32 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
     }
   }
 
-  const activeName = branchName ?? initialBranchName ?? null
-  const activeId = branchId ?? initialBranchId ?? null
+  async function handleSelectAll() {
+    if (!canPickBranch || !allowViewAll) return
+    setSwitching(true)
+    try {
+      const res = await fetch('/api/admin/set-branch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ viewAll: true }),
+      })
+      if (res.ok) {
+        setViewAllBranches()
+        setOpen(false)
+        setSearch('')
+      }
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  const activeName = viewAllBranches ? 'الكل' : (branchName ?? initialBranchName ?? null)
+  const activeId = viewAllBranches ? null : (branchId ?? initialBranchId ?? null)
 
   const filtered = search.trim()
     ? branches.filter(b => b.name.includes(search.trim()))
     : branches
 
-  // ── Non-admin: premium static badge ──────────────────────────────────────
   if (!canPickBranch) {
     return (
       <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[#2C8780]/20 bg-gradient-to-l from-[#2C8780]/5 to-transparent">
@@ -124,11 +148,8 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
     )
   }
 
-  // ── Admin: premium interactive dropdown ───────────────────────────────────
   return (
     <div ref={ref} className="relative" dir="rtl">
-
-      {/* ── Trigger button ── */}
       <button
         onClick={() => !switching && setOpen(v => !v)}
         disabled={switching}
@@ -139,7 +160,6 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
             : 'bg-white border-[rgba(118,118,118,0.18)] text-[#231F20] hover:border-[#2C8780]/40 hover:shadow-sm hover:shadow-[#2C8780]/10',
         ].join(' ')}
       >
-        {/* Pin icon */}
         <div className={[
           'w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-all duration-200',
           open ? 'bg-white/15' : 'bg-[#2C8780]/8 group-hover:bg-[#2C8780]/12',
@@ -147,7 +167,6 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
           <PinIcon className={`w-3.5 h-3.5 ${open ? 'text-white' : 'text-[#2C8780]'}`} />
         </div>
 
-        {/* Label */}
         <div className="flex flex-col items-start min-w-0">
           <span className={`text-[9px] font-bold uppercase tracking-[0.08em] leading-none mb-0.5 ${open ? 'text-white/60' : 'text-[#767676]'}`}>
             الفرع الحالي
@@ -157,7 +176,6 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
           </span>
         </div>
 
-        {/* Chevron */}
         <svg
           className={`w-3.5 h-3.5 shrink-0 transition-all duration-200 ${open ? 'rotate-180 text-white/80' : 'text-[#767676] group-hover:text-[#2C8780]'}`}
           fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24"
@@ -166,7 +184,6 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
         </svg>
       </button>
 
-      {/* ── Dropdown panel ── */}
       {open && (
         <div
           className="absolute left-0 top-full mt-2 z-[200] w-64 rounded-2xl overflow-hidden"
@@ -176,7 +193,6 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
             boxShadow: '0 20px 60px -10px rgba(35,31,32,0.18), 0 4px 16px -4px rgba(35,31,32,0.08)',
           }}
         >
-          {/* Panel header */}
           <div
             className="px-4 py-3 flex items-center gap-2"
             style={{ background: 'linear-gradient(135deg, #2C8780 0%, #1D6365 100%)' }}
@@ -184,11 +200,12 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
             <PinIcon className="w-4 h-4 text-white/80 shrink-0" />
             <div>
               <p className="text-xs font-bold text-white leading-none">اختر الفرع</p>
-              <p className="text-[10px] text-white/50 mt-0.5">{branches.length} فرع متاح</p>
+              <p className="text-[10px] text-white/50 mt-0.5">
+                {allowViewAll ? `${branches.length} فرع + الكل` : `${branches.length} فرع متاح`}
+              </p>
             </div>
           </div>
 
-          {/* Search input */}
           <div className="p-3 border-b border-[rgba(118,118,118,0.08)]">
             <div className="relative">
               <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#767676] pointer-events-none" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -217,8 +234,39 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
             </div>
           </div>
 
-          {/* Branches list */}
           <div className="max-h-60 overflow-y-auto overscroll-contain py-1" style={{ scrollbarWidth: 'none' }}>
+            {allowViewAll && !search.trim() && (
+              <button
+                onClick={() => void handleSelectAll()}
+                disabled={switching}
+                className={[
+                  'w-full flex items-center gap-3 px-4 py-2.5 text-right transition-all duration-150 relative',
+                  viewAllBranches
+                    ? 'bg-gradient-to-l from-[#2C8780]/8 to-[#2C8780]/4'
+                    : 'hover:bg-[#F3F1F2] active:bg-[rgba(118,118,118,0.1)]',
+                ].join(' ')}
+              >
+                {viewAllBranches && (
+                  <div
+                    className="absolute right-0 top-1/2 -translate-y-1/2 w-0.5 h-6 rounded-l"
+                    style={{ background: 'linear-gradient(180deg, #2C8780, #1D6365)' }}
+                  />
+                )}
+                <div className={[
+                  'w-7 h-7 rounded-xl flex items-center justify-center shrink-0',
+                  viewAllBranches ? 'bg-[#2C8780]/12' : 'bg-[rgba(118,118,118,0.06)]',
+                ].join(' ')}>
+                  <svg className={`w-3.5 h-3.5 ${viewAllBranches ? 'text-[#2C8780]' : 'text-[#767676]'}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </div>
+                <span className={`flex-1 text-sm leading-none ${viewAllBranches ? 'font-bold text-[#2C8780]' : 'font-medium text-[#231F20]'}`}>
+                  الكل
+                </span>
+                {viewAllBranches && <CheckIcon className="w-4 h-4 text-[#2C8780] shrink-0" />}
+              </button>
+            )}
+
             {filtered.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-6">
                 <svg className="w-8 h-8 text-[rgba(118,118,118,0.3)]" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
@@ -228,11 +276,11 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
               </div>
             ) : (
               filtered.map((branch) => {
-                const isActive = branch.id === activeId
+                const isActive = !viewAllBranches && branch.id === activeId
                 return (
                   <button
                     key={branch.id}
-                    onClick={() => handleSelect(branch.id, branch.name)}
+                    onClick={() => void handleSelect(branch.id, branch.name)}
                     disabled={switching}
                     className={[
                       'w-full flex items-center gap-3 px-4 py-2.5 text-right transition-all duration-150 relative',
@@ -241,7 +289,6 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
                         : 'hover:bg-[#F3F1F2] active:bg-[rgba(118,118,118,0.1)]',
                     ].join(' ')}
                   >
-                    {/* Active indicator */}
                     {isActive && (
                       <div
                         className="absolute right-0 top-1/2 -translate-y-1/2 w-0.5 h-6 rounded-l"
@@ -269,12 +316,15 @@ export default function BranchSelector({ userRole, userBranchId, initialBranchId
             )}
           </div>
 
-          {/* Footer */}
           <div
             className="px-4 py-2.5 flex items-center justify-between border-t border-[rgba(118,118,118,0.08)]"
             style={{ background: '#F8F7F8' }}
           >
-            <span className="text-[10px] text-[#767676]">مدير النظام · كل الفروع</span>
+            <span className="text-[10px] text-[#767676]">
+              {allowViewAll
+                ? 'محاسب عام · فلتر الفروع'
+                : 'يمكن التبديل بين الفروع'}
+            </span>
             <div className="flex items-center gap-1">
               <div className="w-1.5 h-1.5 rounded-full bg-[#2C8780] animate-pulse" />
               <span className="text-[10px] text-[#2C8780] font-semibold">نشط</span>

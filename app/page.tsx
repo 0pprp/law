@@ -14,5 +14,6 @@ export default async function Home() {
     .single()
 
   if (profile?.role === 'lawyer') redirect('/lawyer')
+  if (profile?.role === 'delegate') redirect('/delegate')
   redirect('/admin/dashboard')
 }

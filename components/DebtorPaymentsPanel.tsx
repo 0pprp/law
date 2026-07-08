@@ -8,6 +8,7 @@ import { formatMoney } from '@/lib/money-input'
 import { syncDebtorRemainingAfterPayments } from '@/lib/debtor-balances'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { canDelete, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { appConfirm } from '@/lib/app-dialog'
 import { useAdminRole } from '@/context/admin-role'
 import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
 
@@ -40,7 +41,13 @@ export default function DebtorPaymentsPanel({ debtorId, debtorName, initialPayme
       setError(PERMISSION_DENIED_MSG)
       return
     }
-    if (!confirm(`حذف تسديد ${fmtMoney(Number(payment.amount))}؟\nسيُعاد المبلغ إلى المتبقي.`)) return
+    const ok = await appConfirm({
+      title: 'تأكيد الحذف',
+      message: `حذف تسديد ${fmtMoney(Number(payment.amount))}؟\nسيُعاد المبلغ إلى المتبقي.`,
+      confirmLabel: 'حذف',
+      danger: true,
+    })
+    if (!ok) return
 
     setDeletingId(payment.id)
     setError('')

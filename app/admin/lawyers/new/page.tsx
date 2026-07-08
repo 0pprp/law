@@ -16,6 +16,7 @@ import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { LAWYER_TYPE_OPTIONS } from '@/lib/lawyer-type'
+import { ACCOUNTANT_TYPE_OPTIONS } from '@/lib/accountant-type'
 import { uploadLawyerAttachment } from '@/lib/lawyer-attachments'
 
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
@@ -66,9 +67,11 @@ export default function NewLawyerPage() {
     full_name: '', username: '', temporary_password: '',
     phone: '', identity_number: '', identity_category: '', is_active: true,
     lawyer_type: 'normal' as 'normal' | 'general',
+    accountant_type: 'branch' as 'branch' | 'general',
   })
 
   const isLawyer = userRole === 'lawyer'
+  const isAccountantRole = userRole === 'accountant'
   const isViewerRole = userRole === 'viewer'
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
@@ -120,6 +123,7 @@ export default function NewLawyerPage() {
         identity_number: isLawyer ? form.identity_number.trim() : undefined,
         identity_category: isLawyer ? form.identity_category.trim() : undefined,
         lawyer_type: isLawyer ? form.lawyer_type : undefined,
+        accountant_type: isAccountantRole ? form.accountant_type : undefined,
         branch_id: branchId,
         role: userRole,
       }),
@@ -139,11 +143,14 @@ export default function NewLawyerPage() {
         return
       }
     }
+    const roleLabel = userRole === 'accountant' && form.accountant_type === 'general'
+      ? 'محاسب عام'
+      : USER_ROLE_LABELS[userRole as UserRole]
     await logActivity({
       action: userRole === 'accountant' ? 'create_accountant' : userRole === 'viewer' ? 'create_viewer' : 'create_lawyer',
       entity_type: 'profile',
       entity_id: userId,
-      description: `إنشاء مستخدم (${USER_ROLE_LABELS[userRole as UserRole]}): ${form.full_name}`,
+      description: `إنشاء مستخدم (${roleLabel}): ${form.full_name}`,
     }, createClient())
     router.push('/admin/lawyers')
   }
@@ -169,10 +176,14 @@ export default function NewLawyerPage() {
               <span className="block mt-1 text-[#2C8780]">مسؤول القانونية يطلع على كل الفروع — يمكنه إضافة محامين فقط.</span>
             )}
             {userRole === 'accountant' && !legalOfficerMode && (
-              <span className="block mt-1 text-[#2C8780]">سيُربط المحاسب تلقائياً بهذا الفرع فقط.</span>
+              <span className="block mt-1 text-[#2C8780]">
+                {form.accountant_type === 'general'
+                  ? 'محاسب عام — نفس صلاحيات المحاسب مع رؤية ومتابعة جميع الفروع.'
+                  : 'محاسب فرع — يُربَط بهذا الفرع فقط (مدينون + مالية).'}
+              </span>
             )}
             {isViewerRole && !legalOfficerMode && (
-              <span className="block mt-1 text-[#2C8780]">مسؤول القانونية يطلع على كل الفروع — تكليف ومراجعة إنجازات بدون إعدادات أو حذف.</span>
+              <span className="block mt-1 text-[#2C8780]">مسؤول القانونية: تكليف ومراجعة واعتماد الإنجازات والتقارير وإضافة محامين فقط — بدون حذف أو إعدادات.</span>
             )}
           </p>
         ) : (
@@ -183,7 +194,7 @@ export default function NewLawyerPage() {
 
         <Card>
           <CardHeader title="نوع الحساب" />
-          <div className="p-5">
+          <div className="p-5 space-y-4">
             <Field label="الدور" required>
               <PremiumSelect
                 value={userRole}
@@ -192,6 +203,15 @@ export default function NewLawyerPage() {
                 disabled={legalOfficerMode}
               />
             </Field>
+            {isAccountantRole && (
+              <Field label="نوع المحاسب" required hint="محاسب الفرع مقيّد بفرعه — المحاسب العام يرى كل الفروع">
+                <PremiumSelect
+                  value={form.accountant_type}
+                  onChange={v => set('accountant_type', v)}
+                  options={ACCOUNTANT_TYPE_OPTIONS}
+                />
+              </Field>
+            )}
           </div>
         </Card>
 

@@ -14,31 +14,26 @@ import { LEGAL_ISSUE_DATE_LABEL, RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEI
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { FormFlow, FormFlowHero, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { cn } from '@/lib/utils'
-import { formatMoneyInput, parseMoneyInput } from '@/lib/money-input'
+import { parseMoneyInput } from '@/lib/money-input'
 import { canAddDebtor } from '@/lib/permissions'
 import { useAdminRole } from '@/context/admin-role'
 import BranchListSelect from '@/components/BranchListSelect'
 import { useBranchLists } from '@/hooks/use-branch-lists'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
+/** قيمة واجهة فقط — تُحفظ في DB كـ other لتفادي كسر القيود */
+const RECEIPT_TYPE_NONE = 'none'
 
-type DebtorFormField =
-  | 'selectedTaskDefId'
-  | 'full_name'
-  | 'phone'
-  | 'id_number'
-  | 'address'
-  | 'receipt_number'
-  | 'receipt_amount'
-  | 'remaining_amount'
-  | 'penalty_amount'
+type DebtorFormField = 'selectedTaskDefId'
 
 type FieldErrors = Partial<Record<DebtorFormField, string>>
 
 interface TaskDef { id: string; label: string; fee_amount: number }
 
-function hasMoneyDigits(value: string): boolean {
-  return value.replace(/[^\d]/g, '').length > 0
+function resolveReceiptType(value: string): ReceiptType {
+  if (!value || value === RECEIPT_TYPE_NONE) return 'other'
+  if ((FORM_RECEIPT_TYPES as string[]).includes(value)) return value as ReceiptType
+  return 'other'
 }
 
 export default function NewDebtorPage() {
@@ -62,7 +57,7 @@ export default function NewDebtorPage() {
     phone: '',
     address: '',
     id_number: '',
-    receipt_type: 'check' as ReceiptType,
+    receipt_type: RECEIPT_TYPE_NONE,
     receipt_number: '',
     receipt_amount: '',
     remaining_amount: '',
@@ -87,35 +82,22 @@ export default function NewDebtorPage() {
     })
   }
 
-  function setMoney(field: 'receipt_amount' | 'remaining_amount' | 'penalty_amount', raw: string) {
-    setForm(prev => ({ ...prev, [field]: raw.replace(/[^\d]/g, '') }))
-    clearFieldError(field)
-  }
-
   function set(field: string, value: unknown) {
     setForm(prev => ({ ...prev, [field]: value }))
-    if (field in fieldErrors) clearFieldError(field as DebtorFormField)
   }
 
-  function inputClass(field?: DebtorFormField) {
+  function inputClass(invalid?: boolean) {
     return cn(
       formInputClass,
-      field && fieldErrors[field] && 'border-red-400 focus:border-red-500 focus:ring-red-200/40',
+      invalid && 'border-red-400 focus:border-red-500 focus:ring-red-200/40',
     )
   }
 
+  /** التحقق الوحيد الإلزامي: المهمة المطلوبة */
   function validateForm(): FieldErrors {
     const errors: FieldErrors = {}
-    if (!selectedTaskDefId) errors.selectedTaskDefId = 'يرجى اختيار المهمة الأولية'
-    if (!form.full_name.trim()) errors.full_name = 'يرجى إدخال الاسم الكامل'
-    if (!form.phone.trim()) errors.phone = 'يرجى إدخال رقم الهاتف'
-    if (!form.id_number.trim()) errors.id_number = 'يرجى إدخال رقم الهوية'
-    if (!form.address.trim()) errors.address = 'يرجى إدخال العنوان التفصيلي'
-    if (!form.receipt_number.trim()) errors.receipt_number = `يرجى إدخال ${RECEIPT_NUMBER_LABEL}`
-    if (!hasMoneyDigits(form.receipt_amount)) errors.receipt_amount = `يرجى إدخال ${RECEIPT_AMOUNT_LABEL}`
-    if (!hasMoneyDigits(form.remaining_amount)) errors.remaining_amount = 'يرجى إدخال المبلغ المتبقي'
-    if (form.has_contract && !hasMoneyDigits(form.penalty_amount)) {
-      errors.penalty_amount = 'يرجى إدخال الشرط الجزائي'
+    if (!selectedTaskDefId) {
+      errors.selectedTaskDefId = 'يجب اختيار المهمة المطلوبة قبل إضافة المدين.'
     }
     return errors
   }
@@ -147,7 +129,7 @@ export default function NewDebtorPage() {
     const validationErrors = validateForm()
     if (Object.keys(validationErrors).length > 0) {
       setFieldErrors(validationErrors)
-      setError('يرجى تعبئة جميع الحقول الإلزامية قبل الحفظ')
+      setError(validationErrors.selectedTaskDefId ?? 'يجب اختيار المهمة المطلوبة قبل إضافة المدين.')
       setSaving(false)
       return
     }
@@ -166,20 +148,24 @@ export default function NewDebtorPage() {
     const taskDef = taskDefs.find(t => t.id === selectedTaskDefId)
     const governorate = branchName ?? null
 
+    const remaining = parseMoneyInput(form.remaining_amount)
+    const receiptAmount = parseMoneyInput(form.receipt_amount)
+    const penalty = form.has_contract ? parseMoneyInput(form.penalty_amount) : 0
+
     const { data: newDebtor, error: dbError } = await supabase.from('debtors').insert({
-      full_name: form.full_name,
-      phone: form.phone.trim(),
+      full_name: form.full_name.trim() || '',
+      phone: form.phone.trim() || null,
       governorate,
-      address: form.address.trim(),
-      id_number: form.id_number.trim(),
+      address: form.address.trim() || null,
+      id_number: form.id_number.trim() || null,
       export_date: today,
-      receipt_type: form.receipt_type,
-      receipt_number: form.receipt_number.trim(),
-      receipt_amount: parseMoneyInput(form.receipt_amount),
-      remaining_amount: parseMoneyInput(form.remaining_amount),
-      required_amount: parseMoneyInput(form.remaining_amount),
+      receipt_type: resolveReceiptType(form.receipt_type),
+      receipt_number: form.receipt_number.trim() || null,
+      receipt_amount: receiptAmount,
+      remaining_amount: remaining,
+      required_amount: remaining,
       lawyer_fees: 0,
-      penalty_amount: form.has_contract ? parseMoneyInput(form.penalty_amount) : 0,
+      penalty_amount: penalty,
       receipt_signed_legal_costs: form.receipt_signed_legal_costs,
       notes: form.notes.trim() || null,
       created_by: user.id,
@@ -265,10 +251,13 @@ export default function NewDebtorPage() {
     hint: t.fee_amount > 0 ? `${Number(t.fee_amount).toLocaleString('en-US')} د.ع أتعاب` : undefined,
   }))
 
-  const receiptOptions = FORM_RECEIPT_TYPES.map(t => ({
-    value: t,
-    label: RECEIPT_TYPE_LABELS[t],
-  }))
+  const receiptOptions = [
+    { value: RECEIPT_TYPE_NONE, label: 'لا يوجد' },
+    ...FORM_RECEIPT_TYPES.map(t => ({
+      value: t,
+      label: RECEIPT_TYPE_LABELS[t],
+    })),
+  ]
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -297,21 +286,21 @@ export default function NewDebtorPage() {
 
           <FormFlowStep
             step={1}
-            title="المهمة الأولية"
-            subtitle="اختر المهمة القانونية التي يبدأ بها مسار هذا المدين"
+            title="المهمة المطلوبة"
+            subtitle="هذا الحقل الإلزامي الوحيد — بدون اختيار المهمة لا يمكن إضافة المدين"
             icon={
               <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
               </svg>
             }
           >
-            <FormField label="المهمة القانونية لهذا المدين" required error={fieldErrors.selectedTaskDefId}>
+            <FormField label="المهمة المطلوبة" required error={fieldErrors.selectedTaskDefId}>
               <PremiumSelect
                 value={selectedTaskDefId}
                 onChange={v => { setSelectedTaskDefId(v); clearFieldError('selectedTaskDefId') }}
                 options={taskOptions}
-                placeholder="— اختر المهمة الأولية —"
-                headerTitle="اختر المهمة القانونية"
+                placeholder="— اختر المهمة المطلوبة —"
+                headerTitle="اختر المهمة المطلوبة"
                 headerSubtitle={`${taskDefs.length} مهمة متاحة في هذا الفرع`}
                 searchPlaceholder="بحث في المهام..."
                 disabled={!branchOk}
@@ -337,19 +326,19 @@ export default function NewDebtorPage() {
             subtitle="معلومات التواصل والهوية للمدين"
           >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField label="الاسم الكامل" required error={fieldErrors.full_name}>
-                <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} className={inputClass('full_name')} placeholder="اسم المدين الكامل" />
+              <FormField label="الاسم الكامل" hint="اختياري">
+                <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} className={inputClass()} placeholder="اسم المدين الكامل" />
               </FormField>
-              <FormField label="رقم الهاتف" required error={fieldErrors.phone}>
-                <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} className={inputClass('phone')} dir="ltr" placeholder="+964..." />
+              <FormField label="رقم الهاتف" hint="اختياري">
+                <input type="text" value={form.phone} onChange={e => set('phone', e.target.value)} className={inputClass()} dir="ltr" placeholder="+964..." />
               </FormField>
-              <FormField label="رقم الهوية" required error={fieldErrors.id_number}>
-                <input type="text" value={form.id_number} onChange={e => set('id_number', e.target.value)} className={inputClass('id_number')} dir="ltr" />
+              <FormField label="رقم الهوية" hint="اختياري">
+                <input type="text" value={form.id_number} onChange={e => set('id_number', e.target.value)} className={inputClass()} dir="ltr" />
               </FormField>
-              <FormField label="العنوان التفصيلي" required error={fieldErrors.address}>
-                <input type="text" value={form.address} onChange={e => set('address', e.target.value)} className={inputClass('address')} placeholder="الحي، الشارع، رقم الدار" />
+              <FormField label="العنوان التفصيلي" hint="اختياري">
+                <input type="text" value={form.address} onChange={e => set('address', e.target.value)} className={inputClass()} placeholder="الحي، الشارع، رقم الدار" />
               </FormField>
-              <FormField label="القائمة">
+              <FormField label="القائمة" hint="اختياري">
                 <BranchListSelect
                   value={branchListId}
                   onChange={setBranchListId}
@@ -363,10 +352,10 @@ export default function NewDebtorPage() {
           <FormFlowStep
             step={3}
             title="بيانات المستند"
-            subtitle="تفاصيل الوصل والمبالغ المالية"
+            subtitle="كل الحقول اختيارية — يمكن تركها فارغة"
           >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField label={RECEIPT_TYPE_LABEL} required>
+              <FormField label={RECEIPT_TYPE_LABEL} hint="اختياري">
                 <PremiumSelect
                   value={form.receipt_type}
                   onChange={v => set('receipt_type', v)}
@@ -375,62 +364,73 @@ export default function NewDebtorPage() {
                   searchable={false}
                 />
               </FormField>
-              <FormField label={RECEIPT_NUMBER_LABEL} required error={fieldErrors.receipt_number}>
-                <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={inputClass('receipt_number')} dir="ltr" />
+              <FormField label={RECEIPT_NUMBER_LABEL} hint="اختياري">
+                <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={inputClass()} dir="ltr" />
               </FormField>
-              <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`} required error={fieldErrors.receipt_amount}>
+              <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`} hint="اختياري — أرقام أو نص">
                 <input
                   type="text"
-                  inputMode="numeric"
-                  value={formatMoneyInput(form.receipt_amount)}
-                  onChange={e => setMoney('receipt_amount', e.target.value)}
-                  className={inputClass('receipt_amount')}
+                  value={form.receipt_amount}
+                  onChange={e => set('receipt_amount', e.target.value)}
+                  className={inputClass()}
                   dir="ltr"
                   placeholder="0"
                 />
               </FormField>
-              <FormField label="المبلغ المتبقي (د.ع)" required error={fieldErrors.remaining_amount}>
+              <FormField label="المبلغ المتبقي (د.ع)" hint="اختياري — أرقام أو نص">
                 <input
                   type="text"
-                  inputMode="numeric"
-                  value={formatMoneyInput(form.remaining_amount)}
-                  onChange={e => setMoney('remaining_amount', e.target.value)}
-                  className={inputClass('remaining_amount')}
+                  value={form.remaining_amount}
+                  onChange={e => set('remaining_amount', e.target.value)}
+                  className={inputClass()}
                   dir="ltr"
                   placeholder="0"
                 />
               </FormField>
-              <div className="md:col-span-2">
-                <label className="flex items-center gap-2.5 cursor-pointer select-none p-3 rounded-xl border border-[rgba(118,118,118,0.12)] bg-[#FAFAFA] hover:bg-[#F3F1F2] transition-colors">
-                  <input type="checkbox" checked={form.receipt_signed_legal_costs}
-                    onChange={e => set('receipt_signed_legal_costs', e.target.checked)}
-                    className="w-4 h-4 rounded accent-[#2C8780]" />
-                  <span className="text-sm font-semibold text-[#231F20]">هل الوصل موقّع ليتحمّل المدين التكاليف القانونية؟</span>
-                </label>
-              </div>
               <div className="md:col-span-2">
                 <label className="flex items-center gap-2.5 cursor-pointer select-none p-3 rounded-xl border border-[rgba(118,118,118,0.12)] bg-[#FAFAFA] hover:bg-[#F3F1F2] transition-colors">
                   <input type="checkbox" checked={form.has_contract}
                     onChange={e => {
                       const checked = e.target.checked
-                      set('has_contract', checked)
-                      if (!checked) {
-                        set('penalty_amount', '')
-                        clearFieldError('penalty_amount')
-                      }
+                      // مرتبطان: عقد موقّع ⇒ الوصل موقّع لتحمل التكاليف القانونية
+                      setForm(prev => ({
+                        ...prev,
+                        has_contract: checked,
+                        receipt_signed_legal_costs: checked,
+                        penalty_amount: checked ? prev.penalty_amount : '',
+                      }))
                     }}
                     className="w-4 h-4 rounded accent-[#2C8780]" />
                   <span className="text-sm font-semibold text-[#231F20]">يوجد عقد موقّع</span>
                 </label>
               </div>
+              <div className="md:col-span-2">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none p-3 rounded-xl border border-[rgba(118,118,118,0.12)] bg-[#FAFAFA] hover:bg-[#F3F1F2] transition-colors">
+                  <input type="checkbox" checked={form.receipt_signed_legal_costs}
+                    onChange={e => {
+                      const checked = e.target.checked
+                      // مرتبطان: إلغاء أحدهما يلغي الآخر، وتفعيل التكاليف يستلزم العقد
+                      setForm(prev => ({
+                        ...prev,
+                        receipt_signed_legal_costs: checked,
+                        has_contract: checked,
+                        penalty_amount: checked ? prev.penalty_amount : '',
+                      }))
+                    }}
+                    className="w-4 h-4 rounded accent-[#2C8780]" />
+                  <span className="text-sm font-semibold text-[#231F20]">هل الوصل موقّع ليتحمّل المدين التكاليف القانونية؟</span>
+                </label>
+                {form.has_contract && (
+                  <p className="text-[11px] text-[#2C8780] mt-1.5 px-1">مربوط مع «يوجد عقد موقّع» — يُفعَّلان معاً.</p>
+                )}
+              </div>
               {form.has_contract && (
-                <FormField label="الشرط الجزائي (د.ع)" required error={fieldErrors.penalty_amount}>
+                <FormField label="الشرط الجزائي (د.ع)" hint="اختياري — أرقام أو نص">
                   <input
                     type="text"
-                    inputMode="numeric"
-                    value={formatMoneyInput(form.penalty_amount)}
-                    onChange={e => setMoney('penalty_amount', e.target.value)}
-                    className={inputClass('penalty_amount')}
+                    value={form.penalty_amount}
+                    onChange={e => set('penalty_amount', e.target.value)}
+                    className={inputClass()}
                     dir="ltr"
                     placeholder="0"
                   />

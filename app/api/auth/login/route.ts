@@ -71,7 +71,10 @@ export async function POST(request: Request) {
         role = p?.role ?? 'lawyer'
       }
 
-      const redirectTo = role === 'lawyer' ? '/lawyer' : '/admin/dashboard'
+      const redirectTo =
+        role === 'lawyer' ? '/lawyer'
+        : role === 'delegate' ? '/delegate'
+        : '/admin/dashboard'
       console.log('[login] email fallback success, role:', role)
       return NextResponse.json({ redirectTo })
     }
@@ -118,7 +121,10 @@ export async function POST(request: Request) {
     role = profile.role
 
     // ── 6. Return redirect ────────────────────────────────────────────
-    const redirectTo = role === 'lawyer' ? '/lawyer' : '/admin/dashboard'
+    const redirectTo =
+      role === 'lawyer' ? '/lawyer'
+      : role === 'delegate' ? '/delegate'
+      : '/admin/dashboard'
     console.log('[login] success, role:', role, '→', redirectTo)
     return NextResponse.json({ redirectTo })
 

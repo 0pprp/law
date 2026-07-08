@@ -1,5 +1,6 @@
-export type UserRole = 'admin' | 'employee' | 'accountant' | 'lawyer' | 'viewer'
+export type UserRole = 'admin' | 'employee' | 'accountant' | 'lawyer' | 'viewer' | 'delegate'
 export type LawyerType = 'normal' | 'general'
+export type AccountantType = 'branch' | 'general'
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent'
 export type ReceiptStatus = 'pending' | 'approved' | 'rejected'
 export type WalletTransactionType = 'accountant_transfer' | 'approved_task_payment' | 'manual_adjustment' | 'fee_payout' | 'transfer_from_savings' | 'savings_withdrawal' | 'task_expense_deduction' | 'lawyer_expense_wallet_deduction' | 'legal_manager_task_bonus' | 'legal_manager_percentage_fee' | 'legal_manager_withdrawal' | 'legal_manager_manual_deposit' | 'legal_manager_manual_withdrawal'
@@ -77,6 +78,7 @@ export interface Profile {
   identity_number: string | null
   identity_category: string | null
   lawyer_type?: LawyerType | null
+  accountant_type?: AccountantType | null
   branch_id?: string | null
   avatar_url: string | null
   is_active: boolean
@@ -318,11 +320,38 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   accountant: 'محاسب',
   lawyer: 'محامي',
   viewer: 'مسؤول القانونية',
+  delegate: 'مندوب',
 }
 
 export const LAWYER_TYPE_LABELS: Record<LawyerType, string> = {
   normal: 'محامي عادي',
   general: 'محامي عام',
+}
+
+export const ACCOUNTANT_TYPE_LABELS: Record<AccountantType, string> = {
+  branch: 'محاسب فرع',
+  general: 'محاسب عام',
+}
+
+/** تسمية الدور في سجل النشاط والواجهة — مع نوع المحاسب/المحامي إن وُجد */
+export function displayRoleLabel(
+  role: string | null | undefined,
+  opts?: { accountant_type?: string | null; lawyer_type?: string | null },
+): string {
+  if (role === 'accountant' && opts?.accountant_type === 'general') return 'محاسب عام'
+  if (role === 'lawyer' && opts?.lawyer_type === 'general') return 'محامي عام'
+  if (role && role in USER_ROLE_LABELS) return USER_ROLE_LABELS[role as UserRole]
+  return role ?? '—'
+}
+
+/** تسمية صف المكلّف في الإنجازات/المهام: المندوب أو المحامي */
+export function assigneePersonLabel(role?: string | null): string {
+  return role === 'delegate' ? 'المندوب' : 'المحامي'
+}
+
+/** تسمية ملاحظات المكلّف */
+export function assigneeNotesLabel(role?: string | null): string {
+  return role === 'delegate' ? 'ملاحظات المندوب' : 'ملاحظات المحامي'
 }
 
 export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {

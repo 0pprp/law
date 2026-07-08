@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { TASK_TYPE_LABELS } from '@/lib/types'
+import { TASK_TYPE_LABELS, assigneePersonLabel, assigneeNotesLabel } from '@/lib/types'
 import type { TaskType } from '@/lib/types'
 import { fmtDate, fmtMoney } from '@/lib/utils'
 import { logActivity } from '@/lib/activity-log'
@@ -10,11 +10,12 @@ import { extractGpsFromCompletion } from '@/lib/task-approval'
 import { rejectTaskViaApi, taskTransitionViaApi } from '@/lib/task-operations-api'
 import TaskExpensesReviewCard from '@/components/TaskExpensesReviewCard'
 import { fetchPendingReviewTasksPaginated, fetchPendingReviewTaskById, fetchBranchLawyers, REVIEW_TASK_PAGE_SIZE } from '@/lib/task-assignment'
-import { cacheGet, cacheSet, cacheDelete, CACHE_TTL } from '@/lib/query-cache'
+import { fetchBranchDelegates } from '@/lib/branch-profiles'
+import { cacheGet, cacheSet, cacheDelete, cacheInvalidatePrefix, CACHE_TTL } from '@/lib/query-cache'
 import { refreshAdminNotifications } from '@/lib/admin-notifications'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/ui/page-header'
-import { useBranchId } from '@/context/branch'
+import { useBranch, useBranchId } from '@/context/branch'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { fetchActiveTaskDefinitions } from '@/lib/task-definitions'
 import { buildCompletionFieldLabelMap, resolveCompletionFieldLabel } from '@/lib/completion-field-labels'
@@ -44,7 +45,7 @@ function CompletionDataCard({ data, gpsKeys, fieldLabels }: {
   if (!entries.length) return null
   return (
     <div className="border border-[rgba(118,118,118,0.15)] rounded-xl overflow-hidden">
-      <div className="bg-[#F3F1F2] px-4 py-2.5 text-xs font-bold text-[#767676]">
+      <div className="bg-[#F3F1F2] px-4 py-2.5 text-sm font-bold text-[#767676]">
         بيانات الإنجاز
       </div>
       <div className="divide-y divide-[rgba(118,118,118,0.08)]">
@@ -54,15 +55,15 @@ function CompletionDataCard({ data, gpsKeys, fieldLabels }: {
           const label = resolveCompletionFieldLabel(key, fieldLabels)
           return (
             <div key={key} className="px-4 py-2.5 flex items-start gap-3">
-              <span className="text-xs text-[#767676] shrink-0 min-w-[100px]">{label}</span>
+              <span className="text-sm text-[#767676] shrink-0 min-w-[110px] font-semibold">{label}:</span>
               {isGps && gpsCoords ? (
                 <a href={`https://www.google.com/maps?q=${gpsCoords.lat},${gpsCoords.lng}`}
                   target="_blank" rel="noreferrer"
-                  className="text-xs font-semibold text-[#2C8780] hover:underline" dir="ltr">
+                  className="text-sm font-semibold text-[#2C8780] hover:underline" dir="ltr">
                   {val} 🗺️
                 </a>
               ) : (
-                <span className="text-xs font-semibold text-[#231F20] break-all">{val}</span>
+                <span className="text-sm font-semibold text-[#231F20] break-all">{val}</span>
               )}
             </div>
           )
@@ -91,16 +92,19 @@ function AttachmentsCard({ taskId }: { taskId: string }) {
       })
   }, [taskId])
 
-  if (!loaded) return <p className="text-xs text-[#767676]">جارٍ التحميل...</p>
-  if (!atts.length) return <p className="text-xs text-[#767676] italic">لا توجد مرفقات</p>
+  if (!loaded) return <p className="text-sm text-[#767676]">جارٍ التحميل...</p>
+  if (!atts.length) return <p className="text-sm text-[#767676] italic">لا توجد مرفقات</p>
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       {atts.map(att => (
         <div key={att.id} className="flex items-center justify-between gap-3 py-1.5 border-b border-[rgba(118,118,118,0.08)] last:border-0">
-          <span className="text-xs text-[#231F20] truncate flex-1">{att.file_name}</span>
+          <span className="text-sm text-[#231F20] truncate flex-1">
+            <span className="text-[#767676] font-semibold">الملف: </span>
+            {att.file_name}
+          </span>
           {att.url
-            ? <a href={att.url} target="_blank" rel="noreferrer" className="text-xs text-[#2C8780] font-bold shrink-0">فتح ↗</a>
-            : <span className="text-xs text-[#767676] shrink-0">غير متاح</span>}
+            ? <a href={att.url} target="_blank" rel="noreferrer" className="text-sm text-[#2C8780] font-bold shrink-0">فتح ↗</a>
+            : <span className="text-sm text-[#767676] shrink-0">غير متاح</span>}
         </div>
       ))}
     </div>
@@ -313,8 +317,10 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
           <div className="px-5 py-4 border-b border-[rgba(118,118,118,0.1)] flex items-center justify-between shrink-0">
             <div>
               <h2 className="font-bold text-[#231F20] text-base">{taskLabel}</h2>
-              <p className="text-xs text-[#767676] mt-0.5">
-                {task.debtors?.full_name ?? '—'} · {task.lawyer?.full_name ?? '—'}
+              <p className="text-sm text-[#767676] mt-0.5">
+                <span className="font-semibold">المدين:</span> {task.debtors?.full_name ?? '—'}
+                {' · '}
+                <span className="font-semibold">{assigneePersonLabel(task.lawyer?.role)}:</span> {task.lawyer?.full_name ?? '—'}
               </p>
             </div>
             <button onClick={onClose}
@@ -326,25 +332,25 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
           <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-[#F3F1F2] rounded-xl p-3">
-                <p className="text-[10px] text-[#767676] mb-1">الأتعاب</p>
-                <p className="text-sm font-black text-[#2C8780]" dir="ltr">{fmtMoney(task.reward_amount)}</p>
+                <p className="text-xs text-[#767676] mb-1 font-semibold">الأتعاب</p>
+                <p className="text-base font-black text-[#2C8780]" dir="ltr">{fmtMoney(task.reward_amount)}</p>
               </div>
               <div className="bg-[#F3F1F2] rounded-xl p-3">
-                <p className="text-[10px] text-[#767676] mb-1">تاريخ الإنجاز</p>
-                <p className="text-sm font-bold text-[#231F20]" dir="ltr">
+                <p className="text-xs text-[#767676] mb-1 font-semibold">تاريخ الإنجاز</p>
+                <p className="text-base font-bold text-[#231F20]" dir="ltr">
                   {task.completed_at ? fmtDate(task.completed_at.split('T')[0]) : '—'}
                 </p>
               </div>
               {task.court_name && (
                 <div className="bg-[#F3F1F2] rounded-xl p-3">
-                  <p className="text-[10px] text-[#767676] mb-1">المحكمة</p>
-                  <p className="text-sm font-bold text-[#231F20]">{task.courts?.name ?? task.court_name}</p>
+                  <p className="text-xs text-[#767676] mb-1 font-semibold">المحكمة</p>
+                  <p className="text-base font-bold text-[#231F20]">{task.courts?.name ?? task.court_name}</p>
                 </div>
               )}
               {task.lawyer_notes && (
                 <div className="bg-[#F3F1F2] rounded-xl p-3">
-                  <p className="text-[10px] text-[#767676] mb-1">ملاحظات المحامي</p>
-                  <p className="text-xs font-semibold text-[#231F20]">{task.lawyer_notes}</p>
+                  <p className="text-xs text-[#767676] mb-1 font-semibold">{assigneeNotesLabel(task.lawyer?.role)}</p>
+                  <p className="text-sm font-semibold text-[#231F20]">{task.lawyer_notes}</p>
                 </div>
               )}
             </div>
@@ -358,7 +364,7 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
             )}
 
             <div className="border border-[rgba(118,118,118,0.15)] rounded-xl overflow-hidden">
-              <div className="bg-[#F3F1F2] px-4 py-2.5 text-xs font-bold text-[#767676] uppercase tracking-wide">المرفقات</div>
+              <div className="bg-[#F3F1F2] px-4 py-2.5 text-sm font-bold text-[#767676]">المرفقات</div>
               <div className="px-4 py-3"><AttachmentsCard taskId={task.id} /></div>
             </div>
 
@@ -420,6 +426,7 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
 /* ─── Page ────────────────────────────────────────────────────────────── */
 export default function TaskReviewPage() {
   const branchId = useBranchId()
+  const { viewAllBranches } = useBranch()
   const role = useAdminRole()
   const canReview = canReviewTasks(role)
   const isReadOnlyReview = canReadAdminData(role) && !canReview
@@ -431,16 +438,23 @@ export default function TaskReviewPage() {
   const [loading, setLoading] = useState(true)
   const [reviewing, setReviewing] = useState<any | null>(null)
   const [filterLawyer, setFilterLawyer] = useState('')
+  const [filterDelegate, setFilterDelegate] = useState('')
   const [lawyers, setLawyers] = useState<any[]>([])
+  const [delegates, setDelegates] = useState<{ id: string; full_name: string }[]>([])
   const lawyersRef = useRef(lawyers)
+  const delegatesRef = useRef(delegates)
   lawyersRef.current = lawyers
+  delegatesRef.current = delegates
+
+  const assigneeFilterId = filterDelegate || filterLawyer || null
 
   const load = useCallback(async (append = false, offset = 0) => {
     const supabase = createClient()
 
-    if (!branchId) {
+    if (!branchId && !viewAllBranches) {
       setTasks([])
       setLawyers([])
+      setDelegates([])
       setTotal(0)
       setLoading(false)
       return
@@ -448,11 +462,12 @@ export default function TaskReviewPage() {
 
     if (append) setLoadingMore(true)
     else {
-      const cacheKey = `tasks:review:${branchId}:${filterLawyer}:${offset}`
-      const cached = cacheGet<{ tasks: any[]; lawyers: any[]; total: number }>(cacheKey)
+      const cacheKey = `tasks:review:v3:${branchId ?? 'all'}:${assigneeFilterId ?? 'all'}:${offset}`
+      const cached = cacheGet<{ tasks: any[]; lawyers: any[]; delegates: any[]; total: number }>(cacheKey)
       if (cached && !append) {
         setTasks(cached.tasks)
         setLawyers(cached.lawyers)
+        setDelegates(cached.delegates ?? [])
         setTotal(cached.total)
         setPageOffset(cached.tasks.length)
         setLoading(false)
@@ -462,14 +477,17 @@ export default function TaskReviewPage() {
       if (!append) setTasks([])
     }
 
-    const [page, l] = await Promise.all([
+    const [page, l, dRes] = await Promise.all([
       fetchPendingReviewTasksPaginated(supabase, branchId, {
         offset,
         limit: REVIEW_TASK_PAGE_SIZE,
-        lawyerId: filterLawyer || null,
+        lawyerId: assigneeFilterId,
         includeCompletionData: true,
       }),
       append ? Promise.resolve(lawyersRef.current) : fetchBranchLawyers(supabase, branchId),
+      append
+        ? Promise.resolve({ delegates: delegatesRef.current })
+        : fetchBranchDelegates(supabase, branchId),
     ])
 
     const rawTasks = page.tasks
@@ -498,28 +516,33 @@ export default function TaskReviewPage() {
       _gpsKeys: gpsMap[task.task_definition_id ?? ''] ?? [],
       _fieldLabels: labelMapByDef[task.task_definition_id ?? ''] ?? {},
     }))
+    const nextDelegates = dRes.delegates ?? []
 
     setTasks(prev => {
       const merged = append ? [...prev, ...nextTasks] : nextTasks
-      cacheSet(`tasks:review:${branchId}:${filterLawyer}:${offset}`, {
+      cacheSet(`tasks:review:v3:${branchId ?? 'all'}:${assigneeFilterId ?? 'all'}:${offset}`, {
         tasks: merged,
         lawyers: l ?? [],
+        delegates: nextDelegates,
         total: page.total,
       }, CACHE_TTL.list)
       return merged
     })
 
-    if (!append) setLawyers(l ?? [])
+    if (!append) {
+      setLawyers(l ?? [])
+      setDelegates(nextDelegates)
+    }
     setTotal(page.total)
     setPageOffset(offset + nextTasks.length)
     setLoading(false)
     setLoadingMore(false)
-  }, [branchId, filterLawyer])
+  }, [branchId, viewAllBranches, assigneeFilterId])
 
   useEffect(() => {
     setPageOffset(0)
     load(false, 0)
-  }, [branchId, filterLawyer])
+  }, [branchId, viewAllBranches, assigneeFilterId, load])
 
   useEffect(() => {
     const loadDefs = async () => {
@@ -528,15 +551,15 @@ export default function TaskReviewPage() {
       setTaskDefs(data as unknown as TaskDef[])
     }
     loadDefs()
-  }, [branchId])
+  }, [branchId, viewAllBranches])
 
   async function openReview(task: any) {
     if (task.completion_data) {
       setReviewing(task)
       return
     }
+    if (!branchId && !viewAllBranches) return
     const supabase = createClient()
-    if (!branchId) return
     const full = await fetchPendingReviewTaskById(supabase, branchId, task.id)
     setReviewing(full ? { ...full, _gpsKeys: task._gpsKeys, _fieldLabels: task._fieldLabels } : task)
   }
@@ -550,17 +573,36 @@ export default function TaskReviewPage() {
         subtitle={`${total} مهمة بانتظار الاعتماد`}
       />
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="w-60">
           <PremiumSelect
             value={filterLawyer}
-            onChange={setFilterLawyer}
+            onChange={(v) => {
+              setFilterLawyer(v)
+              if (v) setFilterDelegate('')
+            }}
             options={[
               { value: '', label: 'كل المحامين' },
               ...lawyers.map(l => ({ value: l.id, label: l.full_name })),
             ]}
             placeholder="كل المحامين"
             headerTitle="تصفية حسب المحامي"
+            searchPlaceholder="بحث..."
+          />
+        </div>
+        <div className="w-60">
+          <PremiumSelect
+            value={filterDelegate}
+            onChange={(v) => {
+              setFilterDelegate(v)
+              if (v) setFilterLawyer('')
+            }}
+            options={[
+              { value: '', label: 'كل المندوبين' },
+              ...delegates.map(d => ({ value: d.id, label: d.full_name })),
+            ]}
+            placeholder="كل المندوبين"
+            headerTitle="تصفية حسب المندوب"
             searchPlaceholder="بحث..."
           />
         </div>
@@ -604,7 +646,7 @@ export default function TaskReviewPage() {
                 </div>
 
                 <div className="px-4 py-3 flex-1 space-y-2">
-                  <InfoRow label="المحامي" value={task.lawyer?.full_name} />
+                  <InfoRow label={assigneePersonLabel(task.lawyer?.role)} value={task.lawyer?.full_name} />
                   <InfoRow label="تاريخ التكليف" value={task.assigned_at ? fmtDate(task.assigned_at.split('T')[0]) : undefined} />
                   <InfoRow label="تاريخ الاستحقاق" value={task.due_date ? fmtDate(task.due_date) : undefined} />
                   <InfoRow label="المحكمة" value={courtName} />
@@ -663,10 +705,9 @@ export default function TaskReviewPage() {
           onClose={() => setReviewing(null)}
           onDone={() => {
             setReviewing(null)
-            if (branchId) {
-              cacheDelete(`tasks:review:${branchId}:${filterLawyer}:0`)
-              cacheDelete(`dashboard:${branchId}`)
-            }
+            cacheInvalidatePrefix('tasks:review:')
+            if (branchId) cacheDelete(`dashboard:${branchId}`)
+            else cacheInvalidatePrefix('dashboard:')
             setPageOffset(0)
             load(false, 0)
             refreshAdminNotifications()

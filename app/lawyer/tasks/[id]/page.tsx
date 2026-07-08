@@ -91,7 +91,7 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
 
   const { data: debtor } = await supabase
     .from('debtors')
-    .select('full_name, phone, address, governorate, receipt_type, receipt_amount, remaining_amount, latitude, longitude, location_captured_at')
+    .select('full_name, phone, address, governorate, receipt_type, receipt_amount, remaining_amount, latitude, longitude, location_captured_at, branch_list:branch_lists(name)')
     .eq('id', task.debtor_id)
     .single()
 
@@ -171,7 +171,13 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     latitude?: number | null
     longitude?: number | null
     location_captured_at?: string | null
+    branch_list?: { name?: string } | { name?: string }[] | null
   } | null
+
+  const debtorListName = (() => {
+    const bl = Array.isArray(d?.branch_list) ? d.branch_list[0] : d?.branch_list
+    return bl?.name?.trim() || null
+  })()
 
   const primaryDebtorFile =
     debtorAttachments.find(att => att.signedUrl && att.mime_type === 'application/pdf')
@@ -243,6 +249,7 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
           />
           {Number(d?.receipt_amount) > 0 && <InfoRow label={RECEIPT_AMOUNT_LABEL} value={fmtMoney(d!.receipt_amount!)} />}
           {Number(d?.remaining_amount) > 0 && <InfoRow label="المبلغ المتبقي" value={fmtMoney(d!.remaining_amount!)} />}
+          {debtorListName && <InfoRow label="القائمة" value={debtorListName} />}
           {d?.address && <InfoRow label="العنوان" value={d.address} />}
           {d?.governorate && <InfoRow label="المحافظة" value={d.governorate} />}
           <div className="flex justify-between items-center gap-4 py-2.5 border-b border-slate-100 last:border-0">

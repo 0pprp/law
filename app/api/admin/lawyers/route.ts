@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
     temporary_password, full_name, phone, is_active,
     governorate, identity_number, identity_category,
     username, branch_id: bodyBranchId, role: bodyRole, lawyer_type: bodyLawyerType,
+    accountant_type: bodyAccountantType,
   } = await request.json()
 
   const { branchId: cookieBranchId } = await getBranchContext()
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
   if (authError || !authData.user)
     return NextResponse.json({ error: authError?.message ?? 'فشل إنشاء الحساب' }, { status: 400 })
 
-  const profileUpdate = {
+  const profileUpdate: Record<string, unknown> = {
     username: cleanUsername,
     full_name,
     phone: String(phone).trim(),
@@ -100,12 +101,22 @@ export async function POST(request: NextRequest) {
     lawyer_type: userRole === 'lawyer'
       ? (bodyLawyerType === 'general' ? 'general' : 'normal')
       : 'normal',
+    accountant_type: userRole === 'accountant'
+      ? (bodyAccountantType === 'general' ? 'general' : 'branch')
+      : 'branch',
     branch_id: branchId,
   }
 
-  const { error: profileError } = await admin.from('profiles').update(profileUpdate).eq('id', authData.user.id)
+  let { error: profileError } = await admin.from('profiles').update(profileUpdate).eq('id', authData.user.id)
 
-  if (profileError) {
+  // العمود قد لا يكون موجوداً قبل تطبيق SQL — لا نكسر إنشاء المستخدم
+  if (profileError && String(profileError.message ?? '').includes('accountant_type')) {
+    const { accountant_type: _removed, ...withoutAccountantType } = profileUpdate
+    ;({ error: profileError } = await admin.from('profiles').update(withoutAccountantType).eq('id', authData.user.id))
+    if (profileError) {
+      await admin.from('profiles').upsert({ id: authData.user.id, ...withoutAccountantType })
+    }
+  } else if (profileError) {
     await admin.from('profiles').upsert({ id: authData.user.id, ...profileUpdate })
   }
 

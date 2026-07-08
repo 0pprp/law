@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { TaskStatus } from '@/lib/types'
-import { endOfLocalDay, endOfNextLocalDay } from '@/lib/local-date'
+import {
+  endOfLocalDay,
+  endOfNextLocalDay,
+  localTodayYmd,
+  OVERDUE_TERMINAL_STATUSES,
+} from '@/lib/local-date'
 import { fetchAssignmentLawyers } from '@/lib/branch-profiles'
 import { isGeneralLawyerType } from '@/lib/lawyer-type'
 import { formatErrorMessage } from '@/lib/format-error'
@@ -43,8 +48,11 @@ export interface CurrentBranchTaskRow {
   task_definition_id: string | null
   task_type: string | null
   branch_id: string | null
+  branchName: string | null
+  branchListName: string | null
   lawyerId: string | null
   lawyerName: string | null
+  lawyerRole: string | null
   debtorName: string
   debtorPhone: string | null
   debtorReceiptNumber: string | null
@@ -59,7 +67,8 @@ export function taskLawyerId(task: {
   return task.assigned_to ?? task.lawyer_id ?? null
 }
 
-function taskMatchesBranch(task: { branch_id?: string | null }, branchId: string): boolean {
+function taskMatchesBranch(task: { branch_id?: string | null }, branchId: string | null): boolean {
+  if (!branchId) return true
   return task.branch_id === branchId
 }
 
@@ -95,7 +104,7 @@ export interface PendingReviewTask {
     latitude?: number | null
     longitude?: number | null
   } | null
-  lawyer: { id: string; full_name: string } | null
+  lawyer: { id: string; full_name: string; role?: string | null } | null
   task_definitions: { id: string; label: string } | null
   courts: { name: string } | null
 }
@@ -103,8 +112,9 @@ export interface PendingReviewTask {
 function taskBelongsToBranch(
   task: { branch_id?: string | null },
   debtor: { branch_id?: string | null } | null | undefined,
-  branchId: string,
+  branchId: string | null,
 ): boolean {
+  if (!branchId) return true
   const effective = task.branch_id ?? debtor?.branch_id ?? null
   return effective === branchId
 }
@@ -128,18 +138,20 @@ const REVIEW_TASK_DETAIL_COLS = `${REVIEW_TASK_LIST_COLS}, completion_data`
 
 async function hydratePendingReviewTasks(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   rawTasks: Record<string, unknown>[],
 ): Promise<PendingReviewTask[]> {
   if (!rawTasks.length) return []
 
   const debtorIds = [...new Set(rawTasks.map(t => t.debtor_id as string))]
-  const { data: debtors } = await supabase
+  let debtorsQ = supabase
     .from('debtors')
     .select('id, full_name, phone, governorate, case_status, branch_id')
-    .eq('branch_id', branchId)
     .in('id', debtorIds)
     .not('case_status', 'eq', 'closed')
+  if (branchId) debtorsQ = debtorsQ.eq('branch_id', branchId)
+
+  const { data: debtors } = await debtorsQ
 
   const debtorMap = new Map((debtors ?? []).map(d => [d.id, d]))
   const branchTasks = rawTasks.filter(t => debtorMap.has(t.debtor_id as string))
@@ -151,8 +163,8 @@ async function hydratePendingReviewTasks(
 
   const [{ data: lawyers }, { data: defs }, { data: courts }] = await Promise.all([
     lawyerIds.length
-      ? supabase.from('profiles').select('id, full_name').in('id', lawyerIds)
-      : Promise.resolve({ data: [] as { id: string; full_name: string }[] }),
+      ? supabase.from('profiles').select('id, full_name, role').in('id', lawyerIds)
+      : Promise.resolve({ data: [] as { id: string; full_name: string; role?: string | null }[] }),
     defIds.length
       ? supabase.from('task_definitions').select('id, label').in('id', defIds)
       : Promise.resolve({ data: [] as { id: string; label: string }[] }),
@@ -173,7 +185,7 @@ async function hydratePendingReviewTasks(
     return {
       ...t,
       debtors: d,
-      lawyer: lawyer ? { id: lawyer.id, full_name: lawyer.full_name } : null,
+      lawyer: lawyer ? { id: lawyer.id, full_name: lawyer.full_name, role: lawyer.role ?? null } : null,
       task_definitions: def ? { id: def.id, label: def.label } : null,
       courts: court ? { name: court.name } : null,
     } as PendingReviewTask
@@ -188,8 +200,6 @@ export async function fetchPendingReviewTasksPaginated(
   branchId: string | null,
   options?: FetchPendingReviewOptions,
 ): Promise<PaginatedPendingReviewResult> {
-  if (!branchId) return { tasks: [], total: 0 }
-
   const limit = options?.limit ?? REVIEW_TASK_PAGE_SIZE
   const offset = options?.offset ?? 0
   const cols = options?.includeCompletionData ? REVIEW_TASK_DETAIL_COLS : REVIEW_TASK_LIST_COLS
@@ -198,12 +208,12 @@ export async function fetchPendingReviewTasksPaginated(
     .from('tasks')
     .select(cols, { count: 'exact' })
     .in('task_status', [...REVIEW_QUEUE_STATUSES])
-    .eq('branch_id', branchId)
     .not('assigned_to', 'is', null)
     .not('debtor_id', 'is', null)
     .order('completed_at', { ascending: true, nullsFirst: false })
     .range(offset, offset + limit - 1)
 
+  if (branchId) q = q.eq('branch_id', branchId)
   if (options?.lawyerId) q = q.eq('assigned_to', options.lawyerId)
 
   const { data: rawTasks, count, error } = await q
@@ -218,16 +228,16 @@ export async function fetchPendingReviewTasksPaginated(
 
 export async function fetchPendingReviewTaskById(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   taskId: string,
 ): Promise<PendingReviewTask | null> {
-  const { data, error } = await supabase
+  let q = supabase
     .from('tasks')
     .select(REVIEW_TASK_DETAIL_COLS)
-    .eq('branch_id', branchId)
     .eq('id', taskId)
     .in('task_status', [...REVIEW_QUEUE_STATUSES])
-    .maybeSingle()
+  if (branchId) q = q.eq('branch_id', branchId)
+  const { data, error } = await q.maybeSingle()
 
   if (error || !data) return null
   const [task] = await hydratePendingReviewTasks(supabase, branchId, [data as unknown as Record<string, unknown>])
@@ -239,8 +249,6 @@ export async function fetchPendingReviewTasks(
   branchId: string | null,
   options?: FetchPendingReviewOptions,
 ): Promise<PendingReviewTask[]> {
-  if (!branchId) return []
-
   const all: PendingReviewTask[] = []
   let offset = 0
   const limit = options?.limit ?? REVIEW_TASK_PAGE_SIZE
@@ -260,17 +268,17 @@ export async function fetchPendingReviewTasks(
   return all
 }
 
-/** Hero metric — direct COUNT query, no full task fetch. */
+/** Hero metric — direct COUNT query, no full task fetch. branchId=null → كل الفروع. */
 export async function fetchPendingReviewCount(
   supabase: SupabaseClient,
   branchId: string | null,
 ): Promise<number> {
-  if (!branchId) return 0
-  const { count } = await supabase
+  let q = supabase
     .from('tasks')
     .select('id', { count: 'exact', head: true })
     .in('task_status', [...REVIEW_QUEUE_STATUSES])
-    .eq('branch_id', branchId)
+  if (branchId) q = q.eq('branch_id', branchId)
+  const { count } = await q
   return count ?? 0
 }
 
@@ -305,7 +313,7 @@ const CURRENT_TASK_EMBED = `
     task_type,
     assigned_to,
     branch_id,
-    task_definitions(id, label)
+    task_definitions(id, label, task_type)
   )
 `
 
@@ -314,6 +322,8 @@ const CURRENT_TASK_EMBED_INNER = `
   full_name,
   phone,
   receipt_number,
+  branch_list_id,
+  branch_list:branch_lists(name),
   current_task_id,
   case_status,
   current_task:tasks!current_task_id!inner(
@@ -327,12 +337,13 @@ const CURRENT_TASK_EMBED_INNER = `
     task_type,
     assigned_to,
     branch_id,
-    task_definitions(id, label)
+    task_definitions(id, label, task_type)
   )
 `
 
 export interface FetchCurrentBranchTasksOptions {
   assigned?: boolean
+  overdue?: boolean
   taskDefinitionId?: string | null
   branchListId?: string | null
   debtorIds?: string[] | null
@@ -345,6 +356,7 @@ export interface PaginatedCurrentTasksResult {
   total: number
   unassignedTotal: number
   assignedTotal: number
+  overdueTotal: number
 }
 
 interface CurrentTaskMeta {
@@ -353,7 +365,7 @@ interface CurrentTaskMeta {
   stageCounts: Map<string, number>
 }
 
-function debtorRowsToTaskRows(debtors: any[], branchId: string): CurrentBranchTaskRow[] {
+function debtorRowsToTaskRows(debtors: any[], branchId: string | null): CurrentBranchTaskRow[] {
   const rows: CurrentBranchTaskRow[] = []
   for (const d of debtors) {
     const task = d.current_task
@@ -361,6 +373,8 @@ function debtorRowsToTaskRows(debtors: any[], branchId: string): CurrentBranchTa
     if (!taskMatchesBranch(task, branchId)) continue
 
     const defLabel = task.task_definitions?.label ?? null
+    const defType = task.task_definitions?.task_type ?? null
+    const bl = Array.isArray(d.branch_list) ? d.branch_list[0] : d.branch_list
     rows.push({
       id: task.id,
       task_status: task.task_status,
@@ -369,10 +383,13 @@ function debtorRowsToTaskRows(debtors: any[], branchId: string): CurrentBranchTa
       assigned_at: task.assigned_at ?? null,
       debtor_id: d.id,
       task_definition_id: task.task_definition_id,
-      task_type: task.task_type,
+      task_type: task.task_type ?? defType,
       branch_id: task.branch_id,
+      branchName: null,
+      branchListName: bl?.name?.trim() ?? null,
       lawyerId: taskLawyerId(task),
       lawyerName: null,
+      lawyerRole: null,
       debtorName: d.full_name,
       debtorPhone: d.phone ?? null,
       debtorReceiptNumber: d.receipt_number ?? null,
@@ -389,12 +406,32 @@ async function attachLawyerNames(
   const lawyerIds = [...new Set(rows.map(r => r.lawyerId).filter(Boolean))] as string[]
   if (!lawyerIds.length) return
 
-  const { data: lawyers } = await supabase.from('profiles').select('id, full_name').in('id', lawyerIds)
+  const { data: lawyers } = await supabase.from('profiles').select('id, full_name, role').in('id', lawyerIds)
   const nameMap = new Map((lawyers ?? []).map(l => [l.id, l.full_name]))
+  const roleMap = new Map((lawyers ?? []).map(l => [l.id, l.role as string | null]))
   for (const row of rows) {
-    if (row.lawyerId) row.lawyerName = nameMap.get(row.lawyerId) ?? null
+    if (row.lawyerId) {
+      row.lawyerName = nameMap.get(row.lawyerId) ?? null
+      row.lawyerRole = roleMap.get(row.lawyerId) ?? null
+    }
   }
 }
+
+async function attachBranchNames(
+  supabase: SupabaseClient,
+  rows: CurrentBranchTaskRow[],
+): Promise<void> {
+  const branchIds = [...new Set(rows.map(r => r.branch_id).filter(Boolean))] as string[]
+  if (!branchIds.length) return
+
+  const { data: branches } = await supabase.from('branches').select('id, name').in('id', branchIds)
+  const nameMap = new Map((branches ?? []).map(b => [b.id, b.name]))
+  for (const row of rows) {
+    if (row.branch_id) row.branchName = nameMap.get(row.branch_id) ?? null
+  }
+}
+
+const OVERDUE_STATUS_FILTER = `(${OVERDUE_TERMINAL_STATUSES.join(',')})`
 
 function applyCurrentTaskListFilters(
   q: ReturnType<SupabaseClient['from']> extends infer _ ? any : never,
@@ -406,15 +443,23 @@ function applyCurrentTaskListFilters(
   if (options?.taskDefinitionId) {
     query = query.eq('current_task.task_definition_id', options.taskDefinitionId)
   }
-  if (options?.assigned === false) query = query.is('current_task.assigned_to', null)
-  if (options?.assigned === true) query = query.not('current_task.assigned_to', 'is', null)
+  if (options?.overdue) {
+    query = query
+      .not('current_task.assigned_to', 'is', null)
+      .not('current_task.due_date', 'is', null)
+      .lt('current_task.due_date', localTodayYmd())
+      .not('current_task.task_status', 'in', OVERDUE_STATUS_FILTER)
+  } else {
+    if (options?.assigned === false) query = query.is('current_task.assigned_to', null)
+    if (options?.assigned === true) query = query.not('current_task.assigned_to', 'is', null)
+  }
   return query
 }
 
-/** Chunked scan — counts only, minimal columns. */
+/** Chunked scan — counts only, minimal columns. branchId=null → كل الفروع. */
 async function scanCurrentTaskMeta(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
 ): Promise<CurrentTaskMeta> {
   let unassigned = 0
   let assigned = 0
@@ -422,14 +467,16 @@ async function scanCurrentTaskMeta(
   let offset = 0
 
   while (true) {
-    const { data: debtors, error } = await supabase
+    let debtorsQ = supabase
       .from('debtors')
       .select('current_task_id')
-      .eq('branch_id', branchId)
       .not('case_status', 'eq', 'closed')
       .not('current_task_id', 'is', null)
       .order('id')
       .range(offset, offset + STATS_CHUNK_SIZE - 1)
+    if (branchId) debtorsQ = debtorsQ.eq('branch_id', branchId)
+
+    const { data: debtors, error } = await debtorsQ
 
     if (error) {
       console.error('[scanCurrentTaskMeta:debtors]', error.message ?? error)
@@ -439,11 +486,13 @@ async function scanCurrentTaskMeta(
 
     const taskIds = debtors.map(d => d.current_task_id).filter(Boolean) as string[]
     if (taskIds.length) {
-      const { data: tasks, error: tErr } = await supabase
+      let tasksQ = supabase
         .from('tasks')
         .select('id, assigned_to, task_definition_id')
-        .eq('branch_id', branchId)
         .in('id', taskIds)
+      if (branchId) tasksQ = tasksQ.eq('branch_id', branchId)
+
+      const { data: tasks, error: tErr } = await tasksQ
 
       if (tErr) {
         console.error('[scanCurrentTaskMeta:tasks]', tErr.message ?? tErr)
@@ -473,22 +522,46 @@ async function scanCurrentTaskMeta(
 
 async function countCurrentTasksByAssignment(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   assigned: boolean,
   options?: Pick<FetchCurrentBranchTasksOptions, 'debtorIds' | 'taskDefinitionId' | 'branchListId'>,
 ): Promise<number> {
   let q = supabase
     .from('debtors')
     .select(`${CURRENT_TASK_EMBED_INNER}`, { count: 'exact', head: true })
-    .eq('branch_id', branchId)
     .not('case_status', 'eq', 'closed')
     .not('current_task_id', 'is', null)
+
+  if (branchId) q = q.eq('branch_id', branchId)
 
   q = applyCurrentTaskListFilters(q, { ...options, assigned })
 
   const { count, error } = await q
   if (error) {
     console.error('[countCurrentTasksByAssignment]', error.message ?? error)
+    return 0
+  }
+  return count ?? 0
+}
+
+async function countOverdueTasks(
+  supabase: SupabaseClient,
+  branchId: string | null,
+  options?: Pick<FetchCurrentBranchTasksOptions, 'debtorIds' | 'taskDefinitionId' | 'branchListId'>,
+): Promise<number> {
+  let q = supabase
+    .from('debtors')
+    .select(`${CURRENT_TASK_EMBED_INNER}`, { count: 'exact', head: true })
+    .not('case_status', 'eq', 'closed')
+    .not('current_task_id', 'is', null)
+
+  if (branchId) q = q.eq('branch_id', branchId)
+
+  q = applyCurrentTaskListFilters(q, { ...options, overdue: true })
+
+  const { count, error } = await q
+  if (error) {
+    console.error('[countOverdueTasks]', error.message ?? error)
     return 0
   }
   return count ?? 0
@@ -515,42 +588,47 @@ export async function fetchCurrentBranchTaskRowsPaginated(
   branchId: string | null,
   options?: FetchCurrentBranchTasksOptions,
 ): Promise<PaginatedCurrentTasksResult> {
-  const empty = { rows: [], total: 0, unassignedTotal: 0, assignedTotal: 0 }
-  if (!branchId) return empty
+  const empty = { rows: [], total: 0, unassignedTotal: 0, assignedTotal: 0, overdueTotal: 0 }
 
   const limit = options?.limit ?? CURRENT_TASK_PAGE_SIZE
   const offset = options?.offset ?? 0
 
-  const [unassignedTotal, assignedTotal] = await Promise.all([
+  const [unassignedTotal, assignedTotal, overdueTotal] = await Promise.all([
     countCurrentTasksByAssignment(supabase, branchId, false, options),
     countCurrentTasksByAssignment(supabase, branchId, true, options),
+    countOverdueTasks(supabase, branchId, options),
   ])
 
   let q = supabase
     .from('debtors')
     .select(CURRENT_TASK_EMBED_INNER, { count: 'exact' })
-    .eq('branch_id', branchId)
     .not('case_status', 'eq', 'closed')
     .not('current_task_id', 'is', null)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
+
+  if (branchId) q = q.eq('branch_id', branchId)
 
   q = applyCurrentTaskListFilters(q, options)
 
   const { data: debtors, count, error } = await q
   if (error) {
     console.error('[fetchCurrentBranchTaskRowsPaginated]', error.message ?? error)
-    return { ...empty, unassignedTotal, assignedTotal }
+    return { ...empty, unassignedTotal, assignedTotal, overdueTotal }
   }
 
   const rows = debtorRowsToTaskRows(debtors ?? [], branchId)
-  await attachLawyerNames(supabase, rows)
+  await Promise.all([
+    attachLawyerNames(supabase, rows),
+    attachBranchNames(supabase, rows),
+  ])
 
   return {
     rows,
     total: count ?? rows.length,
     unassignedTotal,
     assignedTotal,
+    overdueTotal,
   }
 }
 
@@ -563,8 +641,6 @@ export async function fetchCurrentBranchTaskRows(
   branchId: string | null,
   options?: FetchCurrentBranchTasksOptions,
 ): Promise<CurrentBranchTaskRow[]> {
-  if (!branchId) return []
-
   const all: CurrentBranchTaskRow[] = []
   let offset = 0
   const limit = CURRENT_TASK_PAGE_SIZE
@@ -587,20 +663,18 @@ export async function fetchCurrentTaskStats(
   supabase: SupabaseClient,
   branchId: string | null,
 ): Promise<{ unassigned: number; assigned: number }> {
-  if (!branchId) return { unassigned: 0, assigned: 0 }
   const meta = await scanCurrentTaskMeta(supabase, branchId)
   return { unassigned: meta.unassigned, assigned: meta.assigned }
 }
 
 /**
  * Combined dashboard load — count/group queries, no full task row fetch.
+ * branchId=null → كل الفروع.
  */
 export async function fetchDashboardData(
   supabase: SupabaseClient,
   branchId: string | null,
 ): Promise<{ stages: UnassignedStageCount[]; unassigned: number; assigned: number }> {
-  if (!branchId) return { stages: [], unassigned: 0, assigned: 0 }
-
   const meta = await scanCurrentTaskMeta(supabase, branchId)
   if (meta.unassigned === 0) {
     return { stages: [], unassigned: 0, assigned: meta.assigned }
@@ -670,10 +744,35 @@ export async function validateLawyerTaskAssignment(
 
   const [{ data: lawyer }, { data: tasks }] = await Promise.all([
     supabase.from('profiles').select('role, branch_id, lawyer_type').eq('id', lawyerId).single(),
-    supabase.from('tasks').select('id, branch_id').in('id', taskIds),
+    supabase.from('tasks').select('id, branch_id, task_type, task_definitions(task_type)').in('id', taskIds),
   ])
 
-  if (!lawyer || lawyer.role !== 'lawyer') {
+  if (!lawyer) {
+    return { ok: false, error: 'المستخدم غير موجود أو غير صالح' }
+  }
+
+  // مندوب: فقط مهام إيجاد عنوان، ونفس فرعه
+  if (lawyer.role === 'delegate') {
+    const delegateBranch = lawyer.branch_id
+    if (!delegateBranch) {
+      return { ok: false, error: 'المندوب يجب أن يكون مرتبطاً بفرع' }
+    }
+    for (const t of tasks ?? []) {
+      if (t.branch_id && t.branch_id !== delegateBranch) {
+        return { ok: false, error: 'لا يمكن تكليف مندوب بمهام من فرع آخر' }
+      }
+      const defType = Array.isArray(t.task_definitions)
+        ? (t.task_definitions[0] as { task_type?: string } | undefined)?.task_type
+        : (t.task_definitions as { task_type?: string } | null)?.task_type
+      const taskType = t.task_type ?? defType
+      if (taskType !== 'find_address') {
+        return { ok: false, error: 'يمكن تكليف المندوب بمهمة إيجاد عنوان فقط' }
+      }
+    }
+    return { ok: true, error: null }
+  }
+
+  if (lawyer.role !== 'lawyer') {
     return { ok: false, error: 'المحامي غير موجود أو غير صالح' }
   }
 

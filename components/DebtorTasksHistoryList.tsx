@@ -1,6 +1,6 @@
 'use client'
 
-import { TASK_STATUS_LABELS } from '@/lib/types'
+import { TASK_STATUS_LABELS, assigneePersonLabel } from '@/lib/types'
 import type { TaskStatus } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { fmtDate } from '@/lib/utils'
@@ -31,6 +31,7 @@ export interface DebtorTaskHistoryRow {
   id: string
   label: string
   lawyerName: string
+  assigneeRole: string | null
   task_status: string
   assignedAt: string | null
   completedAt: string | null
@@ -109,7 +110,7 @@ export default function DebtorTasksHistoryList({
                   )}
                 </div>
                 <p className="text-xs text-[#767676] mt-1">
-                  المحامي: <span className="font-semibold text-[#231F20]">{row.lawyerName}</span>
+                  {assigneePersonLabel(row.assigneeRole)}: <span className="font-semibold text-[#231F20]">{row.lawyerName}</span>
                 </p>
               </div>
               <Badge variant={STATUS_BADGE[row.task_status as TaskStatus] ?? 'default'}>

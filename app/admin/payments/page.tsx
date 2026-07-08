@@ -22,6 +22,7 @@ import {
 import { DateRangePicker } from '@/components/ui/date-range-picker'
 import { useAdminRole } from '@/context/admin-role'
 import { canAddPayments, canEditRecords, canDelete, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { syncDebtorRemainingAfterPayments } from '@/lib/debtor-balances'
 
 const EMPTY_FORM = { debtor_id: '', amount: '', notes: '' }
@@ -131,14 +132,20 @@ export default function PaymentsPage() {
   }
 
   async function deletePayment(id: string, debtorId: string, debtorName: string, amount: number) {
-    if (!allowDelete) { alert(PERMISSION_DENIED_MSG); return }
-    if (!confirm(`هل أنت متأكد من حذف هذا التسديد (${formatMoney(amount)}) الخاص بـ "${debtorName}"؟\nسيُعاد المبلغ إلى المتبقي.`)) return
+    if (!allowDelete) { await appAlert({ message: PERMISSION_DENIED_MSG, variant: 'warning' }); return }
+    const ok = await appConfirm({
+      title: 'تأكيد الحذف',
+      message: `هل أنت متأكد من حذف هذا التسديد (${formatMoney(amount)}) الخاص بـ «${debtorName}»؟\nسيُعاد المبلغ إلى المتبقي.`,
+      confirmLabel: 'حذف',
+      danger: true,
+    })
+    if (!ok) return
     setDeletingId(id)
     const supabase = createClient()
     const { error } = await supabase.from('debtor_payments').delete().eq('id', id)
-    if (error) { alert(`فشل الحذف: ${error.message}`); setDeletingId(null); return }
+    if (error) { await appAlert({ message: `فشل الحذف: ${error.message}`, variant: 'error' }); setDeletingId(null); return }
     const syncResult = await syncDebtorRemainingAfterPayments(supabase, debtorId)
-    if (!syncResult.ok) { alert(syncResult.error ?? 'فشل تحديث المتبقي'); setDeletingId(null); return }
+    if (!syncResult.ok) { await appAlert({ message: syncResult.error ?? 'فشل تحديث المتبقي', variant: 'error' }); setDeletingId(null); return }
     await logActivity({
       action: 'delete_payment',
       entity_type: 'payment',

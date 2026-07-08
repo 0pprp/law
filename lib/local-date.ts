@@ -19,10 +19,39 @@ export function endOfNextLocalDay(from: Date = new Date()): Date {
   return expires
 }
 
+/** Terminal statuses — overdue monitoring excludes these. */
+export const OVERDUE_TERMINAL_STATUSES = [
+  'completed',
+  'closed',
+  'failed',
+  'approved',
+  'rejected',
+] as const
+
 /** True only after the due calendar day has passed (last day is still valid). */
 export function isTaskOverdue(dueYmd: string | null | undefined): boolean {
   if (!dueYmd) return false
   return dueYmd < localTodayYmd()
+}
+
+/** Assigned task still active and past due date. */
+export function isActiveOverdueTask(
+  dueYmd: string | null | undefined,
+  status: string,
+): boolean {
+  if (!dueYmd || !isTaskOverdue(dueYmd)) return false
+  return !(OVERDUE_TERMINAL_STATUSES as readonly string[]).includes(status)
+}
+
+/** Calendar days past due (today − due_date). */
+export function taskOverdueDays(dueYmd: string): number {
+  const today = localTodayYmd()
+  if (dueYmd >= today) return 0
+  const [ty, tm, td] = today.split('-').map(Number)
+  const [dy, dm, dd] = dueYmd.split('-').map(Number)
+  const todayMs = new Date(ty, tm - 1, td).getTime()
+  const dueMs = new Date(dy, dm - 1, dd).getTime()
+  return Math.round((todayMs - dueMs) / 86_400_000)
 }
 
 export function isTaskDueToday(dueYmd: string | null | undefined): boolean {

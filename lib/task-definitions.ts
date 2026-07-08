@@ -9,14 +9,14 @@ export async function fetchActiveTaskDefinitions<T extends string = 'id, label, 
   branchId: string | null,
   select: T = 'id, label, sort_order' as T,
 ): Promise<Record<string, unknown>[]> {
-  if (!branchId) return []
-
-  const { data, error } = await supabase
+  let q = supabase
     .from('task_definitions')
     .select(select)
-    .eq('branch_id', branchId)
     .eq('is_active', true)
     .order('sort_order')
+  if (branchId) q = q.eq('branch_id', branchId)
+
+  const { data, error } = await q
 
   if (error) console.error('[fetchActiveTaskDefinitions]', error.message)
   return (data ?? []) as Record<string, unknown>[]

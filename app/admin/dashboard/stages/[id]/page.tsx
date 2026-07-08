@@ -1,21 +1,24 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, use } from 'react'
+import { useState, useEffect, useCallback, useRef, use, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
+import { useBranch, useBranchId } from '@/context/branch'
 import Link from 'next/link'
 import { PageHeader } from '@/components/ui/page-header'
 import { fmtMoney, fmtDate } from '@/lib/utils'
-import { RECEIPT_TYPE_LABELS } from '@/lib/types'
+import { RECEIPT_TYPE_LABELS, assigneePersonLabel } from '@/lib/types'
 import type { ReceiptType } from '@/lib/types'
-import { assignTasksViaApi } from '@/lib/task-operations-api'
-import { fetchBranchLawyers, taskLawyerId } from '@/lib/task-assignment'
+import { fetchAssignmentLawyers, fetchBranchDelegates } from '@/lib/branch-profiles'
+import { isFindAddressTaskType } from '@/lib/delegate'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { DatePicker } from '@/components/ui/date-picker'
 import { BranchListFilterSelect } from '@/components/BranchListSelect'
 import { useBranchLists } from '@/hooks/use-branch-lists'
 import { useAdminRole } from '@/context/admin-role'
-import { canAssignTasks, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { canAssignTasks } from '@/lib/permissions'
+import { executeTaskAssignment, validateTaskAssignmentInput } from '@/lib/client-task-assign'
+import { taskLawyerId } from '@/lib/task-assignment'
 
 interface StageDebtor {
   debtorId: string
@@ -23,12 +26,14 @@ interface StageDebtor {
   taskId: string
   taskStatus: string
   lawyerName: string | null
+  lawyerRole: string | null
   phone: string | null
   receiptType: ReceiptType | null
   receiptNumber: string | null
   remaining: number
   taskCreatedAt: string | null
   branchListId: string | null
+  branchListName: string | null
 }
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
@@ -51,6 +56,7 @@ interface Lawyer { id: string; full_name: string }
 export default function StageDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: stageId } = use(params)
   const branchId = useBranchId()
+  const { viewAllBranches } = useBranch()
   const { lists: branchLists } = useBranchLists(branchId)
   const role = useAdminRole()
   const canAssign = canAssignTasks(role)
@@ -64,28 +70,39 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [lawyers, setLawyers] = useState<Lawyer[]>([])
+  const [delegates, setDelegates] = useState<Lawyer[]>([])
+  const [stageIsFindAddress, setStageIsFindAddress] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkLawyerId, setBulkLawyerId] = useState('')
+  const [bulkDueDate, setBulkDueDate] = useState('')
   const [assigning, setAssigning] = useState(false)
   const [error, setError] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
 
   const load = useCallback(async () => {
+    if (!branchId && !viewAllBranches) {
+      setDebtors([])
+      setLoading(false)
+      return
+    }
+
     setLoading(true)
     setSelected(new Set())
     const supabase = createClient()
 
-    const { data: def } = await supabase.from('task_definitions').select('label').eq('id', stageId).single()
+    const { data: def } = await supabase.from('task_definitions').select('label, task_type').eq('id', stageId).single()
     setStageLabel(def?.label ?? '—')
+    setStageIsFindAddress(isFindAddressTaskType(def?.task_type))
 
-    // Source of truth = debtors whose current_task is in this stage
     let q = supabase
       .from('debtors')
       .select(`
         id, full_name, phone, receipt_type, receipt_number, branch_list_id,
         remaining_amount, case_status, current_task_id,
+        branch_list:branch_lists(name),
         current_task:tasks!current_task_id(
           id, task_status, assigned_to, created_at, task_definition_id, branch_id,
-          lawyer:profiles!tasks_assigned_to_fkey(full_name)
+          lawyer:profiles!tasks_assigned_to_fkey(full_name, role)
         )
       `)
       .not('case_status', 'eq', 'closed')
@@ -103,31 +120,47 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
         if (branchId && t.branch_id !== branchId) return false
         return !taskLawyerId(t)
       })
-      .map((d: any) => ({
-        debtorId: d.id,
-        debtorName: d.full_name,
-        taskId: d.current_task.id,
-        taskStatus: d.current_task.task_status,
-        lawyerName: null,
-        phone: d.phone ?? null,
-        receiptType: d.receipt_type ?? null,
-        receiptNumber: d.receipt_number ?? null,
-        remaining: Number(d.remaining_amount ?? 0),
-        taskCreatedAt: d.current_task.created_at ?? null,
-        branchListId: d.branch_list_id ?? null,
-      }))
+      .map((d: any) => {
+        const bl = Array.isArray(d.branch_list) ? d.branch_list[0] : d.branch_list
+        return {
+          debtorId: d.id,
+          debtorName: d.full_name,
+          taskId: d.current_task.id,
+          taskStatus: d.current_task.task_status,
+          lawyerName: null,
+          lawyerRole: null,
+          phone: d.phone ?? null,
+          receiptType: d.receipt_type ?? null,
+          receiptNumber: d.receipt_number ?? null,
+          remaining: Number(d.remaining_amount ?? 0),
+          taskCreatedAt: d.current_task.created_at ?? null,
+          branchListId: d.branch_list_id ?? null,
+          branchListName: bl?.name?.trim() ?? null,
+        }
+      })
 
     setDebtors(mapped)
     setLoading(false)
-  }, [stageId, branchId])
+  }, [stageId, branchId, viewAllBranches])
 
   useEffect(() => { load() }, [load])
 
-  // Load lawyers for bulk assign — strictly scoped to the active branch
   useEffect(() => {
-    if (!branchId) { setLawyers([]); return }
-    fetchBranchLawyers(createClient(), branchId).then(setLawyers)
-  }, [branchId])
+    if (!branchId && !viewAllBranches) {
+      setLawyers([])
+      setDelegates([])
+      return
+    }
+    const supabase = createClient()
+    fetchAssignmentLawyers(supabase, branchId).then(({ lawyers: list }) => setLawyers(list))
+    if (stageIsFindAddress && branchId) {
+      fetchBranchDelegates(supabase, branchId).then(({ delegates: list }) => setDelegates(list))
+    } else {
+      setDelegates([])
+    }
+  }, [branchId, viewAllBranches, stageIsFindAddress])
+
+  const assigneeOptions = stageIsFindAddress ? [...lawyers, ...delegates] : lawyers
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -155,6 +188,22 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
 
   const allSelected = filtered.length > 0 && filtered.every(d => selected.has(d.taskId))
 
+  const assignmentMinDate = useMemo(() => {
+    const ids = selected.size > 0 ? Array.from(selected) : []
+    if (!ids.length) return undefined
+    const dates = ids
+      .map(id => debtors.find(d => d.taskId === id)?.taskCreatedAt)
+      .filter(Boolean)
+      .map(d => d!.split('T')[0])
+    return dates.length ? dates.sort().reverse()[0] : undefined
+  }, [selected, debtors])
+
+  useEffect(() => {
+    if (assignmentMinDate && bulkDueDate && bulkDueDate < assignmentMinDate) {
+      setBulkDueDate('')
+    }
+  }, [assignmentMinDate, bulkDueDate])
+
   function toggle(taskId: string) {
     setSelected(prev => {
       const next = new Set(prev)
@@ -172,16 +221,38 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   async function assignTasks(taskIds: string[], lawyerId: string) {
-    if (!canAssign) { setError(PERMISSION_DENIED_MSG); return }
-    if (!lawyerId) { setError('اختر محامياً'); return }
-    if (taskIds.length === 0) { setError('حدد مديناً واحداً على الأقل'); return }
-    setAssigning(true); setError('')
-    const supabase = createClient()
-    const result = await assignTasksViaApi(taskIds, lawyerId)
-    if (!result.ok) { setError(result.error ?? 'فشل التكليف'); setAssigning(false); return }
+    const taskRefs = taskIds.map(id => {
+      const d = debtors.find(x => x.taskId === id)
+      return { id, created_at: d?.taskCreatedAt ?? new Date().toISOString() }
+    })
+    const validationError = validateTaskAssignmentInput(canAssign, taskIds, lawyerId, bulkDueDate, taskRefs)
+    if (validationError) { setError(validationError); return }
+
+    setAssigning(true); setError(''); setSuccessMsg('')
+    const result = await executeTaskAssignment({
+      taskIds,
+      lawyerId,
+      dueDate: bulkDueDate,
+      assigneeOptions,
+      lawyers,
+      delegates,
+      branchId,
+    })
+    if (!result.ok) {
+      setError(result.error ?? 'فشل التكليف')
+      setAssigning(false)
+      return
+    }
+
+    setDebtors(prev => prev.filter(d => !taskIds.includes(d.taskId)))
+    setSelected(prev => {
+      const next = new Set(prev)
+      taskIds.forEach(id => next.delete(id))
+      return next
+    })
     setAssigning(false)
     setBulkLawyerId('')
-    await load()
+    setSuccessMsg(`تم تكليف ${taskIds.length} مهمة بنجاح — اختفت من قائمة غير المكلفة`)
   }
 
   const selectedCount = selected.size
@@ -196,6 +267,12 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
           { label: stageLabel },
         ]}
       />
+
+      {successMsg && (
+        <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl px-4 py-3 font-semibold">
+          {successMsg}
+        </p>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="bg-white rounded-xl border px-4 py-2.5 flex items-center gap-3">
@@ -213,40 +290,65 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
         />
       </div>
 
-      {/* Bulk assign bar */}
       {canAssign && filtered.length > 0 && (
-        <div className="bg-white rounded-xl border border-[#2C8780]/30 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-          <label className="flex items-center gap-2 text-xs font-semibold text-[#231F20] cursor-pointer shrink-0">
-            <input type="checkbox" checked={allSelected} onChange={toggleAll}
-              className="w-4 h-4 accent-[#2C8780]" />
-            تحديد الكل ({filtered.length})
-          </label>
-          <div className="flex-1 flex items-center gap-2">
+        <div className="bg-white rounded-xl border border-[#2C8780]/30 p-4 space-y-3">
+          <p className="text-xs font-bold text-[#231F20]">
+            المهمة: <span className="text-[#2C8780]">{stageLabel}</span>
+          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-semibold text-[#231F20] cursor-pointer shrink-0">
+              <input type="checkbox" checked={allSelected} onChange={toggleAll}
+                className="w-4 h-4 accent-[#2C8780]" />
+              تحديد الكل ({filtered.length})
+            </label>
             <PremiumSelect
               value={bulkLawyerId}
               onChange={v => { setBulkLawyerId(v); setError('') }}
               options={[
-                { value: '', label: '— اختر محامياً —' },
-                ...lawyers.map(l => ({ value: l.id, label: l.full_name })),
+                { value: '', label: stageIsFindAddress ? '— اختر محامياً أو مندوباً —' : '— اختر محامياً —' },
+                ...assigneeOptions.map(l => ({ value: l.id, label: l.full_name })),
               ]}
-              placeholder="— اختر محامياً —"
-              headerTitle="اختر المحامي"
-              headerSubtitle={`${lawyers.length} محامٍ في الفرع`}
+              placeholder={stageIsFindAddress ? '— اختر محامياً أو مندوباً —' : '— اختر محامياً —'}
+              headerTitle={stageIsFindAddress ? 'اختر المحامي أو المندوب' : 'اختر المحامي'}
+              headerSubtitle={
+                stageIsFindAddress
+                  ? `${lawyers.length} محامٍ • ${delegates.length} مندوب`
+                  : `${lawyers.length} محامٍ في الفرع`
+              }
               searchPlaceholder="بحث بالاسم..."
               searchable
+              className="flex-1"
+              disabled={!branchId}
+            />
+            <DatePicker
+              value={bulkDueDate}
+              onChange={setBulkDueDate}
+              minDate={assignmentMinDate}
+              fieldLabel="تاريخ نهاية التكليف"
+              headerTitle="تاريخ نهاية التكليف"
               className="flex-1"
             />
             <button
               onClick={() => assignTasks(Array.from(selected), bulkLawyerId)}
-              disabled={assigning || selectedCount === 0 || !bulkLawyerId}
+              disabled={assigning || selectedCount === 0 || !bulkLawyerId || !bulkDueDate || !branchId}
               className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-50"
               style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
               {assigning ? 'جارٍ التكليف...' : `تكليف المحددين${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
             </button>
           </div>
-          {lawyers.length === 0 && (
+          {assignmentMinDate && selectedCount > 0 && (
+            <p className="text-[11px] text-[#767676]">
+              تاريخ نهاية التكليف يبدأ من {fmtDate(assignmentMinDate)} (تاريخ إنشاء المهمة)
+            </p>
+          )}
+          {!branchId && viewAllBranches && (
             <p className="text-[11px] text-orange-600 bg-orange-50 px-3 py-1.5 rounded-lg">
-              لا يوجد محامون في هذا الفرع — أضف محامياً للفرع أولاً
+              للتكليف اختر فرعاً محدداً من القائمة العلوية
+            </p>
+          )}
+          {assigneeOptions.length === 0 && branchId && (
+            <p className="text-[11px] text-orange-600 bg-orange-50 px-3 py-1.5 rounded-lg">
+              لا يوجد محامون{stageIsFindAddress ? ' أو مندوبون' : ''} في هذا الفرع
             </p>
           )}
         </div>
@@ -287,6 +389,9 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
                     </Link>
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
                       {d.phone && <span className="text-[11px] text-[#767676]" dir="ltr">{d.phone}</span>}
+                      {d.branchListName && (
+                        <span className="text-[11px] text-[#767676]">القائمة: {d.branchListName}</span>
+                      )}
                       {d.receiptType && (
                         <span className="text-[11px] text-[#767676]">
                           {RECEIPT_TYPE_LABELS[d.receiptType] ?? d.receiptType}
@@ -295,10 +400,14 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
                       {d.receiptNumber && <span className="text-[11px] text-[#767676]" dir="ltr">{d.receiptNumber}</span>}
                       {d.taskCreatedAt && (
                         <span className="text-[11px] text-[#767676]" dir="ltr">
-                          {fmtDate(d.taskCreatedAt.split('T')[0])}
+                          أنشئت: {fmtDate(d.taskCreatedAt.split('T')[0])}
                         </span>
                       )}
-                      {d.lawyerName && <span className="text-[11px] text-[#767676]">المحامي: {d.lawyerName}</span>}
+                      {d.lawyerName && (
+                        <span className="text-[11px] text-[#767676]">
+                          {assigneePersonLabel(d.lawyerRole)}: {d.lawyerName}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {d.remaining > 0 && (
@@ -309,8 +418,8 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
                   <StatusBadge status={d.taskStatus} />
                   {canAssign && isWaiting && (
                     <button onClick={() => assignTasks([d.taskId], bulkLawyerId)}
-                      disabled={assigning || !bulkLawyerId}
-                      title={!bulkLawyerId ? 'اختر محامياً من الأعلى أولاً' : 'تكليف هذا المدين'}
+                      disabled={assigning || !bulkLawyerId || !bulkDueDate || !branchId}
+                      title={!bulkLawyerId ? 'اختر محامياً من الأعلى أولاً' : !bulkDueDate ? 'حدد تاريخ نهاية التكليف' : 'تكليف هذا المدين'}
                       className="text-[11px] font-bold text-white px-3 py-1.5 rounded-lg shrink-0 hover:opacity-90 disabled:opacity-40"
                       style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
                       تكليف

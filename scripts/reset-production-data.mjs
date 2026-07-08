@@ -32,6 +32,7 @@ const sb = createClient(url, key, { auth: { persistSession: false } })
 function isTestUser(p) {
   const u = String(p.username ?? '').toLowerCase()
   const name = String(p.full_name ?? '')
+  if (u.startsWith('qa_')) return true
   if (u.startsWith('e2eadmin')) return true
   if (u.startsWith('lawqa')) return true
   if (u.startsWith('acctqa')) return true

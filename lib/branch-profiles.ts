@@ -79,12 +79,25 @@ export async function fetchGeneralLawyers(
   return { profiles: (data ?? []) as BranchProfileRow[], error: error ?? null }
 }
 
-/** For task assignment: branch normal lawyers + all general lawyers. */
+/** For task assignment: branch normal lawyers + all general lawyers.
+ * When branchId is null (كل الفروع), only general lawyers — assignment across mixed branches needs a selected branch for normal lawyers.
+ */
 export async function fetchAssignmentLawyers(
   supabase: SupabaseClient,
   branchId: string | null,
 ): Promise<{ lawyers: LawyerOption[]; error: unknown | null }> {
-  if (!branchId) return { lawyers: [], error: null }
+  if (!branchId) {
+    const generalRes = await fetchGeneralLawyers(supabase)
+    if (generalRes.error) return { lawyers: [], error: generalRes.error }
+    const lawyers = filterGeneralLawyerProfiles(generalRes.profiles).map(p => ({
+      id: p.id,
+      full_name: `${p.full_name} (محامي عام)`,
+      lawyer_type: 'general' as const,
+      is_general: true,
+    }))
+    lawyers.sort((a, b) => a.full_name.localeCompare(b.full_name, 'ar'))
+    return { lawyers, error: null }
+  }
 
   const [branchRes, generalRes] = await Promise.all([
     fetchBranchProfiles(supabase, branchId),
@@ -132,4 +145,43 @@ export function toLawyerOptions(profiles: BranchProfileRow[]): LawyerOption[] {
 
 export function lawyerOptionLabel(option: LawyerOption): string {
   return option.full_name
+}
+
+export interface DelegateOption {
+  id: string
+  full_name: string
+}
+
+export function isDelegateRole(role: string | null | undefined): boolean {
+  return role === 'delegate'
+}
+
+export function filterDelegateProfiles(profiles: BranchProfileRow[]): BranchProfileRow[] {
+  return profiles.filter(p => isDelegateRole(p.role) && isProfileActive(p))
+}
+
+/** مندوبو الفرع النشطون — للتكليف على مهام إيجاد عنوان فقط.
+ * عند branchId=null تُرجع كل المندوبين النشطين (لتصفية مراجعة الإنجازات).
+ */
+export async function fetchBranchDelegates(
+  supabase: SupabaseClient,
+  branchId: string | null,
+): Promise<{ delegates: DelegateOption[]; error: unknown | null }> {
+  let q = supabase
+    .from('profiles')
+    .select('id, full_name, role, branch_id, is_active')
+    .eq('role', 'delegate')
+    .order('full_name')
+
+  if (branchId) q = q.eq('branch_id', branchId)
+
+  const { data, error } = await q
+  if (error) return { delegates: [], error }
+
+  const delegates = filterDelegateProfiles((data ?? []) as BranchProfileRow[]).map(p => ({
+    id: p.id,
+    full_name: `${p.full_name} (مندوب)`,
+  }))
+
+  return { delegates, error: null }
 }

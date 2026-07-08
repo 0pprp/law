@@ -19,6 +19,7 @@ import { BranchListFilterSelect } from '@/components/BranchListSelect'
 import { useBranchLists } from '@/hooks/use-branch-lists'
 import { useAdminRole } from '@/context/admin-role'
 import { canAddDebtor, canDelete, canEditRecords, canImportDebtors, isLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { appConfirm } from '@/lib/app-dialog'
 import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
 
 const PAGE_SIZE = 50
@@ -54,8 +55,8 @@ export default function DebtorsPage() {
   const allowImport = canImportDebtors(role)
   const showEditLink = allowEdit || isLegalManager(role)
   const showDeleteBtn = allowDelete || isLegalManager(role)
-  const showAddBtn = allowAdd || isLegalManager(role)
-  const showImportBtn = allowImport || isLegalManager(role)
+  const showAddBtn = allowAdd
+  const showImportBtn = allowImport
   const [debtors, setDebtors] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -125,7 +126,13 @@ export default function DebtorsPage() {
 
   async function deleteDebtor(id: string, name: string) {
     if (!allowDelete) { setError(PERMISSION_DENIED_MSG); return }
-    if (!confirm(`هل أنت متأكد من حذف المدين "${name}"؟\nسيتم حذف جميع البيانات المرتبطة به.`)) return
+    const ok = await appConfirm({
+      title: 'تأكيد الحذف',
+      message: `هل أنت متأكد من حذف المدين «${name}»؟\nسيتم حذف جميع البيانات المرتبطة به.`,
+      confirmLabel: 'حذف',
+      danger: true,
+    })
+    if (!ok) return
     setDeletingId(id)
     setError('')
     const supabase = createClient()

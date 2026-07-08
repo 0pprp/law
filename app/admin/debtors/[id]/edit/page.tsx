@@ -21,6 +21,7 @@ import BranchListSelect from '@/components/BranchListSelect'
 import { fetchBranchLists } from '@/lib/branch-lists'
 import type { BranchList } from '@/lib/branch-lists'
 import { canEditRecords } from '@/lib/permissions'
+import { appConfirm } from '@/lib/app-dialog'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
 
@@ -96,7 +97,13 @@ export default function EditDebtorPage() {
   }
 
   async function deleteFile(file: Attachment) {
-    if (!confirm(`هل تريد حذف هذا الملف؟\n"${file.file_name}"`)) return
+    const ok = await appConfirm({
+      title: 'تأكيد الحذف',
+      message: `هل تريد حذف هذا الملف؟\n«${file.file_name}»`,
+      confirmLabel: 'حذف',
+      danger: true,
+    })
+    if (!ok) return
     setDeletingFileId(file.id)
     try {
       const res = await fetch('/api/admin/delete-debtor-file', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileId: file.id, filePath: file.file_path, fileName: file.file_name }) })

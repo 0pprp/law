@@ -1,7 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import type { UserRole } from '@/lib/types'
-import { isAccountant } from '@/lib/permissions'
 
 export default async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -33,6 +32,7 @@ export default async function proxy(request: NextRequest) {
   const isApiRoute = pathname.startsWith('/api/')
   const isAdminRoute = pathname.startsWith('/admin')
   const isLawyerRoute = pathname.startsWith('/lawyer')
+  const isDelegateRoute = pathname.startsWith('/delegate')
 
   if (!user && !isLoginPage && !isPublicAuthApi) {
     if (isApiRoute) {
@@ -49,11 +49,14 @@ export default async function proxy(request: NextRequest) {
       .single()
 
     const role = profile?.role as UserRole
-    const dest = role === 'lawyer' ? '/lawyer' : '/admin/dashboard'
+    const dest =
+      role === 'lawyer' ? '/lawyer'
+      : role === 'delegate' ? '/delegate'
+      : '/admin/dashboard'
     return NextResponse.redirect(new URL(dest, request.url))
   }
 
-  if (user && (isAdminRoute || isLawyerRoute)) {
+  if (user && (isAdminRoute || isLawyerRoute || isDelegateRoute)) {
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
@@ -63,10 +66,18 @@ export default async function proxy(request: NextRequest) {
     const role = profile?.role as UserRole
 
     if (isLawyerRoute && role !== 'lawyer') {
-      return NextResponse.redirect(new URL('/admin/dashboard', request.url))
+      const dest = role === 'delegate' ? '/delegate' : '/admin/dashboard'
+      return NextResponse.redirect(new URL(dest, request.url))
+    }
+    if (isDelegateRoute && role !== 'delegate') {
+      const dest = role === 'lawyer' ? '/lawyer' : '/admin/dashboard'
+      return NextResponse.redirect(new URL(dest, request.url))
     }
     if (isAdminRoute && role === 'lawyer') {
       return NextResponse.redirect(new URL('/lawyer/tasks', request.url))
+    }
+    if (isAdminRoute && role === 'delegate') {
+      return NextResponse.redirect(new URL('/delegate/tasks', request.url))
     }
   }
 

@@ -77,7 +77,7 @@ export default async function DebtorTasksHistory({
 
   const queries: PromiseLike<{ data: unknown }>[] = [
     lawyerIds.length > 0
-      ? supabase.from('profiles').select('id, full_name').in('id', lawyerIds)
+      ? supabase.from('profiles').select('id, full_name, role').in('id', lawyerIds)
       : Promise.resolve({ data: [] }),
     defIds.length > 0
       ? supabase.from('task_definitions').select('id, label').in('id', defIds)
@@ -95,13 +95,14 @@ export default async function DebtorTasksHistory({
   }
 
   const results = await Promise.all(queries)
-  const lawyers = (results[0].data ?? []) as { id: string; full_name: string }[]
+  const lawyers = (results[0].data ?? []) as { id: string; full_name: string; role?: string | null }[]
   const defs = (results[1].data ?? []) as { id: string; label: string }[]
   const allAttachments = fullArchive && results[2]
     ? (results[2].data ?? []) as { id: string; task_id: string; file_name: string; description: string | null }[]
     : []
 
   const lawyerMap = new Map(lawyers.map(l => [l.id, l.full_name]))
+  const roleMap = new Map(lawyers.map(l => [l.id, l.role ?? null]))
   const defMap = new Map(defs.map(d => [d.id, d.label]))
   const attByTask = new Map<string, typeof allAttachments>()
   for (const att of allAttachments) {
@@ -115,6 +116,7 @@ export default async function DebtorTasksHistory({
       id: t.id,
       label: taskName(t, defMap),
       lawyerName: lawyerLabel(t.assigned_to, lawyerMap),
+      assigneeRole: t.assigned_to ? (roleMap.get(t.assigned_to) ?? null) : null,
       task_status: t.task_status,
       assignedAt: t.assigned_at ?? t.accepted_at ?? null,
       completedAt: completionDate(t),

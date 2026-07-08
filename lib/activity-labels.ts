@@ -38,6 +38,10 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   delete_lawyer_file: 'حذف مستمسك محامي',
   deactivate_lawyer: 'تعطيل محامي',
   activate_lawyer: 'تفعيل محامي',
+  delete_user: 'حذف مستخدم',
+  delete_delegate: 'حذف مندوب',
+  deactivate_delegate: 'تعطيل مندوب',
+  activate_delegate: 'تفعيل مندوب',
   lawyer_wallet_credit: 'إيداع محفظة صرفيات محامي',
   lawyer_wallet_deposit: 'إيداع محفظة صرفيات محامي',
   lawyer_savings_withdraw: 'سحب صرفيات محامي',
@@ -101,6 +105,10 @@ export const ACTIVITY_ACTION_BADGE: Record<string, 'success' | 'info' | 'warning
   delete_expense: 'danger',
   deactivate_lawyer: 'danger',
   activate_lawyer: 'success',
+  delete_user: 'danger',
+  delete_delegate: 'danger',
+  deactivate_delegate: 'danger',
+  activate_delegate: 'success',
   close_case: 'navy',
 }
 

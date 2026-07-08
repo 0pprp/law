@@ -16,7 +16,8 @@ import DebtorArchiveTabs from '@/components/DebtorArchiveTabs'
 import DebtorAccountPaymentButton from '@/components/DebtorAccountPaymentButton'
 import DebtorPaymentsPanel from '@/components/DebtorPaymentsPanel'
 import DebtorExpensesList from '@/components/DebtorExpensesList'
-import { canEditRecords, canReadAdminData, canAddPayments } from '@/lib/permissions'
+import { canEditRecords, canReadAdminData, canAddPayments, isGeneralAccountant } from '@/lib/permissions'
+import { fetchStaffRoleFields } from '@/lib/staff-profile'
 import type { UserRole } from '@/lib/types'
 
 function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
@@ -33,9 +34,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
-  const { data: profile } = user
-    ? await supabase.from('profiles').select('role, branch_id').eq('id', user.id).single()
-    : { data: null }
+  const profile = user ? await fetchStaffRoleFields(supabase, user.id) : null
 
   const userRole = (profile?.role ?? 'employee') as UserRole
   const allowEdit = canEditRecords(userRole)
@@ -51,7 +50,8 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
 
   if (!debtor) notFound()
 
-  if (!canReadAdminData(userRole) && profile?.branch_id && debtor.branch_id !== profile.branch_id) {
+  const canCrossBranch = canReadAdminData(userRole) || isGeneralAccountant(userRole, profile?.accountant_type)
+  if (!canCrossBranch && profile?.branch_id && debtor.branch_id !== profile.branch_id) {
     notFound()
   }
 

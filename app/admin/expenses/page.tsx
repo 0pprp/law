@@ -21,6 +21,7 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { DateRangePicker } from '@/components/ui/date-range-picker'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { DatePicker } from '@/components/ui/date-picker'
 
 const INP = 'w-full border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2.5 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
@@ -148,27 +149,33 @@ export default function ExpensesPage() {
   }
 
   async function deleteExpense(id: string, debtorName: string, amount: number) {
-    if (!canWrite) { alert(PERMISSION_DENIED_MSG); return }
-    if (!confirm(`هل أنت متأكد من حذف هذه الصرفية (${formatMoney(amount)}) الخاصة بـ "${debtorName}"؟`)) return
+    if (!canWrite) { await appAlert({ message: PERMISSION_DENIED_MSG, variant: 'warning' }); return }
+    const ok = await appConfirm({
+      title: 'تأكيد الحذف',
+      message: `هل أنت متأكد من حذف هذه الصرفية (${formatMoney(amount)}) الخاصة بـ «${debtorName}»؟`,
+      confirmLabel: 'حذف',
+      danger: true,
+    })
+    if (!ok) return
     setDeletingId(id)
     const supabase = createClient()
     const { error } = await supabase.from('expenses').delete().eq('id', id)
-    if (error) { alert(`فشل الحذف: ${error.message}`); setDeletingId(null); return }
+    if (error) { await appAlert({ message: `فشل الحذف: ${error.message}`, variant: 'error' }); setDeletingId(null); return }
     await logActivity({ action: 'delete_expense', entity_type: 'expense', entity_id: id, description: `حذف صرفية: ${formatMoney(amount)} — ${debtorName}` }, supabase)
     setDeletingId(null); load()
   }
 
   async function approveExpense() {
-    alert('صرفيات المهام تُعتمد تلقائياً عند اعتماد الإنجاز من مراجعة المهام')
+    await appAlert({ message: 'صرفيات المهام تُعتمد تلقائياً عند اعتماد الإنجاز من مراجعة المهام', variant: 'info' })
   }
 
   async function confirmReject() {
-    if (!canWrite) { alert(PERMISSION_DENIED_MSG); return }
+    if (!canWrite) { await appAlert({ message: PERMISSION_DENIED_MSG, variant: 'warning' }); return }
     if (!rejectModal) return
     setRejectSaving(true)
     const supabase = createClient()
     const { error } = await (supabase as any).from('expenses').update({ status: 'rejected', rejection_reason: rejectReason || 'مرفوضة من قبل الإدارة' }).eq('id', rejectModal.id)
-    if (error) { alert(error.message); setRejectSaving(false); return }
+    if (error) { await appAlert({ message: error.message, variant: 'error' }); setRejectSaving(false); return }
     await logActivity({ action: 'reject_expense', entity_type: 'expense', entity_id: rejectModal.id, description: `رفض صرفية — ${rejectModal.debtorName} — السبب: ${rejectReason || 'لا يوجد سبب'}` }, supabase)
     setRejectSaving(false); setRejectModal(null); setRejectReason(''); load(); refreshAdminNotifications()
   }

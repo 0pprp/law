@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { reviewLawyerPayoutRequest } from '@/lib/lawyer-payout-requests'
-import { isViewer, apiForbiddenResponse } from '@/lib/permissions'
+import { canManageFinance, apiForbiddenResponse } from '@/lib/permissions'
 import { logActivity } from '@/lib/activity-log'
 
 export async function POST(request: NextRequest) {
@@ -17,12 +17,8 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!profile || !['admin', 'employee'].includes(profile.role)) {
+    if (!profile || !canManageFinance(profile.role)) {
       return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
-    }
-
-    if (isViewer(profile.role)) {
-      return apiForbiddenResponse()
     }
 
     const body = await request.json().catch(() => ({}))

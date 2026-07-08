@@ -92,7 +92,7 @@ export async function fetchLastTaskLabelsForDebtors(
 /** Sum payments for a set of debtors (current page only). */
 export async function fetchPaymentTotalsForDebtors(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   debtorIds: string[],
 ): Promise<Map<string, number>> {
   const paidMap = new Map<string, number>()
@@ -101,11 +101,12 @@ export async function fetchPaymentTotalsForDebtors(
   const CHUNK = 200
   for (let i = 0; i < debtorIds.length; i += CHUNK) {
     const slice = debtorIds.slice(i, i + CHUNK)
-    const { data: payments } = await supabase
+    let q = supabase
       .from('debtor_payments')
       .select('debtor_id, amount')
-      .eq('branch_id', branchId)
       .in('debtor_id', slice)
+    if (branchId) q = q.eq('branch_id', branchId)
+    const { data: payments } = await q
 
     for (const p of payments ?? []) {
       paidMap.set(p.debtor_id, (paidMap.get(p.debtor_id) ?? 0) + Number(p.amount))
@@ -144,7 +145,7 @@ export interface PaginatedClosedDebtorsResult {
 
 async function queryClosedPaginated(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   statusColumn: 'case_status' | 'status',
   options?: FetchClosedDebtorsOptions,
 ): Promise<PaginatedClosedDebtorsResult | null> {
@@ -155,8 +156,8 @@ async function queryClosedPaginated(
     let q = supabase
       .from('debtors')
       .select(CLOSED_DEBTOR_COLS, { count: 'exact' })
-      .eq('branch_id', branchId)
       .eq(statusColumn, 'closed')
+    if (branchId) q = q.eq('branch_id', branchId)
     if (options?.debtorIds?.length) q = q.in('id', options.debtorIds)
     return q
   }
@@ -185,11 +186,11 @@ async function queryClosedPaginated(
 }
 
 /**
- * Closed debtors for a branch — paginated, branch_id first.
+ * Closed debtors — paginated. branchId=null → كل الفروع.
  */
 export async function fetchBranchClosedDebtorsPaginated(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
   options?: FetchClosedDebtorsOptions,
 ): Promise<PaginatedClosedDebtorsResult> {
   const attempts: Array<'case_status' | 'status'> = ['case_status', 'status']
@@ -207,7 +208,7 @@ export async function fetchBranchClosedDebtorsPaginated(
 /** @deprecated Prefer fetchBranchClosedDebtorsPaginated for list pages. */
 export async function fetchBranchClosedDebtors(
   supabase: SupabaseClient,
-  branchId: string,
+  branchId: string | null,
 ): Promise<{ rows: ClosedDebtorRow[]; error?: string }> {
   const all: ClosedDebtorRow[] = []
   let offset = 0

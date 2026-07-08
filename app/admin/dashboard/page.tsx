@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
+import { useBranch, useBranchId } from '@/context/branch'
 import Link from 'next/link'
 import { useAdminRole } from '@/context/admin-role'
-import { canAddDebtor, isLegalManager } from '@/lib/permissions'
+import { canAddDebtor, isAccountant, isLegalManager } from '@/lib/permissions'
 import { fetchLegalManagerWalletBalance } from '@/lib/legal-manager-wallet'
 import { fmtMoney } from '@/lib/utils'
 import { activityActionLabel } from '@/lib/activity-labels'
@@ -38,10 +38,12 @@ function TaskStageIcon() {
 
 export default function DashboardPage() {
   const branchId = useBranchId()
+  const { viewAllBranches } = useBranch()
   const role = useAdminRole()
   const allowAddDebtor = canAddDebtor(role)
-  const showAddDebtorLink = allowAddDebtor || isLegalManager(role)
+  const showAddDebtorLink = allowAddDebtor
   const legalManagerView = isLegalManager(role)
+  const accountantView = isAccountant(role)
   const [lmWalletBalance, setLmWalletBalance] = useState<number | null>(null)
   const [stages, setStages] = useState<UnassignedStageCount[]>([])
   const [totalPendingReview, setTotalPendingReview] = useState(0)
@@ -53,7 +55,7 @@ export default function DashboardPage() {
   const loadData = useCallback(async () => {
     const supabase = createClient()
 
-    if (!branchId) {
+    if (!branchId && !viewAllBranches) {
       setStages([])
       setTotalWaiting(0)
       setTotalAssigned(0)
@@ -63,7 +65,7 @@ export default function DashboardPage() {
       return
     }
 
-    const cacheKey = `dashboard:${branchId}`
+    const cacheKey = `dashboard:${branchId ?? 'all'}`
     const cached = cacheGet<DashboardCache>(cacheKey)
     if (cached) {
       setStages(cached.stages)
@@ -90,7 +92,7 @@ export default function DashboardPage() {
         .select('action, created_at')
         .order('created_at', { ascending: false })
         .limit(5)
-      aq = (aq as any).eq('branch_id', branchId)
+      if (branchId) aq = (aq as any).eq('branch_id', branchId)
 
       const [dashData, pendingReview, activityRes] = await Promise.all([
         fetchDashboardData(supabase, branchId),
@@ -116,7 +118,7 @@ export default function DashboardPage() {
       console.error('[admin/dashboard] load error:', e)
     }
     setLoading(false)
-  }, [branchId])
+  }, [branchId, viewAllBranches])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -176,7 +178,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {!branchId && (
+      {!branchId && !viewAllBranches && (
         <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
           اختر فرعاً من القائمة العلوية لعرض مراحل القضايا.
         </div>
@@ -248,15 +250,26 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Quick actions */}
+      {/* Quick actions — حسب الدور دون تغيير صلاحيات المدير */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        {[
-          { label: 'مدين جديد', href: '/admin/debtors/new', bg: '#231F20', accent: '#2d2629' },
-          { label: 'تكليف المهام', href: '/admin/tasks', bg: '#2C8780', accent: '#1D6365' },
-          { label: 'مراجعة الإنجازات', href: '/admin/tasks/review', bg: '#059669', accent: '#047857' },
-          { label: 'القضايا المحسومة', href: '/admin/closed-cases', bg: '#475569', accent: '#334155' },
-          { label: 'التقارير', href: '/admin/reports', bg: '#7c3aed', accent: '#6d28d9' },
-        ].map(a => (
+        {(accountantView
+          ? [
+              { label: 'مدين جديد', href: '/admin/debtors/new', bg: '#231F20', accent: '#2d2629' },
+              { label: 'التسديدات', href: '/admin/payments', bg: '#2C8780', accent: '#1D6365' },
+              { label: 'أتعاب المحامين', href: '/admin/finance', bg: '#059669', accent: '#047857' },
+              { label: 'الصرفيات', href: '/admin/expenses', bg: '#475569', accent: '#334155' },
+              { label: 'التقارير', href: '/admin/reports', bg: '#7c3aed', accent: '#6d28d9' },
+            ]
+          : [
+              ...(allowAddDebtor
+                ? [{ label: 'مدين جديد', href: '/admin/debtors/new', bg: '#231F20', accent: '#2d2629' }]
+                : []),
+              { label: 'تكليف المهام', href: '/admin/tasks', bg: '#2C8780', accent: '#1D6365' },
+              { label: 'مراجعة الإنجازات', href: '/admin/tasks/review', bg: '#059669', accent: '#047857' },
+              { label: 'القضايا المحسومة', href: '/admin/closed-cases', bg: '#475569', accent: '#334155' },
+              { label: 'التقارير', href: '/admin/reports', bg: '#7c3aed', accent: '#6d28d9' },
+            ]
+        ).map(a => (
           <Link key={a.href} href={a.href}
             className="rounded-2xl px-4 py-3.5 flex items-center gap-2.5 text-white hover:opacity-90 transition-opacity"
             style={{ background: `linear-gradient(135deg, ${a.bg}, ${a.accent})` }}>

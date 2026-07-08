@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { TASK_TYPE_LABELS, TASK_STATUS_LABELS } from '@/lib/types'
+import { TASK_TYPE_LABELS, TASK_STATUS_LABELS, assigneePersonLabel } from '@/lib/types'
 import type { TaskStatus, TaskType, Court, ExecutionDepartment } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { fmtDate } from '@/lib/utils'
@@ -333,7 +333,7 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
       { data: e },
     ] = await Promise.all([
       supabase.from('tasks')
-        .select('*, lawyer:profiles!tasks_assigned_to_fkey(full_name), courts(name), execution_departments(name), task_definitions(label)')
+        .select('*, lawyer:profiles!tasks_assigned_to_fkey(full_name, role), courts(name), execution_departments(name), task_definitions(label)')
         .eq('debtor_id', debtorId)
         .order('created_at', { ascending: false }),
       supabase.from('debtors').select('current_task_id, case_status').eq('id', debtorId).single(),
@@ -418,7 +418,11 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
                     </div>
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
                       <p className="text-xs text-[#767676]">
-                        {isDraft ? 'لم يُكلَّف بعد' : (t.lawyer?.full_name ?? '—')}
+                        {isDraft
+                          ? 'لم يُكلَّف بعد'
+                          : t.lawyer?.full_name
+                            ? `${assigneePersonLabel(t.lawyer?.role)}: ${t.lawyer.full_name}`
+                            : '—'}
                       </p>
                       {courtName && (
                         <span className="text-[10px] text-[#767676]">· {courtName}</span>

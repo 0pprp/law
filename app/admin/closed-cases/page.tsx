@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
+import { useBranch, useBranchId } from '@/context/branch'
 import {
   fetchBranchClosedDebtorsPaginated,
   fetchLastTaskLabelsForDebtors,
@@ -27,6 +27,7 @@ interface ClosedCase {
 
 export default function ClosedCasesPage() {
   const branchId = useBranchId()
+  const { viewAllBranches } = useBranch()
   const [cases, setCases] = useState<ClosedCase[]>([])
   const [total, setTotal] = useState(0)
   const [pageOffset, setPageOffset] = useState(0)
@@ -38,7 +39,7 @@ export default function ClosedCasesPage() {
   const [loadError, setLoadError] = useState('')
 
   const loadPage = useCallback(async (append = false, offset = 0) => {
-    if (!branchId) {
+    if (!branchId && !viewAllBranches) {
       setLoading(false)
       return
     }
@@ -115,7 +116,7 @@ export default function ClosedCasesPage() {
     setPageOffset(offset + pageCases.length)
     setLoading(false)
     setLoadingMore(false)
-  }, [branchId, debouncedSearch])
+  }, [branchId, viewAllBranches, debouncedSearch])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
