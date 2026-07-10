@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
   const {
     temporary_password, full_name, phone, is_active,
     governorate, username, branch_id: bodyBranchId,
+    branch_list_id: bodyBranchListId,
   } = await request.json()
 
   const { branchId: cookieBranchId } = await getBranchContext()
@@ -84,12 +85,13 @@ export async function POST(request: NextRequest) {
     role: 'delegate',
     is_active: is_active ?? true,
     governorate: governorate || branchGovernorate,
-    identity_type: null,
-    identity_number: null,
+    identity_type: bodyBranchListId ? 'delegate_list' : null,
+    identity_number: bodyBranchListId ? String(bodyBranchListId) : null,
     identity_category: null,
     lawyer_type: 'normal',
     accountant_type: 'branch',
     branch_id: branchId,
+    branch_list_id: bodyBranchListId || null,
   }
 
   let { error: profileError } = await admin.from('profiles').update(profileUpdate).eq('id', authData.user.id)
@@ -99,6 +101,12 @@ export async function POST(request: NextRequest) {
     ;({ error: profileError } = await admin.from('profiles').update(withoutAccountantType).eq('id', authData.user.id))
     if (profileError) {
       await admin.from('profiles').upsert({ id: authData.user.id, ...withoutAccountantType })
+    }
+  } else if (profileError && String(profileError.message ?? '').includes('branch_list_id')) {
+    const { branch_list_id: _removed, ...withoutList } = profileUpdate
+    ;({ error: profileError } = await admin.from('profiles').update(withoutList).eq('id', authData.user.id))
+    if (profileError) {
+      await admin.from('profiles').upsert({ id: authData.user.id, ...withoutList })
     }
   } else if (profileError) {
     await admin.from('profiles').upsert({ id: authData.user.id, ...profileUpdate })

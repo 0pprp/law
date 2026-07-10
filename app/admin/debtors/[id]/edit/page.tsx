@@ -12,6 +12,8 @@ import { Button } from '@/components/ui/button'
 import { fmtDate } from '@/lib/utils'
 import { parseMoneyInput } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
+import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
+import { computeDebtorRequiredAmount, computeRemainingFromRequired } from '@/lib/debtor-balances'
 import { RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
@@ -42,6 +44,7 @@ export default function EditDebtorPage() {
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null)
   const [debtorBranchId, setDebtorBranchId] = useState<string | null>(null)
   const [branchLists, setBranchLists] = useState<BranchList[]>([])
+  const [totalPayments, setTotalPayments] = useState(0)
 
   const [form, setForm] = useState({
     full_name: '', phone: '', address: '', id_number: '',
@@ -61,6 +64,7 @@ export default function EditDebtorPage() {
       if (data) {
         setCreatedAt(data.created_at ?? null)
         setDebtorBranchId(data.branch_id ?? null)
+        setTotalPayments(Number(data.total_payments ?? 0))
         const hasPenalty = parseMoneyInput(data.penalty_amount) > 0
         setForm({
           full_name: data.full_name ?? '',
@@ -120,26 +124,40 @@ export default function EditDebtorPage() {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
-    const { error: dbError } = await supabase.from('debtors').update({
+    const receiptRemaining = parseMoneyInput(form.remaining_amount)
+    const receiptAmount = parseMoneyInput(form.receipt_amount)
+    const penalty = form.has_contract ? parseMoneyInput(form.penalty_amount) : 0
+
+    const updatePayload: Record<string, unknown> = {
       full_name: form.full_name, phone: form.phone || null, address: form.address || null,
       id_number: form.id_number || null,
       receipt_type: form.receipt_type, receipt_number: form.receipt_number || null,
-      receipt_amount: parseMoneyInput(form.receipt_amount),
-      remaining_amount: parseMoneyInput(form.remaining_amount),
+      receipt_amount: receiptAmount,
       lawyer_fees: parseMoneyInput(form.lawyer_fees),
-      penalty_amount: form.has_contract ? parseMoneyInput(form.penalty_amount) : 0,
+      penalty_amount: penalty,
       receipt_signed_legal_costs: form.receipt_signed_legal_costs,
       notes: form.notes || null,
       branch_list_id: form.branch_list_id || null,
-    }).eq('id', id)
+    }
+
+    // إعادة حساب المطلوب فقط إذا لا توجد تسديدات (المتبقي في النموذج = متبقي الوصل)
+    if (totalPayments === 0) {
+      const required = computeDebtorRequiredAmount(receiptRemaining, penalty, receiptAmount)
+      updatePayload.required_amount = required
+      updatePayload.remaining_amount = computeRemainingFromRequired(required, 0)
+    }
+
+    const { error: dbError } = await supabase.from('debtors').update(updatePayload).eq('id', id)
     if (dbError) { setError(dbError.message); setSaving(false); return }
     await logActivity({ action: 'update_debtor', entity_type: 'debtor', entity_id: id, description: `تعديل بيانات المدين: ${form.full_name}` }, supabase)
     if (pdfFile) {
-      const safeFileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
-      const filePath = `${id}/${safeFileName}`
-      const { error: uploadError } = await supabase.storage.from('debtor-files').upload(filePath, pdfFile, { contentType: 'application/pdf' })
-      if (uploadError) { setError(`تم حفظ البيانات لكن فشل رفع الملف: ${uploadError.message}`); setSaving(false); return }
-      await supabase.from('debtor_attachments').insert({ debtor_id: id, file_name: pdfFile.name, file_path: filePath, file_size: pdfFile.size, mime_type: pdfFile.type, uploaded_by: user.id })
+      try {
+        await uploadDebtorPdfFile(id, pdfFile)
+      } catch (uploadError) {
+        setError(`تم حفظ البيانات لكن فشل رفع الملف: ${uploadError instanceof Error ? uploadError.message : 'خطأ غير معروف'}`)
+        setSaving(false)
+        return
+      }
     }
     router.push('/admin/debtors')
   }

@@ -80,6 +80,7 @@ export interface Profile {
   lawyer_type?: LawyerType | null
   accountant_type?: AccountantType | null
   branch_id?: string | null
+  branch_list_id?: string | null
   avatar_url: string | null
   is_active: boolean
   created_at: string

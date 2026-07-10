@@ -15,6 +15,9 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { FormFlow, FormFlowHero, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { cn } from '@/lib/utils'
 import { parseMoneyInput } from '@/lib/money-input'
+import MoneyInput from '@/components/ui/money-input'
+import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
+import { computeDebtorRequiredAmount, computeRemainingFromRequired } from '@/lib/debtor-balances'
 import { canAddDebtor } from '@/lib/permissions'
 import { useAdminRole } from '@/context/admin-role'
 import BranchListSelect from '@/components/BranchListSelect'
@@ -151,6 +154,8 @@ export default function NewDebtorPage() {
     const remaining = parseMoneyInput(form.remaining_amount)
     const receiptAmount = parseMoneyInput(form.receipt_amount)
     const penalty = form.has_contract ? parseMoneyInput(form.penalty_amount) : 0
+    const required = computeDebtorRequiredAmount(remaining, penalty, receiptAmount)
+    const balanceRemaining = computeRemainingFromRequired(required, 0)
 
     const { data: newDebtor, error: dbError } = await supabase.from('debtors').insert({
       full_name: form.full_name.trim() || '',
@@ -162,8 +167,8 @@ export default function NewDebtorPage() {
       receipt_type: resolveReceiptType(form.receipt_type),
       receipt_number: form.receipt_number.trim() || null,
       receipt_amount: receiptAmount,
-      remaining_amount: remaining,
-      required_amount: remaining,
+      remaining_amount: balanceRemaining,
+      required_amount: required,
       lawyer_fees: 0,
       penalty_amount: penalty,
       receipt_signed_legal_costs: form.receipt_signed_legal_costs,
@@ -204,36 +209,13 @@ export default function NewDebtorPage() {
       return
     }
 
-    const safeFileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
-    const filePath = `${newDebtor.id}/${safeFileName}`
-
     if (pdfFile) {
-      const { error: uploadError } = await supabase.storage
-        .from('debtor-files')
-        .upload(filePath, pdfFile, { contentType: 'application/pdf' })
-
-      if (uploadError) {
+      try {
+        await uploadDebtorPdfFile(newDebtor.id, pdfFile)
+      } catch (uploadError) {
         await supabase.from('tasks').delete().eq('id', newTask.id)
         await supabase.from('debtors').delete().eq('id', newDebtor.id)
-        setError(`فشل رفع ملف PDF: ${uploadError.message}`)
-        setSaving(false)
-        return
-      }
-
-      const { error: attachErr } = await supabase.from('debtor_attachments').insert({
-        debtor_id: newDebtor.id,
-        file_name: pdfFile.name,
-        file_path: filePath,
-        file_size: pdfFile.size,
-        mime_type: pdfFile.type,
-        uploaded_by: user.id,
-      })
-
-      if (attachErr) {
-        await supabase.storage.from('debtor-files').remove([filePath])
-        await supabase.from('tasks').delete().eq('id', newTask.id)
-        await supabase.from('debtors').delete().eq('id', newDebtor.id)
-        setError(`فشل حفظ سجل الملف: ${attachErr.message}`)
+        setError(`فشل رفع ملف PDF: ${uploadError instanceof Error ? uploadError.message : 'خطأ غير معروف'}`)
         setSaving(false)
         return
       }
@@ -367,23 +349,19 @@ export default function NewDebtorPage() {
               <FormField label={RECEIPT_NUMBER_LABEL} hint="اختياري">
                 <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={inputClass()} dir="ltr" />
               </FormField>
-              <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`} hint="اختياري — أرقام أو نص">
-                <input
-                  type="text"
+              <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`} hint="اختياري — يُنسّق تلقائياً كل 3 أرقام">
+                <MoneyInput
                   value={form.receipt_amount}
-                  onChange={e => set('receipt_amount', e.target.value)}
+                  onChange={v => set('receipt_amount', v)}
                   className={inputClass()}
-                  dir="ltr"
                   placeholder="0"
                 />
               </FormField>
-              <FormField label="المبلغ المتبقي (د.ع)" hint="اختياري — أرقام أو نص">
-                <input
-                  type="text"
+              <FormField label="المبلغ المتبقي (د.ع)" hint="اختياري — يُنسّق تلقائياً كل 3 أرقام">
+                <MoneyInput
                   value={form.remaining_amount}
-                  onChange={e => set('remaining_amount', e.target.value)}
+                  onChange={v => set('remaining_amount', v)}
                   className={inputClass()}
-                  dir="ltr"
                   placeholder="0"
                 />
               </FormField>
@@ -425,13 +403,11 @@ export default function NewDebtorPage() {
                 )}
               </div>
               {form.has_contract && (
-                <FormField label="الشرط الجزائي (د.ع)" hint="اختياري — أرقام أو نص">
-                  <input
-                    type="text"
+                <FormField label="الشرط الجزائي (د.ع)" hint="اختياري — يُنسّق تلقائياً كل 3 أرقام">
+                  <MoneyInput
                     value={form.penalty_amount}
-                    onChange={e => set('penalty_amount', e.target.value)}
+                    onChange={v => set('penalty_amount', v)}
                     className={inputClass()}
-                    dir="ltr"
                     placeholder="0"
                   />
                 </FormField>

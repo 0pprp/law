@@ -1,5 +1,20 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+/**
+ * المبلغ المطلوب = المتبقي من الوصل + الشرط الجزائي.
+ * إن وُجد مبلغ وصل > 0: لا يتجاوز مبلغ الوصل.
+ * لا يشمل الصرفيات — تُسجَّل في total_expenses فقط.
+ */
+export function computeDebtorRequiredAmount(
+  receiptRemaining: number,
+  penaltyAmount: number,
+  receiptAmount: number,
+): number {
+  const sum = Math.max(0, receiptRemaining) + Math.max(0, penaltyAmount)
+  if (receiptAmount > 0) return Math.min(sum, receiptAmount)
+  return sum
+}
+
 /** المتبقي = المبلغ المطلوب − إجمالي التسديدات */
 export function computeRemainingFromRequired(
   requiredAmount: number,
@@ -35,35 +50,11 @@ export async function syncDebtorRemainingAfterPayments(
   return { ok: true }
 }
 
-/** عند اعتماد صرفية: المطلوب والمتبقي يزيدان — يُفضَّل trigger DB */
+/** @deprecated الصرفيات لا تزيد المطلوب — يُزامَن total_expenses عبر trigger DB فقط */
 export async function applyDebtorApprovedExpenseDelta(
-  supabase: SupabaseClient,
-  debtorId: string,
-  expenseDelta: number,
+  _supabase: SupabaseClient,
+  _debtorId: string,
+  _expenseDelta: number,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (expenseDelta === 0) return { ok: true }
-
-  const { data: debtor, error: readErr } = await supabase
-    .from('debtors')
-    .select('required_amount, total_payments')
-    .eq('id', debtorId)
-    .single()
-
-  if (readErr || !debtor) {
-    return { ok: false, error: readErr?.message ?? 'المدين غير موجود' }
-  }
-
-  const required_amount = Math.max(0, Number(debtor.required_amount ?? 0) + expenseDelta)
-  const remaining_amount = computeRemainingFromRequired(
-    required_amount,
-    Number(debtor.total_payments ?? 0),
-  )
-
-  const { error } = await supabase
-    .from('debtors')
-    .update({ required_amount, remaining_amount })
-    .eq('id', debtorId)
-
-  if (error) return { ok: false, error: error.message }
   return { ok: true }
 }

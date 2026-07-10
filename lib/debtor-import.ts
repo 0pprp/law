@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ReceiptType } from '@/lib/types'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import { findOrCreateBranchList } from '@/lib/branch-lists'
+import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
+import { computeDebtorRequiredAmount } from '@/lib/debtor-balances'
 
 export const IMPORT_EXCEL_HEADERS = [
   'الاسم الكامل',
@@ -54,7 +56,7 @@ export interface ImportPreviewRow extends ParsedImportRow {
   /** المتبقي من الوصل (من Excel — بعد تسديدات سابقة على السند) */
   receipt_remaining: number | null
   expenses_total: number
-  /** المبلغ المطلوب = المتبقي من الوصل + مجموع الصرفيات؛ ويساوي المتبقي عند الإضافة */
+  /** المبلغ المطلوب = min(المتبقي + الجزائي، مبلغ الوصل) — بدون الصرفيات */
   required_amount: number | null
   has_contract: boolean
   penalty_amount: number
@@ -124,12 +126,13 @@ export function normalizeReceiptTypeInput(raw: string): string {
   return raw.trim()
 }
 
-/** المبلغ المطلوب عند الاستيراد = المتبقي من الوصل + مجموع الصرفيات */
+/** المبلغ المطلوب عند الاستيراد = المتبقي + الشرط الجزائي، بحد أقصى مبلغ الوصل (بدون الصرفيات) */
 export function computeImportRequiredAmount(
   receiptRemaining: number,
-  expensesTotal: number,
+  penaltyAmount = 0,
+  receiptAmount = 0,
 ): number {
-  return receiptRemaining + expensesTotal
+  return computeDebtorRequiredAmount(receiptRemaining, penaltyAmount, receiptAmount)
 }
 
 function readExpensesTotalCell(row: Record<string, unknown>): string {
@@ -325,17 +328,22 @@ export function validateImportRows(
     const expensesTotal = parseAmount(row.expenses_total_raw, 'مجموع الصرفيات')
     if (!expensesTotal.ok) errors.push(expensesTotal.error)
 
-    const receipt_remaining = remainAmt.ok ? remainAmt.value : null
-    const expenses_total = expensesTotal.ok ? expensesTotal.value : 0
-    const required_amount =
-      receipt_remaining != null
-        ? computeImportRequiredAmount(receipt_remaining, expenses_total)
-        : null
-
     const has_contract = parseBool(row.has_contract_raw)
     const penaltyParsed = parseAmount(row.penalty_amount_raw, 'الشرط الجزائي')
     if (!penaltyParsed.ok) errors.push(penaltyParsed.error)
     const penalty_amount = has_contract && penaltyParsed.ok ? penaltyParsed.value : 0
+
+    const receipt_remaining = remainAmt.ok ? remainAmt.value : null
+    const expenses_total = expensesTotal.ok ? expensesTotal.value : 0
+    const receipt_amount_val = receiptAmt.ok ? receiptAmt.value : 0
+    const required_amount =
+      receipt_remaining != null
+        ? computeImportRequiredAmount(
+            receipt_remaining,
+            penalty_amount,
+            receipt_amount_val,
+          )
+        : null
 
     let task_definition_id: string | null = null
     if (!row.task_label.trim()) {
@@ -505,8 +513,8 @@ export async function executeDebtorImport(
       receipt_type: row.receipt_type ?? 'check',
       receipt_number: row.receipt_number.trim(),
       receipt_amount: row.receipt_amount ?? 0,
-      remaining_amount: row.receipt_remaining ?? 0,
-      required_amount: row.receipt_remaining ?? 0,
+      remaining_amount: row.required_amount ?? row.receipt_remaining ?? 0,
+      required_amount: row.required_amount ?? row.receipt_remaining ?? 0,
       lawyer_fees: 0,
       penalty_amount: row.penalty_amount,
       notes: row.notes || null,
@@ -650,42 +658,18 @@ export async function executeDebtorImport(
         return
       }
 
-      const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
-      const filePath = `${debtorId}/${safeName}`
       const blob = row.pdfBlob
       const file = new File([blob], row.pdf_filename, { type: 'application/pdf' })
 
-      const { error: upErr } = await supabase.storage
-        .from('debtor-files')
-        .upload(filePath, file, { contentType: 'application/pdf' })
-
-      if (upErr) {
+      try {
+        await uploadDebtorPdfFile(debtorId, file)
+      } catch (upErr) {
         await cleanupDebtor(supabase, debtorId, taskId, null)
         failures.push({
           rowNum: row.rowNum,
           full_name: row.full_name,
           receipt_number: row.receipt_number,
-          errors: [`فشل رفع PDF: ${upErr.message}`],
-        })
-        return
-      }
-
-      const { error: attErr } = await supabase.from('debtor_attachments').insert({
-        debtor_id: debtorId,
-        file_name: row.pdf_filename,
-        file_path: filePath,
-        file_size: file.size,
-        mime_type: 'application/pdf',
-        uploaded_by: ctx.userId,
-      })
-
-      if (attErr) {
-        await cleanupDebtor(supabase, debtorId, taskId, filePath)
-        failures.push({
-          rowNum: row.rowNum,
-          full_name: row.full_name,
-          receipt_number: row.receipt_number,
-          errors: [`فشل حفظ سجل الملف: ${attErr.message}`],
+          errors: [`فشل رفع PDF: ${upErr instanceof Error ? upErr.message : 'خطأ غير معروف'}`],
         })
         return
       }

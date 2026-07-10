@@ -238,7 +238,7 @@ export default function DebtorImportModal({ open, onClose, onComplete }: Props) 
               <p className="text-xs text-[#767676]">
                 أنواع السند: {IMPORT_RECEIPT_TYPE_HINT} · المهمة يجب أن تطابق اسم المهمة في الفرع <span className="font-semibold">تماماً</span>.
                 {' '}عمود <span className="font-semibold">المبلغ المتبقي</span> هو المتبقي من الوصل (بعد تسديدات سابقة على السند).
-                {' '}المبلغ المطلوب عند الإضافة = المتبقي من الوصل + مجموع الصرفيات، ويساوي المتبقي في النظام.
+                {' '}المبلغ المطلوب = المتبقي من الوصل + الشرط الجزائي (بحد أقصى مبلغ الوصل). الصرفيات لا تزيد المطلوب. المتبقي في النظام = المطلوب − التسديدات.
                 {' '}عمود <span className="font-semibold">مجموع الصرفيات</span> اختياري.
                 {' '}عمود <span className="font-semibold">القائمة</span> اختياري — يُربط المدين بقائمة الفرع أو يُنشأ تلقائياً إن لم تكن موجودة.
                 {' '}رقم الهوية <span className="font-semibold">اختياري</span>.

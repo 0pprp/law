@@ -20,7 +20,7 @@ export default function MoneyInput({ value, onChange, className, ...rest }: Mone
         const numeric = parseMoneyInput(e.target.value)
         onChange(numeric ? String(numeric) : '', numeric)
       }}
-      className={cn(className)}
+      className={cn('tabular-nums', className)}
     />
   )
 }

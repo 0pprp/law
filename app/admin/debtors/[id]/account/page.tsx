@@ -15,7 +15,7 @@ import DebtorActivityPanel from '@/components/DebtorActivityPanel'
 import DebtorArchiveTabs from '@/components/DebtorArchiveTabs'
 import DebtorAccountPaymentButton from '@/components/DebtorAccountPaymentButton'
 import DebtorPaymentsPanel from '@/components/DebtorPaymentsPanel'
-import DebtorExpensesList from '@/components/DebtorExpensesList'
+import DebtorAttachmentsList from '@/components/DebtorAttachmentsList'
 import { canEditRecords, canReadAdminData, canAddPayments, isGeneralAccountant } from '@/lib/permissions'
 import { fetchStaffRoleFields } from '@/lib/staff-profile'
 import type { UserRole } from '@/lib/types'
@@ -44,7 +44,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
     supabase.from('debtors').select('*, branch_list:branch_lists(name)').eq('id', id).single(),
     supabase.from('debtor_payments').select('*').eq('debtor_id', id).order('payment_date', { ascending: false }),
     supabase.from('expenses').select('*, task:tasks!expenses_task_id_fkey(task_type)').eq('debtor_id', id).order('expense_date', { ascending: false }),
-    supabase.from('debtor_attachments').select('id, file_name, file_size, mime_type, created_at').eq('debtor_id', id).order('created_at', { ascending: false }),
+    supabase.from('debtor_attachments').select('id, file_name, file_path, file_size, mime_type, created_at').eq('debtor_id', id).order('created_at', { ascending: false }),
     supabase.from('tasks').select('id').eq('debtor_id', id),
   ])
 
@@ -149,19 +149,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
       {!(files?.length) ? (
         <div className="py-8 text-center text-[#767676] text-sm">لا توجد مرفقات</div>
       ) : (
-        <div className="divide-y divide-[rgba(118,118,118,0.08)]">
-          {files!.map((f: { id: string; file_name: string; created_at: string }) => (
-            <div key={f.id} className="px-5 py-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-7 h-7 bg-[rgba(44,135,128,0.08)] rounded-lg flex items-center justify-center shrink-0">
-                  <svg className="w-4 h-4 text-[#2C8780]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                </div>
-                <p className="text-sm text-[#231F20] truncate">{f.file_name}</p>
-              </div>
-              <span className="text-xs text-[#767676] font-mono shrink-0" dir="ltr">{fmtDate(f.created_at)}</span>
-            </div>
-          ))}
-        </div>
+        <DebtorAttachmentsList files={files ?? []} />
       )}
     </Card>
   )

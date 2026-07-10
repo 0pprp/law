@@ -166,22 +166,47 @@ export function filterDelegateProfiles(profiles: BranchProfileRow[]): BranchProf
 export async function fetchBranchDelegates(
   supabase: SupabaseClient,
   branchId: string | null,
+  branchListId?: string | null,
 ): Promise<{ delegates: DelegateOption[]; error: unknown | null }> {
   let q = supabase
     .from('profiles')
-    .select('id, full_name, role, branch_id, is_active')
+    .select('id, full_name, role, branch_id, branch_list_id, identity_type, identity_number, is_active')
     .eq('role', 'delegate')
     .order('full_name')
 
   if (branchId) q = q.eq('branch_id', branchId)
+  if (branchListId) {
+    q = q.eq('identity_type', 'delegate_list').eq('identity_number', branchListId)
+  }
 
   const { data, error } = await q
   if (error) return { delegates: [], error }
 
-  const delegates = filterDelegateProfiles((data ?? []) as BranchProfileRow[]).map(p => ({
-    id: p.id,
-    full_name: `${p.full_name} (مندوب)`,
-  }))
+  const listIds = [...new Set(
+    (data ?? [])
+      .map(p => (p as { branch_list_id?: string | null; identity_number?: string | null }).branch_list_id
+        ?? ((p as { identity_type?: string | null }).identity_type === 'delegate_list'
+          ? (p as { identity_number?: string | null }).identity_number
+          : null))
+      .filter(Boolean),
+  )] as string[]
+
+  const listNameMap = new Map<string, string>()
+  if (listIds.length) {
+    const { data: lists } = await supabase.from('branch_lists').select('id, name').in('id', listIds)
+    for (const l of lists ?? []) listNameMap.set(l.id, l.name)
+  }
+
+  const delegates = filterDelegateProfiles((data ?? []) as BranchProfileRow[]).map(p => {
+    const row = p as BranchProfileRow & { branch_list_id?: string | null; identity_type?: string | null; identity_number?: string | null }
+    const listId = row.branch_list_id ?? (row.identity_type === 'delegate_list' ? row.identity_number : null)
+    const listName = listId ? listNameMap.get(listId) : null
+    const listSuffix = listName ? ` — ${listName}` : ''
+    return {
+      id: p.id,
+      full_name: `${p.full_name} (مندوب)${listSuffix}`,
+    }
+  })
 
   return { delegates, error: null }
 }
