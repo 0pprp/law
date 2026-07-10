@@ -145,7 +145,7 @@ export default async function DelegateDashboardPage() {
                       <p className="text-xs text-[#767676] mt-0.5">{resolveTaskLabel(task.task_type, task.task_label)}</p>
                     </div>
                     <Badge variant={isLawyerAchievedTask(task.task_status) ? 'success' : (STATUS_BADGE[task.task_status as TaskStatus] ?? 'default')}>
-                      {lawyerTaskStatusLabel(task.task_status, task, user.id)}
+                      {lawyerTaskStatusLabel(task.task_status, task, user.id, { assigneeRole: 'delegate' })}
                     </Badge>
                   </div>
                   {task.due_date && (

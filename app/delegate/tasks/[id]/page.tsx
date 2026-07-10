@@ -206,7 +206,7 @@ export default async function DelegateTaskDetailPage({ params }: { params: Promi
             <div className="flex items-center gap-2 flex-wrap mb-0.5">
               <h1 className="font-bold text-slate-800 text-base leading-tight">{taskLabel}</h1>
               <Badge variant={isLawyerAchievedTask(status) ? 'success' : (STATUS_BADGE[status] ?? 'default')}>
-                {lawyerTaskStatusLabel(status, task, user.id)}
+                {lawyerTaskStatusLabel(status, task, user.id, { assigneeRole: 'delegate' })}
               </Badge>
             </div>
             {d?.full_name && <p className="text-xs text-slate-500 truncate">{d.full_name}</p>}

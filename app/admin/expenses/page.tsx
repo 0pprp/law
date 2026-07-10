@@ -165,8 +165,55 @@ export default function ExpensesPage() {
     setDeletingId(null); load()
   }
 
-  async function approveExpense() {
-    await appAlert({ message: 'صرفيات المهام تُعتمد تلقائياً عند اعتماد الإنجاز من مراجعة المهام', variant: 'info' })
+  async function approveExpense(exp: { id: string; task_id?: string | null; debtor_id?: string | null; debtors?: { full_name?: string } | null; amount?: number }) {
+    if (!canWrite) { await appAlert({ message: PERMISSION_DENIED_MSG, variant: 'warning' }); return }
+    if (exp.task_id) {
+      await appAlert({ message: 'صرفيات المهام تُعتمد تلقائياً عند اعتماد الإنجاز من مراجعة المهام', variant: 'info' })
+      return
+    }
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { await appAlert({ message: 'يجب تسجيل الدخول', variant: 'error' }); return }
+
+    const { data: current } = await supabase
+      .from('expenses')
+      .select('id, status, task_id, branch_id')
+      .eq('id', exp.id)
+      .maybeSingle()
+
+    if (!current) {
+      await appAlert({ message: 'الصرفية غير موجودة', variant: 'error' })
+      return
+    }
+    if (current.task_id) {
+      await appAlert({ message: 'صرفيات المهام تُعتمد تلقائياً عند اعتماد الإنجاز', variant: 'info' })
+      return
+    }
+    const status = normalizeStatus(current.status)
+    if (status === 'approved') {
+      await appAlert({ message: 'هذه الصرفية معتمدة مسبقاً', variant: 'info' })
+      return
+    }
+
+    const now = new Date().toISOString()
+    const { error } = await (supabase as any).from('expenses').update({
+      status: 'approved',
+      approved_at: now,
+      approved_by: user.id,
+    }).eq('id', exp.id).in('status', ['pending_review', 'pending_approval', 'pending'])
+
+    if (error) {
+      await appAlert({ message: error.message, variant: 'error' })
+      return
+    }
+    await logActivity({
+      action: 'approve_expense',
+      entity_type: 'expense',
+      entity_id: exp.id,
+      description: `اعتماد صرفية يدوية — ${exp.debtors?.full_name ?? ''} — ${formatMoney(Number(exp.amount ?? 0))}`,
+    }, supabase)
+    load()
+    refreshAdminNotifications()
   }
 
   async function confirmReject() {
@@ -338,11 +385,11 @@ export default function ExpensesPage() {
                       {canWrite ? (
                       <div className="flex items-center justify-center gap-1.5">
                         {isPendingReview && linkedToTask ? (
-                          <span className="text-[10px] text-yellow-700 font-bold px-2 py-1">تُعتمد مع الإنجاز</span>
+                          <span className="text-[10px] text-yellow-700 font-bold px-2 py-1">تعتمد مع الإنجاز</span>
                         ) : isPendingReview ? (
                           <>
                             <button
-                              onClick={() => approveExpense()}
+                              onClick={() => approveExpense(exp)}
                               className="text-xs font-bold text-green-700 border border-green-200 bg-green-50 hover:bg-green-100 px-2.5 py-1.5 rounded-lg"
                             >
                               اعتماد

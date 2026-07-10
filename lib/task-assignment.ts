@@ -9,6 +9,7 @@ import {
 import { fetchAssignmentLawyers } from '@/lib/branch-profiles'
 import { isGeneralLawyerType } from '@/lib/lawyer-type'
 import { formatErrorMessage } from '@/lib/format-error'
+import { isFindAddressTaskType } from '@/lib/delegate'
 
 const LAWYER_TASK_LIST_COLS =
   'id, task_type, task_definition_id, task_status, due_date, court_name, governorate, created_at, debtor_id, assignment_expires_at, admin_notes, assigned_to, reward_amount, branch_id'
@@ -148,13 +149,18 @@ async function hydratePendingReviewTasks(
     .from('debtors')
     .select('id, full_name, phone, governorate, case_status, branch_id')
     .in('id', debtorIds)
-    .not('case_status', 'eq', 'closed')
   if (branchId) debtorsQ = debtorsQ.eq('branch_id', branchId)
 
   const { data: debtors } = await debtorsQ
 
   const debtorMap = new Map((debtors ?? []).map(d => [d.id, d]))
-  const branchTasks = rawTasks.filter(t => debtorMap.has(t.debtor_id as string))
+  // الفلاتر (إغلاق القضية) تُطبَّق في الاستعلام قبل count — هنا نربط البيانات فقط
+  const branchTasks = rawTasks.filter(t => {
+    const d = debtorMap.get(t.debtor_id as string)
+    if (!d) return false
+    if (d.case_status === 'closed') return false
+    return taskBelongsToBranch(t as { branch_id?: string | null }, d, branchId)
+  })
   if (!branchTasks.length) return []
 
   const lawyerIds = [...new Set(branchTasks.map(t => t.assigned_to).filter(Boolean))] as string[]
@@ -194,6 +200,7 @@ async function hydratePendingReviewTasks(
 
 /**
  * Single source for dashboard «بانتظار المراجعة» + /admin/tasks/review.
+ * الفلاتر (فرع + غير مغلقة) تُطبَّق قبل count حتى يطابق total النتائج.
  */
 export async function fetchPendingReviewTasksPaginated(
   supabase: SupabaseClient,
@@ -204,12 +211,22 @@ export async function fetchPendingReviewTasksPaginated(
   const offset = options?.offset ?? 0
   const cols = options?.includeCompletionData ? REVIEW_TASK_DETAIL_COLS : REVIEW_TASK_LIST_COLS
 
+  // استبعاد قضايا مغلقة من العدّ والنتائج
+  let openDebtorsQ = supabase
+    .from('debtors')
+    .select('id')
+    .not('case_status', 'eq', 'closed')
+  if (branchId) openDebtorsQ = openDebtorsQ.eq('branch_id', branchId)
+  const { data: openDebtors } = await openDebtorsQ
+  const openIds = (openDebtors ?? []).map(d => d.id)
+  if (!openIds.length) return { tasks: [], total: 0 }
+
   let q = supabase
     .from('tasks')
     .select(cols, { count: 'exact' })
     .in('task_status', [...REVIEW_QUEUE_STATUSES])
     .not('assigned_to', 'is', null)
-    .not('debtor_id', 'is', null)
+    .in('debtor_id', openIds)
     .order('completed_at', { ascending: true, nullsFirst: false })
     .range(offset, offset + limit - 1)
 
@@ -223,6 +240,7 @@ export async function fetchPendingReviewTasksPaginated(
   }
 
   const tasks = await hydratePendingReviewTasks(supabase, branchId, (rawTasks ?? []) as unknown as Record<string, unknown>[])
+  // total من الاستعلام بعد فلاتر الإغلاق/الفرع — يطابق النتائج
   return { tasks, total: count ?? tasks.length }
 }
 
@@ -273,10 +291,21 @@ export async function fetchPendingReviewCount(
   supabase: SupabaseClient,
   branchId: string | null,
 ): Promise<number> {
+  let openDebtorsQ = supabase
+    .from('debtors')
+    .select('id')
+    .not('case_status', 'eq', 'closed')
+  if (branchId) openDebtorsQ = openDebtorsQ.eq('branch_id', branchId)
+  const { data: openDebtors } = await openDebtorsQ
+  const openIds = (openDebtors ?? []).map(d => d.id)
+  if (!openIds.length) return 0
+
   let q = supabase
     .from('tasks')
     .select('id', { count: 'exact', head: true })
     .in('task_status', [...REVIEW_QUEUE_STATUSES])
+    .not('assigned_to', 'is', null)
+    .in('debtor_id', openIds)
   if (branchId) q = q.eq('branch_id', branchId)
   const { count } = await q
   return count ?? 0
@@ -765,7 +794,7 @@ export async function validateLawyerTaskAssignment(
         ? (t.task_definitions[0] as { task_type?: string } | undefined)?.task_type
         : (t.task_definitions as { task_type?: string } | null)?.task_type
       const taskType = t.task_type ?? defType
-      if (taskType !== 'find_address') {
+      if (!isFindAddressTaskType(taskType)) {
         return { ok: false, error: 'يمكن تكليف المندوب بمهمة إيجاد عنوان فقط' }
       }
     }
@@ -820,7 +849,7 @@ function omitPayloadKeys(payload: Record<string, unknown>, keys: string[]) {
   return next
 }
 
-/** Apply assignment with fallbacks when optional columns / enum values are missing in DB. */
+/** Apply assignment — always assignment_pending_acceptance (no silent skip to assigned). */
 export async function assignTasksToLawyer(
   supabase: SupabaseClient,
   taskIds: string[],
@@ -831,18 +860,15 @@ export async function assignTasksToLawyer(
   if (!taskIds.length) return { ok: false, error: 'لا مهام محددة' }
 
   const full = buildPendingAssignmentPayload(lawyerId, dueDate) as Record<string, unknown>
+  // Fallbacks only omit optional columns — never change required status flow
   const payloads: Record<string, unknown>[] = [
     full,
     omitPayloadKeys(full, ['assigned_at']),
     omitPayloadKeys(full, ['assigned_at', 'assignment_expires_at']),
+    omitPayloadKeys(full, ['assigned_at', 'assignment_expires_at', 'assignment_rejected_by']),
     {
       assigned_to: lawyerId,
       task_status: 'assignment_pending_acceptance',
-      ...(dueDate ? { due_date: dueDate } : {}),
-    },
-    {
-      assigned_to: lawyerId,
-      task_status: 'assigned',
       ...(dueDate ? { due_date: dueDate } : {}),
     },
   ]
@@ -859,9 +885,13 @@ export async function assignTasksToLawyer(
       .select('id, assigned_to, task_status')
       .in('id', taskIds)
       .limit(1)
-    if (check?.[0]?.assigned_to === lawyerId) {
+    if (
+      check?.[0]?.assigned_to === lawyerId
+      && check[0].task_status === 'assignment_pending_acceptance'
+    ) {
       return { ok: true, error: null }
     }
+    lastError = { message: 'فشل حفظ حالة بانتظار القبول — لم يُغيَّر سير العمل' }
   }
 
   return { ok: false, error: formatErrorMessage(lastError) || 'فشل تكليف المهمة' }
@@ -913,17 +943,10 @@ async function queryLawyerTasksPage(
     .range(offset, offset + limit - 1)
 
   if (trackAssignmentRejections && status === 'rejected') {
-    // العدّ فقط — لا نعرض تفاصيل المدين بعد رفض التكليف
-    let countQ = supabase
-      .from('tasks')
-      .select('id', { count: 'exact', head: true })
-      .eq('assignment_rejected_by', lawyerId)
-      .is('assigned_to', null)
-    const { count, error } = await countQ
-    return { data: [], count: count ?? 0, error }
-  }
-
-  if (status && status !== 'all') {
+    // مرفوضة = رفض إنجاز (needs_revision/rejected) للمهام المسندة
+    // عدّ رفض التكليف يُضاف في العدادات فقط عبر fetchLawyerTaskStatusCounts
+    q = q.eq('assigned_to', lawyerId).in('task_status', ['needs_revision', 'rejected'])
+  } else if (status && status !== 'all') {
     q = q.eq('assigned_to', lawyerId)
     if (status === 'completed') {
       q = q.in('task_status', ['approved', 'completed'])
@@ -931,7 +954,7 @@ async function queryLawyerTasksPage(
       q = q.eq('task_status', status)
     }
   } else {
-    // الكل / الرئيسية — المكلف بها فقط، بدون المرفوضة
+    // الكل / الرئيسية — المكلف بها فقط
     q = q.eq('assigned_to', lawyerId)
   }
 
@@ -946,7 +969,7 @@ export async function fetchLawyerAssignedTasksPaginated(
   lawyerId: string,
   options?: FetchLawyerTasksOptions,
 ): Promise<PaginatedLawyerTasksResult> {
-  await autoAcceptExpiredAssignments(supabase, { lawyerId })
+  // لا تُنفَّذ كتابات auto-accept عند كل قراءة — الصيانة عبر scheduleBranchMaintenance فقط
 
   let { data: tasks, count, error } = await queryLawyerTasksPage(supabase, lawyerId, options, true)
   if (error && isMissingAssignmentRejectionColumn(error)) {
@@ -958,7 +981,7 @@ export async function fetchLawyerAssignedTasksPaginated(
   }
   if (!tasks?.length) return { tasks: [], total: count ?? 0, error: null }
 
-  const rawTasks = tasks as LawyerTaskListRaw[]
+  const rawTasks = tasks as unknown as LawyerTaskListRaw[]
   // لا تعرض مهاماً رفضها المحامي حتى لو بقيت حالة قديمة في قاعدة البيانات
   const activeTasks = rawTasks.filter((t) => {
       if (t.assigned_to !== lawyerId) return false
@@ -1015,7 +1038,6 @@ export async function fetchLawyerTaskStatusCounts(
     'assigned',
     'in_progress',
     'submitted',
-    'rejected',
   ] as const
 
   const baseAssigned = () =>
@@ -1033,22 +1055,27 @@ export async function fetchLawyerTaskStatusCounts(
         .eq('assignment_rejected_by', lawyerId)
         .is('assigned_to', null)
 
+    // مصدر الحقيقة لرفض الإنجاز: needs_revision (+ rejected للتوافق)
+    const completionRejectedCount = () =>
+      baseAssigned().in('task_status', ['needs_revision', 'rejected'])
+
     const allQuery = baseAssigned()
 
-    const [allRes, completedRes, rejectedAssignRes, ...statusRes] = await Promise.all([
+    const [allRes, completedRes, rejectedAssignRes, rejectedCompletionRes, ...statusRes] = await Promise.all([
       allQuery,
       baseAssigned().in('task_status', ['approved', 'completed']),
       trackAssignmentRejections ? rejectedAssignmentCount() : Promise.resolve({ count: 0, error: null }),
+      completionRejectedCount(),
       ...statuses.map(s => baseAssigned().eq('task_status', s)),
     ])
 
-    return { allRes, completedRes, rejectedAssignRes, statusRes }
+    return { allRes, completedRes, rejectedAssignRes, rejectedCompletionRes, statusRes }
   }
 
-  let { allRes, completedRes, rejectedAssignRes, statusRes } = await loadCounts(true)
+  let { allRes, completedRes, rejectedAssignRes, rejectedCompletionRes, statusRes } = await loadCounts(true)
   const allErr = (allRes as { error?: unknown }).error
   if (allErr && isMissingAssignmentRejectionColumn(allErr)) {
-    ;({ allRes, completedRes, rejectedAssignRes, statusRes } = await loadCounts(false))
+    ;({ allRes, completedRes, rejectedAssignRes, rejectedCompletionRes, statusRes } = await loadCounts(false))
   }
 
   const counts: LawyerTaskStatusCounts = {
@@ -1057,7 +1084,7 @@ export async function fetchLawyerTaskStatusCounts(
     assigned: statusRes[1].count ?? 0,
     in_progress: statusRes[2].count ?? 0,
     submitted: statusRes[3].count ?? 0,
-    rejected: (statusRes[4].count ?? 0) + (rejectedAssignRes.count ?? 0),
+    rejected: (rejectedCompletionRes.count ?? 0) + (rejectedAssignRes.count ?? 0),
     completed: completedRes.count ?? 0,
   }
 

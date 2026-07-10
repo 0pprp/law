@@ -222,6 +222,68 @@ export async function deductTaskExpensesOnApproval(
   return { ok: true, total, count: payable.length }
 }
 
+/**
+ * تعويض عند فشل إضافة الأتعاب بعد خصم الصرفيات — يعيد الرصيد دون تغيير المعادلات.
+ * Idempotent: إن لم توجد حركة خصم لا يفعل شيئاً.
+ */
+export async function reverseTaskExpenseDeductionOnFailure(
+  supabase: SupabaseClient,
+  taskId: string,
+  reviewerId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const existingTx = await findTaskDeductionTransaction(supabase, taskId)
+
+  // أعد حالة الصرفيات المرتبطة بالمهمة إلى بانتظار الاعتماد
+  await supabase
+    .from('expenses')
+    .update({
+      status: 'pending_review',
+      wallet_deducted_at: null,
+      approved_at: null,
+      approved_by: null,
+    } as any)
+    .eq('task_id', taskId)
+    .eq('status', 'approved')
+
+  if (!existingTx) return { ok: true }
+
+  const { data: tx } = await supabase
+    .from('lawyer_wallet_transactions')
+    .select('id, lawyer_id, amount, wallet')
+    .eq('id', existingTx.id)
+    .maybeSingle()
+
+  if (!tx) return { ok: true }
+
+  // حذف حركة الخصم الأصلية للحفاظ على idempotency عند إعادة الاعتماد
+  const { error: delErr } = await supabase
+    .from('lawyer_wallet_transactions')
+    .delete()
+    .eq('id', tx.id)
+
+  if (delErr) {
+    // إن فشل الحذف: أضف حركة عكسية صريحة
+    const reverseAmount = -Number(tx.amount ?? 0)
+    if (reverseAmount !== 0) {
+      const { insertWalletTransaction } = await import('@/lib/lawyer-wallet')
+      const reverse = await insertWalletTransaction(supabase, {
+        lawyer_id: tx.lawyer_id,
+        wallet: (tx.wallet as 'savings' | 'fees') || 'savings',
+        amount: reverseAmount,
+        type: 'manual_adjustment',
+        notes: `عكس خصم صرفيات بسبب فشل اعتماد الأتعاب — مهمة ${taskId}`,
+        reference_id: `${taskId}:expense-reverse`,
+        created_by: reviewerId,
+      })
+      if (!reverse.ok) {
+        return { ok: false, error: reverse.error ?? 'فشل عكس خصم الصرفيات' }
+      }
+    }
+  }
+
+  return { ok: true }
+}
+
 /** On task rejection: mark linked expenses rejected. */
 export async function rejectTaskExpenses(
   supabase: SupabaseClient,

@@ -16,13 +16,25 @@ export function isLawyerAssignmentRejected(
   return task.assignment_rejected_by === lawyerId && task.assigned_to !== lawyerId
 }
 
+/** تسميات حالة المهمة للمندوب — نفس الحالات مع استبدال «المحامي» بـ «المندوب» */
+const DELEGATE_STATUS_LABEL_OVERRIDES: Partial<Record<TaskStatus, string>> = {
+  assignment_pending_acceptance: 'بانتظار قبول المندوب',
+}
+
 export function lawyerTaskStatusLabel(
   status: TaskStatus | string,
   task?: { assigned_to?: string | null; assignment_rejected_by?: string | null },
   lawyerId?: string | null,
+  opts?: { assigneeRole?: string | null },
 ): string {
   if (task && isLawyerAssignmentRejected(task, lawyerId)) return 'مرفوضة'
   if (isLawyerAchievedTask(status)) return 'منجزة'
+  if (status === 'needs_revision') return 'مرفوضة'
+  const role = opts?.assigneeRole
+  if (role === 'delegate') {
+    const override = DELEGATE_STATUS_LABEL_OVERRIDES[status as TaskStatus]
+    if (override) return override
+  }
   return TASK_STATUS_LABELS[status as TaskStatus] ?? status
 }
 

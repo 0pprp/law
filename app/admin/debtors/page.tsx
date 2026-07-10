@@ -54,7 +54,7 @@ export default function DebtorsPage() {
   const allowAdd = canAddDebtor(role)
   const allowImport = canImportDebtors(role)
   const showEditLink = allowEdit || isLegalManager(role)
-  const showDeleteBtn = allowDelete || isLegalManager(role)
+  const showDeleteBtn = allowDelete
   const showAddBtn = allowAdd
   const showImportBtn = allowImport
   const [debtors, setDebtors] = useState<any[]>([])

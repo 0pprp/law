@@ -32,6 +32,9 @@ export async function POST(request: NextRequest) {
     const branchScoped = (isAccountant(profile.role) && !isGeneralAccountant(profile.role, profile.accountant_type))
       || profile.role === 'employee'
     if (branchScoped) {
+      if (!profile.branch_id) {
+        return apiForbiddenResponse()
+      }
       const { data: taskRow } = await admin.from('tasks').select('branch_id').eq('id', taskId).single()
       if (!taskRow?.branch_id || taskRow.branch_id !== profile.branch_id) {
         return apiForbiddenResponse()

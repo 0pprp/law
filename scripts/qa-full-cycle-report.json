@@ -1,0 +1,871 @@
+{
+  "startedAt": "2026-07-10T21:41:38.288Z",
+  "baseUrl": "http://localhost:3000",
+  "authMode": "playwright+chrome",
+  "filesModified": [
+    "scripts/qa-full-cycle.mjs (visit redirect detection only)"
+  ],
+  "buildRun": false,
+  "phases": {
+    "0_align": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "qa_delegate.branch_id → رصافة (726654de-9037-471a-bb3e-353e8fb5065b)"
+        },
+        {
+          "ok": true,
+          "msg": "qa_lawyer savings >= 500000: 500000"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "delegateBranch": "726654de-9037-471a-bb3e-353e8fb5065b",
+        "lawyerSavings": 500000
+      }
+    },
+    "1_create_debtor": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "required formula = 1800000"
+        },
+        {
+          "ok": true,
+          "msg": "debtor e7c01cd1-d2b2-4158-be91-c0a85b2ebda3 + task eae54356-9a2c-4f34-893b-7df2e09e1405"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "debtor": {
+          "id": "e7c01cd1-d2b2-4158-be91-c0a85b2ebda3",
+          "full_name": "مدين QA تجريبي 708703",
+          "receipt_amount": 2000000,
+          "remaining_amount": 1800000,
+          "required_amount": 1800000,
+          "penalty_amount": 300000,
+          "branch_id": "726654de-9037-471a-bb3e-353e8fb5065b"
+        },
+        "task": {
+          "id": "eae54356-9a2c-4f34-893b-7df2e09e1405",
+          "task_status": "waiting_assignment",
+          "task_type": "find_address",
+          "reward_amount": 10000
+        },
+        "financials": {
+          "receipt_amount": 2000000,
+          "receiptRemaining": 1500000,
+          "penalty": 300000,
+          "required": 1800000,
+          "remaining_amount": 1800000
+        }
+      }
+    },
+    "2_assign_delegate": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "assigned to qa_delegate due 2026-07-12"
+        },
+        {
+          "ok": true,
+          "msg": "status label: بانتظار قبول المندوب"
+        },
+        {
+          "ok": true,
+          "msg": "delegate accepted → assigned"
+        },
+        {
+          "ok": true,
+          "msg": "delegate can query assigned task"
+        },
+        {
+          "ok": true,
+          "msg": "delegate /delegate/tasks reachable"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "task": {
+          "id": "eae54356-9a2c-4f34-893b-7df2e09e1405",
+          "debtor_id": "e7c01cd1-d2b2-4158-be91-c0a85b2ebda3",
+          "case_id": null,
+          "assigned_to": "7d67d176-a22f-4dfd-9e58-9ee458a5c312",
+          "task_type": "find_address",
+          "task_status": "assigned",
+          "governorate": null,
+          "court_name": null,
+          "due_date": "2026-07-12",
+          "admin_notes": null,
+          "lawyer_notes": null,
+          "legal_result": null,
+          "completed_at": null,
+          "created_by": "d9a35220-e4db-4a38-a594-b7e531ac6ff1",
+          "created_at": "2026-07-10T21:41:50.026225+00:00",
+          "updated_at": "2026-07-10T21:42:07.704487+00:00",
+          "fee_status": "pending",
+          "completion_data": {},
+          "priority": "normal",
+          "acceptance_deadline": null,
+          "completion_deadline": null,
+          "given_up_at": null,
+          "give_up_reason": null,
+          "accepted_at": "2026-07-10T21:42:07.276+00:00",
+          "reward_amount": 10000,
+          "court_id": null,
+          "execution_dept_id": null,
+          "task_definition_id": "6ee2e365-86b8-4cb6-976f-e616885b5d4f",
+          "branch_id": "726654de-9037-471a-bb3e-353e8fb5065b",
+          "assigned_at": "2026-07-10T21:41:56.911+00:00",
+          "assignment_expires_at": "2026-07-12T20:59:59.999+00:00",
+          "acceptance_method": "manual",
+          "assignment_rejected_by": null,
+          "debtor_notified": "unset",
+          "delegate_fee_status": "none"
+        },
+        "assignRes": {
+          "ok": true
+        },
+        "acceptRes": {
+          "success": true
+        }
+      }
+    },
+    "3_complete_find_address": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "validation rejects empty: يجب إدخال: عنوان كامل بأدق التفاصيل لبيت المدين ولمحل تواجده"
+        },
+        {
+          "ok": true,
+          "msg": "validation rejects missing gps/image: يجب تحديد موقع GPS"
+        },
+        {
+          "ok": true,
+          "msg": "validation passes with address+gps+image"
+        },
+        {
+          "ok": true,
+          "msg": "uploaded eae54356-9a2c-4f34-893b-7df2e09e1405/address_photo-1783719736974.png"
+        },
+        {
+          "ok": true,
+          "msg": "task_status → submitted"
+        },
+        {
+          "ok": true,
+          "msg": "debtor address + gps updated"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "completion_data": {
+          "full_address": "بغداد الرصافة — شارع الرشيد — زقاق QA",
+          "gps": "33.3152,44.3661",
+          "address_photo": "qa-tiny.png",
+          "general_notes": "QA completion notes"
+        },
+        "filePath": "eae54356-9a2c-4f34-893b-7df2e09e1405/address_photo-1783719736974.png",
+        "reqFields": [
+          {
+            "id": "c1fdcbbf-9bc3-47c1-886d-748924b5b34b",
+            "task_definition_id": "6ee2e365-86b8-4cb6-976f-e616885b5d4f",
+            "field_key": "full_address",
+            "field_type": "text",
+            "field_label": "عنوان كامل بأدق التفاصيل لبيت المدين ولمحل تواجده",
+            "is_required": true,
+            "sort_order": 1,
+            "created_at": "2026-06-24T13:57:28.745081+00:00"
+          },
+          {
+            "id": "3628e182-a6e1-4b06-a24a-999d0660c059",
+            "task_definition_id": "6ee2e365-86b8-4cb6-976f-e616885b5d4f",
+            "field_key": "gps",
+            "field_type": "gps",
+            "field_label": "موقع GPS",
+            "is_required": true,
+            "sort_order": 2,
+            "created_at": "2026-06-24T13:57:28.745081+00:00"
+          },
+          {
+            "id": "513ef867-bf06-4137-8147-c2668dfbe14c",
+            "task_definition_id": "6ee2e365-86b8-4cb6-976f-e616885b5d4f",
+            "field_key": "address_photo",
+            "field_type": "image",
+            "field_label": "صورة",
+            "is_required": true,
+            "sort_order": 3,
+            "created_at": "2026-07-08T14:25:10.209359+00:00"
+          }
+        ]
+      }
+    },
+    "4_approve_delegate": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "approve ok feeAmount=10000"
+        },
+        {
+          "ok": true,
+          "msg": "pending_balance += 10000"
+        },
+        {
+          "ok": true,
+          "msg": "available unchanged on approve"
+        },
+        {
+          "ok": true,
+          "msg": "idempotent re-approve: pending not doubled"
+        },
+        {
+          "ok": true,
+          "msg": "activity_logs rows for task: 0"
+        },
+        {
+          "ok": true,
+          "msg": "delegate_wallet_transactions: 1",
+          "data": [
+            {
+              "id": "c257b971-6bd8-4573-b7ab-b750d8b8cc1a",
+              "type": "delegate_address_fee_pending",
+              "amount": 10000
+            }
+          ]
+        }
+      ],
+      "errors": [],
+      "data": {
+        "before": {
+          "pending_balance": 0,
+          "available_balance": 0,
+          "total_withdrawn": 0
+        },
+        "after": {
+          "pending_balance": 10000,
+          "available_balance": 0,
+          "total_withdrawn": 0
+        },
+        "after2": {
+          "pending_balance": 10000,
+          "available_balance": 0,
+          "total_withdrawn": 0
+        },
+        "dwTx": [
+          {
+            "id": "c257b971-6bd8-4573-b7ab-b750d8b8cc1a",
+            "type": "delegate_address_fee_pending",
+            "amount": 10000
+          }
+        ],
+        "approve1": {
+          "ok": true,
+          "feeAmount": 10000,
+          "legalManagerBonus": 0
+        }
+      }
+    },
+    "5_notify_withdraw": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "debtor notified = yes"
+        },
+        {
+          "ok": true,
+          "msg": "pending → available 10000"
+        },
+        {
+          "ok": true,
+          "msg": "withdraw 10000"
+        },
+        {
+          "ok": true,
+          "msg": "available decreased"
+        },
+        {
+          "ok": true,
+          "msg": "total_withdrawn increased"
+        },
+        {
+          "ok": true,
+          "msg": "fee status withdrawn"
+        },
+        {
+          "ok": true,
+          "msg": "second withdraw failed/blocked safely"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "before": {
+          "pending_balance": 10000,
+          "available_balance": 0,
+          "total_withdrawn": 0
+        },
+        "mid": {
+          "pending_balance": 0,
+          "available_balance": 10000,
+          "total_withdrawn": 0
+        },
+        "afterW": {
+          "pending_balance": 0,
+          "available_balance": 0,
+          "total_withdrawn": 10000
+        },
+        "notifyRes": {
+          "success": true
+        },
+        "w1": {
+          "success": true
+        },
+        "w2": {
+          "error": "لا يمكن السحب بأكثر من الرصيد القابل للصرف"
+        }
+      }
+    },
+    "6_file_lawsuit": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "transitioned to file_lawsuit"
+        },
+        {
+          "ok": true,
+          "msg": "assigned file_lawsuit to qa_lawyer"
+        },
+        {
+          "ok": true,
+          "msg": "lawyer accepted"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "lawsuitTask": {
+          "id": "17175e3d-b57c-4843-9a33-f10c7bb11e51",
+          "debtor_id": "e7c01cd1-d2b2-4158-be91-c0a85b2ebda3",
+          "case_id": null,
+          "assigned_to": "7f156c61-f6e9-4ba3-bb28-1e132c1b18cf",
+          "task_type": "file_lawsuit",
+          "task_status": "assigned",
+          "governorate": null,
+          "court_name": null,
+          "due_date": "2026-07-13",
+          "admin_notes": null,
+          "lawyer_notes": null,
+          "legal_result": null,
+          "completed_at": null,
+          "created_by": "d9a35220-e4db-4a38-a594-b7e531ac6ff1",
+          "created_at": "2026-07-10T21:43:20.641555+00:00",
+          "updated_at": "2026-07-10T21:43:36.360483+00:00",
+          "fee_status": "pending",
+          "completion_data": {},
+          "priority": "normal",
+          "acceptance_deadline": null,
+          "completion_deadline": null,
+          "given_up_at": null,
+          "give_up_reason": null,
+          "accepted_at": "2026-07-10T21:43:35.968+00:00",
+          "reward_amount": 15000,
+          "court_id": null,
+          "execution_dept_id": null,
+          "task_definition_id": "563c09b9-429b-4d4c-b9f8-43a2309bb6c9",
+          "branch_id": "726654de-9037-471a-bb3e-353e8fb5065b",
+          "assigned_at": "2026-07-10T21:43:27.829+00:00",
+          "assignment_expires_at": "2026-07-13T20:59:59.999+00:00",
+          "acceptance_method": "manual",
+          "assignment_rejected_by": null,
+          "debtor_notified": "unset",
+          "delegate_fee_status": "none"
+        },
+        "transition": {
+          "ok": true
+        }
+      }
+    },
+    "7_lawyer_expenses": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "expense defs: 2"
+        },
+        {
+          "ok": true,
+          "msg": "pending expense 5000 (رسم دعوى)"
+        },
+        {
+          "ok": true,
+          "msg": "lawsuit submitted as submitted"
+        },
+        {
+          "ok": true,
+          "msg": "expenses NOT deducted yet — savings=500000"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "expenseDefs": [
+          {
+            "id": "8d5f0e59-a7f0-47b6-b80d-d99927d8bc78",
+            "task_definition_id": "563c09b9-429b-4d4c-b9f8-43a2309bb6c9",
+            "name": "رسم دعوى",
+            "max_amount": 52000,
+            "sort_order": 0,
+            "created_at": "2026-06-27T23:20:09.641675+00:00"
+          },
+          {
+            "id": "1c36ae0f-f18c-4de3-bbbd-1dfa1041f2f6",
+            "task_definition_id": "563c09b9-429b-4d4c-b9f8-43a2309bb6c9",
+            "name": "صرفيات تبليغ",
+            "max_amount": 10000,
+            "sort_order": 1,
+            "created_at": "2026-06-27T23:20:09.641675+00:00"
+          }
+        ],
+        "expenseAmount": 5000,
+        "savings": 500000,
+        "completion_data": {
+          "case_number": "QA-18308",
+          "court_name": "محكمة بداءة الرصافة",
+          "hearing_date": "2026-07-25"
+        }
+      }
+    },
+    "8_approve_lawyer": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "approve ok fee=15000 lmBonus=750"
+        },
+        {
+          "ok": true,
+          "msg": "lawyer fees += 15000"
+        },
+        {
+          "ok": true,
+          "msg": "savings decreased by expense 5000"
+        },
+        {
+          "ok": true,
+          "msg": "legal manager bonus field: 750"
+        },
+        {
+          "ok": true,
+          "msg": "idempotent re-approve"
+        },
+        {
+          "ok": true,
+          "msg": "case closed (قضية محسومة)"
+        },
+        {
+          "ok": true,
+          "msg": "debtor case_status=closed"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "feesBefore": 0,
+        "feesAfter": 15000,
+        "savingsBefore": 500000,
+        "savingsAfter": 495000,
+        "approve1": {
+          "ok": true,
+          "feeAmount": 15000,
+          "legalManagerBonus": 750
+        },
+        "close": {
+          "ok": true
+        },
+        "debtor": {
+          "case_status": "closed",
+          "current_task_id": null
+        }
+      }
+    },
+    "9_overdue": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "overdue count (رصافة)=1, includes QA task=true"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "overdueDebtorId": "d9471fde-9838-4f98-a069-4abe56dfbe74",
+        "overdueTaskId": "aea7bae9-59b9-4bbb-bbeb-0e747ed99709",
+        "count": 1
+      }
+    },
+    "10_payment": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "payment 200000 by qa_acct_gen"
+        },
+        {
+          "ok": true,
+          "msg": "required unchanged 1800000"
+        },
+        {
+          "ok": true,
+          "msg": "remaining = 1600000"
+        },
+        {
+          "ok": true,
+          "msg": "qa_acct_branch filter by own branch → empty for رصافة debtor"
+        },
+        {
+          "ok": true,
+          "msg": "RLS SELECT denied رصافة debtor for qa_acct_branch"
+        },
+        {
+          "ok": true,
+          "msg": "documented null branch_id denial pattern"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "amount": 200000,
+        "required": 1800000,
+        "remaining": 1600000,
+        "totalPayments": 200000
+      }
+    },
+    "11_wallet_deposit": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "deposit +1000 via accountant_transfer (UI: /admin/expenses panel)"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "before": 495000,
+        "depositAmt": 1000
+      }
+    },
+    "12_attachments": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "signed URL created"
+        },
+        {
+          "ok": true,
+          "msg": "signed URL HTTP 200"
+        },
+        {
+          "ok": true,
+          "msg": "API task-file-url ok"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "path": "eae54356-9a2c-4f34-893b-7df2e09e1405/address_photo-1783719736974.png",
+        "signedUrlOk": true
+      }
+    },
+    "13_role_checks": {
+      "status": "pass",
+      "checks": [
+        {
+          "ok": true,
+          "msg": "qa_admin:/admin/dashboard → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_admin:/admin/debtors → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_admin:/admin/tasks → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_admin:/admin/finance → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_legal:/admin/tasks/review → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_legal:/admin/tasks → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_lawyer:/lawyer → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_lawyer:/lawyer/tasks → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_delegate:/delegate → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_delegate:/delegate/tasks → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_acct_gen:/admin/dashboard → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_acct_gen:/admin/payments → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_acct_gen:/admin/debtors → allowed"
+        },
+        {
+          "ok": true,
+          "msg": "qa_acct_branch:/admin/tasks → denied"
+        },
+        {
+          "ok": true,
+          "msg": "qa_lawyer:/admin/dashboard → denied (redirect to /lawyer/tasks) — re-verified after visit() fix"
+        }
+      ],
+      "errors": [],
+      "data": {
+        "results": {
+          "qa_admin:/admin/dashboard": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/admin/dashboard"
+          },
+          "qa_admin:/admin/debtors": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/admin/debtors"
+          },
+          "qa_admin:/admin/tasks": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/admin/tasks"
+          },
+          "qa_admin:/admin/finance": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/admin/finance"
+          },
+          "qa_legal:/admin/tasks/review": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/admin/tasks/review"
+          },
+          "qa_legal:/admin/tasks": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/admin/tasks"
+          },
+          "qa_lawyer:/lawyer": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/lawyer"
+          },
+          "qa_lawyer:/lawyer/tasks": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/lawyer/tasks"
+          },
+          "qa_lawyer:/admin/dashboard": {
+            "status": 200,
+            "denied": true,
+            "expectDenied": true,
+            "pass": true,
+            "url": "http://localhost:3000/lawyer/tasks",
+            "note": "re-verified after visit() redirect detection fix"
+          },
+          "qa_delegate:/delegate": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/delegate"
+          },
+          "qa_delegate:/delegate/tasks": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/delegate/tasks"
+          },
+          "qa_acct_gen:/admin/dashboard": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/admin/dashboard"
+          },
+          "qa_acct_gen:/admin/payments": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/admin/payments"
+          },
+          "qa_acct_gen:/admin/debtors": {
+            "status": 200,
+            "denied": false,
+            "expectDenied": false,
+            "pass": true,
+            "url": "http://localhost:3000/admin/debtors"
+          },
+          "qa_acct_branch:/admin/tasks": {
+            "status": 200,
+            "denied": true,
+            "expectDenied": true,
+            "pass": true,
+            "url": "http://localhost:3000/admin/tasks"
+          }
+        }
+      }
+    }
+  },
+  "values": {
+    "profiles": {
+      "qa_admin": {
+        "id": "d9a35220-e4db-4a38-a594-b7e531ac6ff1",
+        "branch_id": "726654de-9037-471a-bb3e-353e8fb5065b",
+        "role": "admin"
+      },
+      "qa_legal": {
+        "id": "7cfcd0c3-55b2-43d0-9776-b69cfd44f6a7",
+        "branch_id": "726654de-9037-471a-bb3e-353e8fb5065b",
+        "role": "viewer"
+      },
+      "qa_lawyer": {
+        "id": "7f156c61-f6e9-4ba3-bb28-1e132c1b18cf",
+        "branch_id": "726654de-9037-471a-bb3e-353e8fb5065b",
+        "role": "lawyer"
+      },
+      "qa_acct_branch": {
+        "id": "059868b8-a480-4dfc-8c6e-e6f9e6699b6e",
+        "branch_id": "8fa487e8-f974-419e-9e74-87d333196abc",
+        "role": "accountant"
+      },
+      "qa_acct_gen": {
+        "id": "6ec7a212-1bb2-423d-959a-998ff30caec8",
+        "branch_id": "726654de-9037-471a-bb3e-353e8fb5065b",
+        "role": "accountant"
+      },
+      "qa_delegate": {
+        "id": "7d67d176-a22f-4dfd-9e58-9ee458a5c312",
+        "branch_id": "8fa487e8-f974-419e-9e74-87d333196abc",
+        "role": "delegate"
+      }
+    },
+    "lawyerSavingsBefore": 500000,
+    "expectedRequired": 1800000,
+    "expectedRemaining": 1800000,
+    "debtor": {
+      "id": "e7c01cd1-d2b2-4158-be91-c0a85b2ebda3",
+      "full_name": "مدين QA تجريبي 708703",
+      "receipt_amount": 2000000,
+      "remaining_amount": 1800000,
+      "required_amount": 1800000,
+      "penalty_amount": 300000,
+      "branch_id": "726654de-9037-471a-bb3e-353e8fb5065b"
+    },
+    "findTask": {
+      "id": "eae54356-9a2c-4f34-893b-7df2e09e1405",
+      "task_status": "waiting_assignment",
+      "task_type": "find_address",
+      "reward_amount": 10000
+    },
+    "uploadedFilePath": "eae54356-9a2c-4f34-893b-7df2e09e1405/address_photo-1783719736974.png",
+    "delegateWalletBeforeApprove": {
+      "pending_balance": 0,
+      "available_balance": 0,
+      "total_withdrawn": 0
+    },
+    "delegateWalletAfterApprove": {
+      "pending_balance": 10000,
+      "available_balance": 0,
+      "total_withdrawn": 0
+    },
+    "approveIdempotentStatus": 200,
+    "delegateWalletAfterWithdraw": {
+      "pending_balance": 0,
+      "available_balance": 0,
+      "total_withdrawn": 10000
+    },
+    "lawsuitTask": {
+      "id": "17175e3d-b57c-4843-9a33-f10c7bb11e51",
+      "status": "assigned",
+      "reward": 15000
+    },
+    "lawyerSavingsAfterSubmitBeforeApprove": 500000,
+    "lawyerFeesAfter": 15000,
+    "lawyerSavingsAfterApprove": 495000,
+    "overdueCount": 1,
+    "acctBranchCrossSelect": {
+      "note": "App UI filters by profile.branch_id; staff_can_write_branch denies write when branch_id mismatch or null",
+      "selectReturned": 0,
+      "writeWouldDeny": true
+    },
+    "nullBranchDenial": {
+      "pattern": "staff_can_write_branch(target_branch_id): branch accountant needs p.branch_id = target_branch_id; NULL target fails. approve-task: branchScoped staff with !profile.branch_id → apiForbiddenResponse().",
+      "codeRefs": [
+        "supabase/migrations/20250710130000_staff_debtor_write_rls.sql",
+        "app/api/admin/approve-task/route.ts (branchScoped && !profile.branch_id)"
+      ]
+    },
+    "payment": {
+      "amount": 200000,
+      "required": 1800000,
+      "remaining": 1600000,
+      "totalPayments": 200000
+    },
+    "depositAllowed": true,
+    "lawyerSavingsAfterDeposit": 496000,
+    "signedUrlStatus": 200
+  },
+  "errors": [],
+  "pass": true,
+  "finishedAt": "2026-07-10T21:45:40.294Z",
+  "summary": {
+    "pass": true,
+    "failedPhases": [],
+    "errorCount": 0,
+    "authMode": "playwright+chrome",
+    "debtorId": "e7c01cd1-d2b2-4158-be91-c0a85b2ebda3",
+    "findTaskId": "eae54356-9a2c-4f34-893b-7df2e09e1405",
+    "lawsuitTaskId": "17175e3d-b57c-4843-9a33-f10c7bb11e51",
+    "phase13Note": "Initial fail was false positive: lawyer redirected to /lawyer/tasks. Script visit() now treats role redirects as denial."
+  }
+}

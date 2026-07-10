@@ -37,6 +37,7 @@ export default function ReportsPage() {
   const { lists: branchLists } = useBranchLists(branchId)
   const [snapshot, setSnapshot] = useState<ReportSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [draft, setDraft] = useState<Filters>(EMPTY)
   const [applied, setApplied] = useState<Filters>(EMPTY)
 
@@ -45,18 +46,30 @@ export default function ReportsPage() {
     if (!branchId && !viewAllBranches) {
       setSnapshot(null)
       setLoading(false)
+      setLoadError('')
       return
     }
 
     let cancelled = false
     setLoading(true)
+    setLoadError('')
 
-    fetchReportSnapshot(createClient(), branchId, applied).then(data => {
-      if (!cancelled) {
-        setSnapshot(data)
-        setLoading(false)
-      }
-    })
+    fetchReportSnapshot(createClient(), branchId, applied)
+      .then(data => {
+        if (!cancelled) {
+          setSnapshot(data)
+        }
+      })
+      .catch(e => {
+        console.error('[reports] load error:', e)
+        if (!cancelled) {
+          setSnapshot(null)
+          setLoadError('تعذر تحميل التقارير — حاول مرة أخرى')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
 
     return () => { cancelled = true }
   }, [branchId, viewAllBranches, applied])
@@ -121,6 +134,20 @@ export default function ReportsPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="التقارير" subtitle="تحليل شامل للأداء والمالية" />
+
+      {loadError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-red-800 font-medium">{loadError}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setApplied(a => ({ ...a }))}
+          >
+            إعادة المحاولة
+          </Button>
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-5">
         <p className="text-xs font-bold text-[#767676] uppercase tracking-wider mb-3">معايير التقرير</p>

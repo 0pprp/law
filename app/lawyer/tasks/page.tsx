@@ -225,7 +225,7 @@ export default function LawyerTasksPage() {
           search
             ? `لا نتائج للبحث عن "${search}"`
             : filter === 'rejected'
-              ? `لديك ${counts.rejected ?? 0} تكليفاً مرفوضاً — لا تُعرض تفاصيل المدين بعد الرفض`
+              ? `لديك ${counts.rejected ?? 0} إنجازاً مرفوضاً يحتاج تصحيحاً`
               : filter === 'all'
                 ? 'لا توجد مهام'
                 : 'لا توجد مهام بهذه الحالة'

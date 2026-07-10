@@ -196,7 +196,7 @@ function DelegateTasksInner() {
                       </p>
                     </div>
                     <Badge variant={isLawyerAchievedTask(task.task_status) ? 'success' : (STATUS_BADGE[task.task_status as TaskStatus] ?? 'default')}>
-                      {lawyerTaskStatusLabel(task.task_status, task, delegateId)}
+                      {lawyerTaskStatusLabel(task.task_status, task, delegateId, { assigneeRole: 'delegate' })}
                     </Badge>
                   </div>
                   {task.due_date && (

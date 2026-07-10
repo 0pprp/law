@@ -88,7 +88,7 @@ export default async function DebtorTasksHistory({
     queries.push(
       supabase
         .from('task_attachments')
-        .select('id, task_id, file_name, description')
+        .select('id, task_id, file_name, file_path, description')
         .in('task_id', taskIds)
         .order('created_at', { ascending: false }),
     )
@@ -98,7 +98,7 @@ export default async function DebtorTasksHistory({
   const lawyers = (results[0].data ?? []) as { id: string; full_name: string; role?: string | null }[]
   const defs = (results[1].data ?? []) as { id: string; label: string }[]
   const allAttachments = fullArchive && results[2]
-    ? (results[2].data ?? []) as { id: string; task_id: string; file_name: string; description: string | null }[]
+    ? (results[2].data ?? []) as { id: string; task_id: string; file_name: string; file_path: string; description: string | null }[]
     : []
 
   const lawyerMap = new Map(lawyers.map(l => [l.id, l.full_name]))

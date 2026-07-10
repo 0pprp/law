@@ -162,24 +162,36 @@ export function filterDelegateProfiles(profiles: BranchProfileRow[]): BranchProf
 
 /** مندوبو الفرع النشطون — للتكليف على مهام إيجاد عنوان فقط.
  * عند branchId=null تُرجع كل المندوبين النشطين (لتصفية مراجعة الإنجازات).
+ * يتحمّل غياب عمود profiles.branch_list_id إن لم تُطبَّق الهجرة بعد.
  */
 export async function fetchBranchDelegates(
   supabase: SupabaseClient,
   branchId: string | null,
   branchListId?: string | null,
 ): Promise<{ delegates: DelegateOption[]; error: unknown | null }> {
-  let q = supabase
-    .from('profiles')
-    .select('id, full_name, role, branch_id, branch_list_id, identity_type, identity_number, is_active')
-    .eq('role', 'delegate')
-    .order('full_name')
+  const selectWithList =
+    'id, full_name, role, branch_id, branch_list_id, identity_type, identity_number, is_active'
+  const selectWithoutList =
+    'id, full_name, role, branch_id, identity_type, identity_number, is_active'
 
-  if (branchId) q = q.eq('branch_id', branchId)
-  if (branchListId) {
-    q = q.eq('identity_type', 'delegate_list').eq('identity_number', branchListId)
+  async function run(selectCols: string) {
+    let q = supabase
+      .from('profiles')
+      .select(selectCols)
+      .eq('role', 'delegate')
+      .order('full_name')
+
+    if (branchId) q = q.eq('branch_id', branchId)
+    if (branchListId) {
+      q = q.eq('identity_type', 'delegate_list').eq('identity_number', branchListId)
+    }
+    return q
   }
 
-  const { data, error } = await q
+  let { data, error } = await run(selectWithList)
+  if (error && String(error.message ?? '').includes('branch_list_id')) {
+    ;({ data, error } = await run(selectWithoutList))
+  }
   if (error) return { delegates: [], error }
 
   const listIds = [...new Set(
@@ -197,7 +209,7 @@ export async function fetchBranchDelegates(
     for (const l of lists ?? []) listNameMap.set(l.id, l.name)
   }
 
-  const delegates = filterDelegateProfiles((data ?? []) as BranchProfileRow[]).map(p => {
+  const delegates = filterDelegateProfiles((data ?? []) as unknown as BranchProfileRow[]).map(p => {
     const row = p as BranchProfileRow & { branch_list_id?: string | null; identity_type?: string | null; identity_number?: string | null }
     const listId = row.branch_list_id ?? (row.identity_type === 'delegate_list' ? row.identity_number : null)
     const listName = listId ? listNameMap.get(listId) : null

@@ -523,19 +523,42 @@ function TaskDefsTab() {
       .eq('id', editing.id)
     if (e1) { setErr(e1.message); setSaving(false); return }
 
-    await (sb as any).from('task_required_fields').delete().eq('task_definition_id', editing.id)
+    const fieldsPayload = editForm.dynFields.map((f, i) => ({
+      field_key: `field_${i}_${f.field_type}`,
+      field_type: f.field_type,
+      field_label: f.field_label.trim(),
+      is_required: f.is_required,
+      sort_order: i,
+    }))
 
-    if (editForm.dynFields.length > 0) {
-      await (sb as any).from('task_required_fields').insert(
-        editForm.dynFields.map((f, i) => ({
-          task_definition_id: editing.id,
-          field_key: `field_${i}_${f.field_type}`,
-          field_type: f.field_type,
-          field_label: f.field_label.trim(),
-          is_required: f.is_required,
-          sort_order: i,
-        }))
-      )
+    // Atomic replace via RPC when available; fallback keeps old fields if insert fails
+    const { error: rpcErr } = await (sb as any).rpc('replace_task_required_fields', {
+      p_definition_id: editing.id,
+      p_fields: fieldsPayload,
+    })
+
+    if (rpcErr) {
+      // Fallback: snapshot → delete → insert → restore on failure
+      const { data: oldFields } = await (sb as any)
+        .from('task_required_fields')
+        .select('task_definition_id, field_key, field_type, field_label, is_required, sort_order')
+        .eq('task_definition_id', editing.id)
+
+      await (sb as any).from('task_required_fields').delete().eq('task_definition_id', editing.id)
+
+      if (fieldsPayload.length > 0) {
+        const { error: insErr } = await (sb as any).from('task_required_fields').insert(
+          fieldsPayload.map(f => ({ ...f, task_definition_id: editing.id })),
+        )
+        if (insErr) {
+          if (oldFields?.length) {
+            await (sb as any).from('task_required_fields').insert(oldFields)
+          }
+          setErr(insErr.message)
+          setSaving(false)
+          return
+        }
+      }
     }
 
     setEditing(null); load(); setSaving(false)

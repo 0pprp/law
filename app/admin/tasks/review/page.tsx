@@ -477,66 +477,75 @@ export default function TaskReviewPage() {
       if (!append) setTasks([])
     }
 
-    const [page, l, dRes] = await Promise.all([
-      fetchPendingReviewTasksPaginated(supabase, branchId, {
-        offset,
-        limit: REVIEW_TASK_PAGE_SIZE,
-        lawyerId: assigneeFilterId,
-        includeCompletionData: true,
-      }),
-      append ? Promise.resolve(lawyersRef.current) : fetchBranchLawyers(supabase, branchId),
-      append
-        ? Promise.resolve({ delegates: delegatesRef.current })
-        : fetchBranchDelegates(supabase, branchId),
-    ])
+    try {
+      const [page, l, dRes] = await Promise.all([
+        fetchPendingReviewTasksPaginated(supabase, branchId, {
+          offset,
+          limit: REVIEW_TASK_PAGE_SIZE,
+          lawyerId: assigneeFilterId,
+          includeCompletionData: true,
+        }),
+        append ? Promise.resolve(lawyersRef.current) : fetchBranchLawyers(supabase, branchId),
+        append
+          ? Promise.resolve({ delegates: delegatesRef.current })
+          : fetchBranchDelegates(supabase, branchId),
+      ])
 
-    const rawTasks = page.tasks
-    const defIds = [...new Set(rawTasks.map(x => x.task_definition_id).filter(Boolean))]
-    const gpsMap: Record<string, string[]> = {}
-    const labelMapByDef: Record<string, Record<string, string>> = {}
-    if (defIds.length > 0) {
-      const { data: rfs } = await supabase
-        .from('task_required_fields')
-        .select('task_definition_id, field_key, field_label, field_type')
-        .in('task_definition_id', defIds as string[])
-      for (const f of rfs ?? []) {
-        if (f.field_type === 'gps') {
-          if (!gpsMap[f.task_definition_id]) gpsMap[f.task_definition_id] = []
-          gpsMap[f.task_definition_id].push(f.field_key)
+      const rawTasks = page.tasks
+      const defIds = [...new Set(rawTasks.map(x => x.task_definition_id).filter(Boolean))]
+      const gpsMap: Record<string, string[]> = {}
+      const labelMapByDef: Record<string, Record<string, string>> = {}
+      if (defIds.length > 0) {
+        const { data: rfs } = await supabase
+          .from('task_required_fields')
+          .select('task_definition_id, field_key, field_label, field_type')
+          .in('task_definition_id', defIds as string[])
+        for (const f of rfs ?? []) {
+          if (f.field_type === 'gps') {
+            if (!gpsMap[f.task_definition_id]) gpsMap[f.task_definition_id] = []
+            gpsMap[f.task_definition_id].push(f.field_key)
+          }
+        }
+        for (const defId of defIds) {
+          const fields = (rfs ?? []).filter(r => r.task_definition_id === defId)
+          labelMapByDef[defId as string] = buildCompletionFieldLabelMap(fields)
         }
       }
-      for (const defId of defIds) {
-        const fields = (rfs ?? []).filter(r => r.task_definition_id === defId)
-        labelMapByDef[defId as string] = buildCompletionFieldLabelMap(fields)
+
+      const nextTasks = rawTasks.map(task => ({
+        ...task,
+        _gpsKeys: gpsMap[task.task_definition_id ?? ''] ?? [],
+        _fieldLabels: labelMapByDef[task.task_definition_id ?? ''] ?? {},
+      }))
+      const nextDelegates = dRes.delegates ?? []
+
+      setTasks(prev => {
+        const merged = append ? [...prev, ...nextTasks] : nextTasks
+        cacheSet(`tasks:review:v3:${branchId ?? 'all'}:${assigneeFilterId ?? 'all'}:${offset}`, {
+          tasks: merged,
+          lawyers: l ?? [],
+          delegates: nextDelegates,
+          total: page.total,
+        }, CACHE_TTL.list)
+        return merged
+      })
+
+      if (!append) {
+        setLawyers(l ?? [])
+        setDelegates(nextDelegates)
       }
+      setTotal(page.total)
+      setPageOffset(offset + nextTasks.length)
+    } catch (e) {
+      console.error('[tasks/review] load error:', e)
+      if (!append) {
+        setTasks([])
+        setTotal(0)
+      }
+    } finally {
+      setLoading(false)
+      setLoadingMore(false)
     }
-
-    const nextTasks = rawTasks.map(task => ({
-      ...task,
-      _gpsKeys: gpsMap[task.task_definition_id ?? ''] ?? [],
-      _fieldLabels: labelMapByDef[task.task_definition_id ?? ''] ?? {},
-    }))
-    const nextDelegates = dRes.delegates ?? []
-
-    setTasks(prev => {
-      const merged = append ? [...prev, ...nextTasks] : nextTasks
-      cacheSet(`tasks:review:v3:${branchId ?? 'all'}:${assigneeFilterId ?? 'all'}:${offset}`, {
-        tasks: merged,
-        lawyers: l ?? [],
-        delegates: nextDelegates,
-        total: page.total,
-      }, CACHE_TTL.list)
-      return merged
-    })
-
-    if (!append) {
-      setLawyers(l ?? [])
-      setDelegates(nextDelegates)
-    }
-    setTotal(page.total)
-    setPageOffset(offset + nextTasks.length)
-    setLoading(false)
-    setLoadingMore(false)
   }, [branchId, viewAllBranches, assigneeFilterId])
 
   useEffect(() => {

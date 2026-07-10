@@ -166,12 +166,15 @@ export default function PaymentsPage() {
     setSaving(true)
     setError('')
     const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setError('يجب تسجيل الدخول'); setSaving(false); return }
     const paymentDate = new Date().toISOString().split('T')[0]
     const { error: dbErr } = await supabase.from('debtor_payments').insert({
       debtor_id: form.debtor_id,
       amount: parseMoneyInput(form.amount),
       payment_date: paymentDate,
       notes: form.notes || null,
+      created_by: user.id,
       ...(branchId ? { branch_id: branchId } : {}),
     })
     if (dbErr) { setError(dbErr.message); setSaving(false); return }

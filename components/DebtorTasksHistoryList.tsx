@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { TASK_STATUS_LABELS, assigneePersonLabel } from '@/lib/types'
 import type { TaskStatus } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
@@ -27,6 +28,13 @@ const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 
   closed: 'gray',
 }
 
+export interface DebtorTaskAttachment {
+  id: string
+  file_name: string
+  file_path: string
+  description: string | null
+}
+
 export interface DebtorTaskHistoryRow {
   id: string
   label: string
@@ -38,15 +46,102 @@ export interface DebtorTaskHistoryRow {
   approvedAt: string | null
   isCurrent: boolean
   completionData: Record<string, string> | null
-  attachments: { id: string; file_name: string; description: string | null }[]
+  attachments: DebtorTaskAttachment[]
 }
+
+const MEDIA_KEY_RE = /(photo|image|video|file|pdf|attachment|receipt|صورة|مرفق|فيديو)/i
+const MEDIA_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|mp4|webm|mov|avi|pdf|heic)$/i
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return '—'
   return fmtDate(value.split('T')[0])
 }
 
-function CompletionFields({ data }: { data: Record<string, string> }) {
+function isMediaCompletionField(key: string, val: string): boolean {
+  return MEDIA_KEY_RE.test(key) || MEDIA_EXT_RE.test(val)
+}
+
+function findAttachmentForField(
+  key: string,
+  val: string,
+  attachments: DebtorTaskAttachment[],
+): DebtorTaskAttachment | null {
+  const byDesc = attachments.find(a => a.description === key && a.file_path)
+  if (byDesc) return byDesc
+  const byName = attachments.find(a => a.file_name === val && a.file_path)
+  if (byName) return byName
+  return null
+}
+
+async function fetchTaskFileUrl(path: string): Promise<string> {
+  const res = await fetch('/api/admin/task-file-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(typeof data.error === 'string' ? data.error : 'تعذر فتح الملف')
+  }
+  if (!data.url) throw new Error('رابط الملف غير متاح')
+  return data.url as string
+}
+
+function OpenFileButton({
+  id,
+  filePath,
+  label,
+  compact = false,
+}: {
+  id: string
+  filePath: string
+  label: string
+  compact?: boolean
+}) {
+  const [opening, setOpening] = useState(false)
+  const [error, setError] = useState('')
+
+  async function open() {
+    if (!filePath || opening) return
+    setOpening(true)
+    setError('')
+    try {
+      const url = await fetchTaskFileUrl(filePath)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'تعذر فتح الملف')
+    } finally {
+      setOpening(false)
+    }
+  }
+
+  return (
+    <span className="inline-flex flex-col items-start gap-0.5 min-w-0">
+      <button
+        type="button"
+        onClick={open}
+        disabled={opening || !filePath}
+        className={
+          compact
+            ? 'text-xs bg-[rgba(44,135,128,0.1)] text-[#2C8780] hover:bg-[rgba(44,135,128,0.18)] px-2.5 py-1 rounded-lg font-semibold transition-colors disabled:opacity-60'
+            : 'font-semibold text-[#2C8780] hover:underline break-all text-right disabled:opacity-60'
+        }
+        title="فتح الملف"
+      >
+        {opening ? 'جارٍ الفتح...' : compact ? `فتح · ${label}` : `${label} ↗`}
+      </button>
+      {error && <span className="text-[10px] text-red-600">{error}</span>}
+    </span>
+  )
+}
+
+function CompletionFields({
+  data,
+  attachments,
+}: {
+  data: Record<string, string>
+  attachments: DebtorTaskAttachment[]
+}) {
   const entries = Object.entries(data).filter(([, v]) => v != null && String(v).trim() !== '')
   if (!entries.length) return null
   return (
@@ -57,6 +152,9 @@ function CompletionFields({ data }: { data: Record<string, string> }) {
           const isGps = key === 'gps' || key.includes('gps')
           const gpsCoords = isGps ? parseGps(val) : null
           const label = resolveCompletionFieldLabel(key)
+          const mediaAtt = isMediaCompletionField(key, val)
+            ? findAttachmentForField(key, val, attachments)
+            : null
           return (
             <div key={key} className="flex items-start gap-2 text-xs">
               <span className="text-[#767676] shrink-0">{label}:</span>
@@ -70,6 +168,8 @@ function CompletionFields({ data }: { data: Record<string, string> }) {
                 >
                   {val} 🗺️
                 </a>
+              ) : mediaAtt?.file_path ? (
+                <OpenFileButton id={`${key}-${mediaAtt.id}`} filePath={mediaAtt.file_path} label={String(val)} />
               ) : (
                 <span className="font-semibold text-[#231F20] break-all">{String(val)}</span>
               )}
@@ -134,7 +234,7 @@ export default function DebtorTasksHistoryList({
             </div>
 
             {fullArchive && row.completionData && Object.keys(row.completionData).length > 0 && (
-              <CompletionFields data={row.completionData} />
+              <CompletionFields data={row.completionData} attachments={row.attachments} />
             )}
 
             {fullArchive && row.attachments.length > 0 && (
@@ -142,9 +242,19 @@ export default function DebtorTasksHistoryList({
                 <p className="text-[10px] font-bold text-[#767676] mb-2">مرفقات المهمة ({row.attachments.length})</p>
                 <div className="flex flex-wrap gap-2">
                   {row.attachments.map(att => (
-                    <span key={att.id} className="text-xs bg-slate-100 text-[#231F20] px-2 py-1 rounded-lg">
-                      {att.file_name}
-                    </span>
+                    att.file_path ? (
+                      <OpenFileButton
+                        key={att.id}
+                        id={att.id}
+                        filePath={att.file_path}
+                        label={att.file_name}
+                        compact
+                      />
+                    ) : (
+                      <span key={att.id} className="text-xs bg-slate-100 text-[#231F20] px-2 py-1 rounded-lg">
+                        {att.file_name}
+                      </span>
+                    )
                   ))}
                 </div>
               </div>

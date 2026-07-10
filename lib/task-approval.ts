@@ -365,6 +365,8 @@ export async function approveTaskCompletion(
   const feeResult = await creditTaskFeeOnApproval(supabase, taskId, reviewerId)
   if (!feeResult.ok) {
     if (!alreadyApproved) {
+      const { reverseTaskExpenseDeductionOnFailure } = await import('@/lib/expense-wallet')
+      await reverseTaskExpenseDeductionOnFailure(supabase, taskId, reviewerId)
       await supabase.from('tasks').update({ task_status: 'submitted' } as any).eq('id', taskId)
     }
     return { ok: false, feeAmount: 0, error: feeResult.error ?? 'فشل احتساب أتعاب المحامي' }

@@ -22,9 +22,9 @@ export const DELEGATE_FEE_STATUS_LABELS: Record<DelegateFeeStatus, string> = {
   withdrawn: 'مصروفة',
 }
 
-/** هل تعريف المهمة من نوع إيجاد عنوان */
+/** هل تعريف المهمة من نوع إيجاد عنوان (أو إيجاد عنوان المفقود) */
 export function isFindAddressTaskType(taskType: string | null | undefined): boolean {
-  return taskType === 'find_address'
+  return taskType === 'find_address' || taskType === 'find_missing_address'
 }
 
 export function normalizeDebtorNotified(value: string | null | undefined): DebtorNotifiedStatus {

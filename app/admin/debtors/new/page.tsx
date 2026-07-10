@@ -31,7 +31,7 @@ type DebtorFormField = 'selectedTaskDefId'
 
 type FieldErrors = Partial<Record<DebtorFormField, string>>
 
-interface TaskDef { id: string; label: string; fee_amount: number }
+interface TaskDef { id: string; label: string; fee_amount: number; task_type: string | null }
 
 function resolveReceiptType(value: string): ReceiptType {
   if (!value || value === RECEIPT_TYPE_NONE) return 'other'
@@ -71,7 +71,7 @@ export default function NewDebtorPage() {
   })
 
   useEffect(() => {
-    let q = createClient().from('task_definitions').select('id, label, fee_amount').eq('is_active', true)
+    let q = createClient().from('task_definitions').select('id, label, fee_amount, task_type').eq('is_active', true)
     if (branchId) q = (q as any).eq('branch_id', branchId)
     q.order('sort_order').order('label').then(({ data }) => setTaskDefs(data ?? []))
   }, [branchId])
@@ -149,13 +149,20 @@ export default function NewDebtorPage() {
     if (!user) { router.push('/login'); return }
 
     const taskDef = taskDefs.find(t => t.id === selectedTaskDefId)
-    const governorate = branchName ?? null
+    // لا تُستنتج المحافظة من اسم الفرع — تُترك فارغة إن لم تُدخل
+    const governorate = null
 
     const remaining = parseMoneyInput(form.remaining_amount)
     const receiptAmount = parseMoneyInput(form.receipt_amount)
     const penalty = form.has_contract ? parseMoneyInput(form.penalty_amount) : 0
     const required = computeDebtorRequiredAmount(remaining, penalty, receiptAmount)
     const balanceRemaining = computeRemainingFromRequired(required, 0)
+
+    if (!taskDef?.task_type) {
+      setError('تعريف المهمة لا يحتوي على نوع مهمة (task_type) — راجع إعدادات المهام')
+      setSaving(false)
+      return
+    }
 
     const { data: newDebtor, error: dbError } = await supabase.from('debtors').insert({
       full_name: form.full_name.trim() || '',
@@ -187,6 +194,7 @@ export default function NewDebtorPage() {
     const { data: newTask, error: taskErr } = await supabase.from('tasks').insert({
       debtor_id: newDebtor.id,
       task_definition_id: selectedTaskDefId,
+      task_type: taskDef.task_type,
       task_status: 'waiting_assignment',
       reward_amount: taskDef?.fee_amount ?? 0,
       created_by: user.id,

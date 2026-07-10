@@ -10,6 +10,8 @@ export async function rejectTaskCompletion(
   const trimmed = reason.trim()
   if (!trimmed) return { ok: false, error: 'يجب إدخال سبب الرفض' }
 
+  // مصدر الحقيقة: needs_revision (يظهر في تبويب مرفوضة والعدادات)
+  // rejected احتياطي فقط إن لم يدعم الـ enum القيمة needs_revision
   const payloads = [
     { task_status: 'needs_revision', admin_notes: trimmed },
     { task_status: 'rejected', admin_notes: trimmed },
@@ -88,13 +90,18 @@ export async function applyTaskTransition(
   const completionData = (task.completion_data ?? {}) as Record<string, string>
   const newGps = extractGpsFromCompletion(completionData, gpsKeys)
   const hasExistingGps = debtor?.latitude != null && debtor?.longitude != null
+  const debtorIdForGps = task.debtor_id as string | null
 
-  if (newGps && (!hasExistingGps || updateGps)) {
-    await supabase.from('debtors').update({
+  async function saveGpsIfNeeded(): Promise<{ ok: boolean; error?: string }> {
+    if (!newGps || !debtorIdForGps) return { ok: true }
+    if (hasExistingGps && !updateGps) return { ok: true }
+    const { error } = await supabase.from('debtors').update({
       latitude: newGps.lat,
       longitude: newGps.lng,
       location_captured_at: new Date().toISOString(),
-    }).eq('id', task.debtor_id)
+    }).eq('id', debtorIdForGps)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
   }
 
   if (action === 'close') {
@@ -114,6 +121,11 @@ export async function applyTaskTransition(
     if (closeErr) {
       return { ok: false, error: closeErr.message ?? 'خطأ في إغلاق القضية' }
     }
+    // GPS فقط بعد نجاح الإغلاق — لا يُحفظ جزئياً عند الفشل
+    const gpsResult = await saveGpsIfNeeded()
+    if (!gpsResult.ok) {
+      return { ok: false, error: gpsResult.error ?? 'فشل حفظ موقع GPS بعد الإغلاق' }
+    }
     return { ok: true }
   }
 
@@ -121,15 +133,21 @@ export async function applyTaskTransition(
     return { ok: false, error: 'يجب اختيار المهمة اللاحقة' }
   }
 
+  const gpsBeforeNext = await saveGpsIfNeeded()
+  if (!gpsBeforeNext.ok) {
+    return { ok: false, error: gpsBeforeNext.error ?? 'فشل حفظ موقع GPS' }
+  }
+
   const { data: nextDef } = await supabase
     .from('task_definitions')
-    .select('id, label, fee_amount')
+    .select('id, label, fee_amount, task_type')
     .eq('id', nextTaskDefId)
     .maybeSingle()
 
   const { data: newTask, error: insertErr } = await supabase.from('tasks').insert({
     debtor_id: task.debtor_id,
     task_definition_id: nextTaskDefId,
+    task_type: nextDef?.task_type ?? null,
     task_status: 'waiting_assignment',
     assigned_to: null,
     reward_amount: nextDef?.fee_amount ?? 0,
