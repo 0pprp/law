@@ -6,14 +6,11 @@ import { useBranchId, useBranch } from '@/context/branch'
 import { isMainBranchName } from '@/lib/branch-constants'
 import { cacheDelete } from '@/lib/query-cache'
 import { appConfirm } from '@/lib/app-dialog'
-import { logActivity } from '@/lib/activity-log'
 import { Button } from '@/components/ui/button'
 import {
   parseImportExcel,
   buildPdfMap,
   validateImportRows,
-  fetchExistingReceiptNumbers,
-  executeDebtorImport,
   downloadImportTemplate,
   downloadErrorReport,
   IMPORT_RECEIPT_TYPE_HINT,
@@ -110,7 +107,14 @@ export default function DebtorImportModal({ open, onClose, onComplete }: Props) 
       }
 
       setProgress({ phase: 'validating', current: 0, total: rows.length, message: 'فحص البيانات...' })
-      const existing = await fetchExistingReceiptNumbers(supabase, branchId)
+      const receiptsRes = await fetch(`/api/admin/debtors/receipts?branchId=${encodeURIComponent(branchId)}`)
+      const receiptsJson = await receiptsRes.json().catch(() => ({}))
+      if (!receiptsRes.ok) {
+        setError(typeof receiptsJson.error === 'string' ? receiptsJson.error : 'فشل فحص أرقام الوصول')
+        setLoading(false)
+        return
+      }
+      const existing = new Set<string>(receiptsJson.receipts ?? [])
       const validated = validateImportRows(rows, pdfMap, taskDefList, existing)
 
       setTaskDefs(taskDefList)
@@ -146,53 +150,83 @@ export default function DebtorImportModal({ open, onClose, onComplete }: Props) 
     setLoading(true)
     setError('')
     setStep('importing')
+    setProgress({ phase: 'creating_debtors', current: 0, total: validRows.length, message: 'إنشاء المدينين...' })
 
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      setError('يجب تسجيل الدخول')
-      setLoading(false)
-      return
-    }
-
-    const today = new Date().toISOString().split('T')[0]
-    const importResult = await executeDebtorImport(
-      supabase,
-      validRows,
-      { branchId, governorate: branchName, userId: user.id, taskDefs, today },
-      setProgress,
-    )
-
-    const previewFailures = preview
-      .filter(r => !r.valid)
-      .map(r => ({
-        rowNum: r.rowNum,
-        full_name: r.full_name,
-        receipt_number: r.receipt_number,
-        errors: r.errors,
+    try {
+      const payloadRows = validRows.map(r => ({
+        ...r,
+        pdfBlob: null,
       }))
+      const res = await fetch('/api/admin/debtors/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          branchId,
+          governorate: branchName,
+          rows: payloadRows,
+          taskDefs,
+        }),
+      })
+      const importResult = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setError(typeof importResult.error === 'string' ? importResult.error : 'فشل الاستيراد')
+        setLoading(false)
+        setStep('preview')
+        setProgress(null)
+        return
+      }
 
-    const fullResult: ImportExecuteResult = {
-      imported: importResult.imported,
-      failed: importResult.failed + previewFailures.length,
-      failures: [...previewFailures, ...importResult.failures],
+      // رفع PDF من المتصفح بعد إنشاء المدينين
+      const created = (importResult.created ?? []) as { receipt_number: string; id: string; rowNum: number }[]
+      const byReceipt = new Map(created.map(c => [c.receipt_number, c.id]))
+      const withPdf = validRows.filter(r => r.pdfBlob && r.pdf_filename && byReceipt.has(r.receipt_number.trim()))
+      if (withPdf.length) {
+        setProgress({ phase: 'uploading_files', current: 0, total: withPdf.length, message: 'رفع ملفات PDF...' })
+        const { uploadDebtorPdfFile } = await import('@/lib/debtor-file-upload')
+        for (let i = 0; i < withPdf.length; i++) {
+          const row = withPdf[i]
+          const debtorId = byReceipt.get(row.receipt_number.trim())
+          if (debtorId && row.pdfBlob) {
+            try {
+              const file = new File([row.pdfBlob], row.pdf_filename || 'file.pdf', { type: 'application/pdf' })
+              await uploadDebtorPdfFile(debtorId, file)
+            } catch {
+              // يمكن رفع PDF لاحقاً من البروفايل
+            }
+          }
+          setProgress({ phase: 'uploading_files', current: i + 1, total: withPdf.length, message: 'رفع ملفات PDF...' })
+        }
+      }
+
+      const previewFailures = preview
+        .filter(r => !r.valid)
+        .map(r => ({
+          rowNum: r.rowNum,
+          full_name: r.full_name,
+          receipt_number: r.receipt_number,
+          errors: r.errors,
+        }))
+
+      const fullResult: ImportExecuteResult = {
+        imported: importResult.imported ?? 0,
+        failed: (importResult.failed ?? 0) + previewFailures.length,
+        failures: [...previewFailures, ...(importResult.failures ?? [])],
+      }
+
+      if (branchId) {
+        cacheDelete(`tasks:assign:${branchId}`)
+        cacheDelete(`dashboard:${branchId}`)
+      }
+
+      setResult(fullResult)
+      setStep('done')
+      setProgress({ phase: 'done', current: 1, total: 1, message: 'اكتمل' })
+      if (fullResult.imported > 0) onComplete()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'فشل الاستيراد')
+      setStep('preview')
     }
-
-    await logActivity({
-      action: 'create_debtor',
-      entity_type: 'debtor',
-      description: `استيراد جماعي: ${importResult.imported} مدين — فشل ${fullResult.failed}`,
-    }, supabase)
-
-    if (branchId) {
-      cacheDelete(`tasks:assign:${branchId}`)
-      cacheDelete(`dashboard:${branchId}`)
-    }
-
-    setResult(fullResult)
-    setStep('done')
     setLoading(false)
-    onComplete()
   }
 
   if (!open) return null

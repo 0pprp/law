@@ -2,36 +2,49 @@ import { NextResponse } from 'next/server'
 import { logActivity } from '@/lib/activity-log'
 import { isAccountant, isViewer, apiForbiddenResponse } from '@/lib/permissions'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionProfile } from '@/lib/api-auth'
+import { canStaffWriteBranch } from '@/lib/staff-branch-access'
+import { isSafeStoragePath } from '@/lib/storage-path'
+import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 
 export async function DELETE(request: Request) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (isAccountant(profile?.role) || isViewer(profile?.role)) return apiForbiddenResponse()
-  if (!['admin', 'employee'].includes(profile?.role ?? '')) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  const auth = await getSessionProfile()
+  if (!auth.user || !auth.profile) return safeClientError('غير مصرح', 401)
+  if (isAccountant(auth.profile.role) || isViewer(auth.profile.role)) return apiForbiddenResponse()
+  if (!['admin', 'employee'].includes(auth.profile.role)) {
+    return safeClientError('صلاحية غير كافية', 403)
   }
 
   const { fileId, filePath, fileName } = await request.json().catch(() => ({}))
-  if (!fileId || !filePath) return NextResponse.json({ error: 'fileId and filePath required' }, { status: 400 })
+  if (!fileId || !filePath) return safeClientError('fileId and filePath required', 400)
+  if (!isSafeStoragePath(filePath)) return safeClientError('مسار غير صالح', 400)
 
   const admin = createAdminClient()
+  const { data: row, error } = await admin
+    .from('debtor_attachments')
+    .select('id, file_path, debtor:debtors!debtor_attachments_debtor_id_fkey(branch_id)')
+    .eq('id', fileId)
+    .maybeSingle()
 
-  const { error: storageErr } = await admin.storage.from('debtor-files').remove([filePath])
-  if (storageErr) return NextResponse.json({ error: storageErr.message }, { status: 500 })
+  if (error) return apiServerError('delete-debtor-file', error)
+  if (!row || row.file_path !== filePath) return safeClientError('الملف غير موجود', 404)
+
+  const debtor = Array.isArray(row.debtor) ? row.debtor[0] : row.debtor
+  const branchId = (debtor as { branch_id?: string | null } | null)?.branch_id ?? null
+  if (!canStaffWriteBranch(auth.profile, branchId)) return apiForbiddenResponse()
+
+  const { error: storageErr } = await admin.storage.from('debtor-files').remove([row.file_path])
+  if (storageErr) return apiServerError('delete-debtor-file:storage', storageErr)
 
   const { error: dbErr } = await admin.from('debtor_attachments').delete().eq('id', fileId)
-  if (dbErr) return NextResponse.json({ error: dbErr.message }, { status: 500 })
+  if (dbErr) return apiServerError('delete-debtor-file:db', dbErr)
 
   await logActivity({
     action: 'delete_debtor_file',
     entity_type: 'file',
     entity_id: fileId,
     description: `حذف ملف مدين: ${fileName ?? filePath}`,
-  }, supabase)
+  }, auth.supabase)
 
   return NextResponse.json({ ok: true })
 }

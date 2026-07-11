@@ -3,16 +3,42 @@ import { createClient } from '@/lib/supabase/server'
 import { usernameToInternalEmail } from '@/lib/auth-username'
 import { NextResponse } from 'next/server'
 
+const LOGIN_WINDOW_MS = 15 * 60 * 1000
+const LOGIN_MAX_ATTEMPTS = 20
+const loginAttempts = new Map<string, { count: number; resetAt: number }>()
+
+function clientKey(request: Request): string {
+  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+  const realIp = request.headers.get('x-real-ip')?.trim()
+  return forwarded || realIp || 'unknown'
+}
+
+function checkRateLimit(key: string): boolean {
+  const now = Date.now()
+  const entry = loginAttempts.get(key)
+  if (!entry || now > entry.resetAt) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS })
+    return true
+  }
+  if (entry.count >= LOGIN_MAX_ATTEMPTS) return false
+  entry.count += 1
+  return true
+}
+
 export async function POST(request: Request) {
   try {
-    console.log('[login] route hit')
-    // ── 0. Env guard ─────────────────────────────────────────────────
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.error('[login] SUPABASE_SERVICE_ROLE_KEY is missing')
-      return NextResponse.json({ error: 'مفتاح Service Role غير موجود' }, { status: 500 })
+    if (!checkRateLimit(clientKey(request))) {
+      return NextResponse.json(
+        { error: 'محاولات كثيرة. حاول مرة أخرى بعد قليل.' },
+        { status: 429 },
+      )
     }
 
-    // ── 1. Parse body ─────────────────────────────────────────────────
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error('[login] SUPABASE_SERVICE_ROLE_KEY is missing')
+      return NextResponse.json({ error: 'إعدادات الخادم غير مكتملة' }, { status: 500 })
+    }
+
     const body = await request.json().catch(() => ({}))
     const { username, password } = body as { username?: string; password?: string }
 
@@ -21,36 +47,18 @@ export async function POST(request: Request) {
     }
 
     const trimmed = username.trim().toLowerCase()
-    console.log('[login] username:', trimmed)
-
-    // ── 2. Build clients ──────────────────────────────────────────────
     const admin = createAdminClient()
     const supabase = await createClient()
 
     let email = ''
     let role = 'lawyer'
 
-    // ── 3. Email fallback (contains @) ────────────────────────────────
     if (trimmed.includes('@')) {
-      console.log('[login] using email fallback')
       email = trimmed
 
       const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
       if (authError) {
-        console.log('[login] email sign-in failed:', authError.message)
-
-        const { data: listed } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
-        const authUser = listed?.users?.find(u => u.email?.toLowerCase() === email)
-        if (!authUser) {
-          return NextResponse.json(
-            {
-              error: 'لا يوجد حساب بهذا البريد. سجّل الدخول باسم المستخدم الذي أنشأته الإدارة (مثل: jafar) — وليس بريد Gmail.',
-            },
-            { status: 401 },
-          )
-        }
-
-        return NextResponse.json({ error: 'كلمة المرور غير صحيحة' }, { status: 401 })
+        return NextResponse.json({ error: 'بيانات الدخول غير صحيحة' }, { status: 401 })
       }
 
       const { data: { user } } = await supabase.auth.getUser()
@@ -75,18 +83,19 @@ export async function POST(request: Request) {
         role === 'lawyer' ? '/lawyer'
         : role === 'delegate' ? '/delegate'
         : '/admin/dashboard'
-      console.log('[login] email fallback success, role:', role)
       return NextResponse.json({ redirectTo })
     }
 
-    // ── 4. Username → profile lookup ──────────────────────────────────
     const { data: profile, error: profileError } = await admin
       .from('profiles')
       .select('id, role, is_active, username')
       .eq('username', trimmed)
       .maybeSingle()
 
-    console.log('[login] profile found:', !!profile, '| db error:', profileError?.message ?? null)
+    if (profileError) {
+      console.error('[login] profile lookup', profileError.message)
+      return NextResponse.json({ error: 'حدث خطأ غير متوقع في الخادم' }, { status: 500 })
+    }
 
     if (!profile) {
       return NextResponse.json({ error: 'اسم المستخدم غير موجود' }, { status: 401 })
@@ -98,7 +107,6 @@ export async function POST(request: Request) {
       )
     }
 
-    // ── 5. Sign in — internal email for username accounts, then legacy auth email ──
     const internalEmail = usernameToInternalEmail(trimmed)
     let signInError = (
       await supabase.auth.signInWithPassword({ email: internalEmail, password })
@@ -114,18 +122,15 @@ export async function POST(request: Request) {
     }
 
     if (signInError) {
-      console.log('[login] signInWithPassword failed:', signInError.message)
       return NextResponse.json({ error: 'كلمة المرور غير صحيحة' }, { status: 401 })
     }
 
     role = profile.role
 
-    // ── 6. Return redirect ────────────────────────────────────────────
     const redirectTo =
       role === 'lawyer' ? '/lawyer'
       : role === 'delegate' ? '/delegate'
       : '/admin/dashboard'
-    console.log('[login] success, role:', role, '→', redirectTo)
     return NextResponse.json({ redirectTo })
 
   } catch (err) {

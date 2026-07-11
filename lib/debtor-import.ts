@@ -4,6 +4,15 @@ import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import { findOrCreateBranchList } from '@/lib/branch-lists'
 import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
 import { computeDebtorRequiredAmount } from '@/lib/debtor-balances'
+import {
+  isReceiptNumberMissing,
+  isZeroReceiptNumber,
+  normalizeReceiptNumberInput,
+  requiresUniqueReceiptNumber,
+  RECEIPT_NUMBER_DUP_BRANCH_ERROR,
+  RECEIPT_NUMBER_DUP_FILE_ERROR,
+  RECEIPT_NUMBER_EMPTY_ERROR,
+} from '@/lib/receipt-number'
 
 export const IMPORT_EXCEL_HEADERS = [
   'الاسم الكامل',
@@ -92,6 +101,7 @@ export interface ImportExecuteResult {
   imported: number
   failed: number
   failures: { rowNum: number; full_name: string; receipt_number: string; errors: string[] }[]
+  created?: { receipt_number: string; id: string; rowNum: number }[]
 }
 
 const RECEIPT_TYPE_BY_LABEL: Record<string, ReceiptType> = {
@@ -274,7 +284,9 @@ export async function fetchExistingReceiptNumbers(
       .range(from, from + pageSize - 1)
     if (!data?.length) break
     for (const r of data) {
-      if (r.receipt_number) set.add(String(r.receipt_number).trim())
+      const rn = normalizeReceiptNumberInput(r.receipt_number)
+      // الصفر مسموح بالتكرار — لا يُحسب ضمن أرقام التفرد
+      if (requiresUniqueReceiptNumber(rn)) set.add(rn)
     }
     if (data.length < pageSize) break
     from += pageSize
@@ -301,14 +313,17 @@ export function validateImportRows(
 
     if (!row.full_name) errors.push('الاسم فارغ')
     if (!row.phone) errors.push('الهاتف فارغ')
-    if (!row.receipt_number) {
-      errors.push('رقم الوصل فارغ')
+    if (isReceiptNumberMissing(row.receipt_number)) {
+      errors.push(RECEIPT_NUMBER_EMPTY_ERROR)
     } else {
-      const rn = row.receipt_number.trim()
-      if (fileReceipts.has(rn)) errors.push('رقم الوصل مكرر داخل الملف')
-      else {
+      const rn = normalizeReceiptNumberInput(row.receipt_number)
+      if (isZeroReceiptNumber(rn)) {
+        // الصفر مسموح بالتكرار داخل الملف والفرع
+      } else if (fileReceipts.has(rn)) {
+        errors.push(RECEIPT_NUMBER_DUP_FILE_ERROR)
+      } else {
         fileReceipts.add(rn)
-        if (existingReceipts.has(rn)) errors.push('رقم الوصل موجود سابقاً داخل نفس الفرع')
+        if (existingReceipts.has(rn)) errors.push(RECEIPT_NUMBER_DUP_BRANCH_ERROR)
       }
     }
 
@@ -493,6 +508,7 @@ export async function executeDebtorImport(
   const defMap = new Map(ctx.taskDefs.map(d => [d.id, d]))
   let imported = 0
   const failures: ImportExecuteResult['failures'] = []
+  const created: NonNullable<ImportExecuteResult['created']> = []
 
   onProgress({ phase: 'creating_debtors', current: 0, total: validRows.length, message: 'إنشاء المدينين...' })
 
@@ -608,6 +624,21 @@ export async function executeDebtorImport(
       continue
     }
 
+    // إظهار ملاحظات Excel في لوحة الملاحظات (debtor_notes)
+    const notePayloads = debtors
+      .map((d, i) => {
+        const msg = String(batch[i].notes ?? '').trim()
+        if (!msg) return null
+        return { debtor_id: d.id, user_id: ctx.userId, message: msg }
+      })
+      .filter((n): n is { debtor_id: string; user_id: string; message: string } => n != null)
+    if (notePayloads.length) {
+      const { error: notesErr } = await supabase.from('debtor_notes').insert(notePayloads)
+      if (notesErr) {
+        console.warn('[debtor-import] debtor_notes insert failed:', notesErr.message)
+      }
+    }
+
     const uploadItems: { row: ImportPreviewRow; debtorId: string; taskId: string }[] = []
 
     for (let i = 0; i < debtors.length; i++) {
@@ -655,6 +686,7 @@ export async function executeDebtorImport(
 
       if (!row.pdfBlob) {
         imported++
+        created.push({ receipt_number: row.receipt_number, id: debtorId, rowNum: row.rowNum })
         return
       }
 
@@ -675,6 +707,7 @@ export async function executeDebtorImport(
       }
 
       imported++
+      created.push({ receipt_number: row.receipt_number, id: debtorId, rowNum: row.rowNum })
     }
 
     const workers = Array.from({ length: Math.min(UPLOAD_CONCURRENCY, uploadItems.length) }, async () => {
@@ -695,7 +728,7 @@ export async function executeDebtorImport(
   }
 
   onProgress({ phase: 'done', current: validRows.length, total: validRows.length, message: 'اكتمل الاستيراد' })
-  return { imported, failed: failures.length, failures }
+  return { imported, failed: failures.length, failures, created }
 }
 
 export const IMPORT_RECEIPT_TYPE_HINT = Object.entries(RECEIPT_TYPE_LABELS)

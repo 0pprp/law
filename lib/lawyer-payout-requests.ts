@@ -173,7 +173,7 @@ export async function reviewLawyerPayoutRequest(
   if (req.status !== 'pending') return { ok: false, error: 'تمت معالجة هذا الطلب مسبقاً' }
 
   if (params.action === 'rejected') {
-    const { error } = await supabase
+    const { data: rejected, error } = await supabase
       .from('lawyer_payout_requests')
       .update({
         status: 'rejected',
@@ -183,7 +183,10 @@ export async function reviewLawyerPayoutRequest(
       })
       .eq('id', params.requestId)
       .eq('status', 'pending')
+      .select('id')
+      .maybeSingle()
     if (error) return { ok: false, error: error.message }
+    if (!rejected) return { ok: false, error: 'تمت معالجة هذا الطلب مسبقاً' }
     return { ok: true }
   }
 
@@ -197,6 +200,24 @@ export async function reviewLawyerPayoutRequest(
       error: `رصيد ${who} غير كافٍ الآن — المتاح: ${formatMoney(available)}`,
     }
   }
+
+  // Claim first (status pending → approved) to prevent double-pay races.
+  const reviewedAt = new Date().toISOString()
+  const { data: claimed, error: claimErr } = await supabase
+    .from('lawyer_payout_requests')
+    .update({
+      status: 'approved',
+      review_notes: params.reviewNotes?.trim() || null,
+      reviewed_by: params.reviewerId,
+      reviewed_at: reviewedAt,
+    })
+    .eq('id', params.requestId)
+    .eq('status', 'pending')
+    .select('id')
+    .maybeSingle()
+
+  if (claimErr) return { ok: false, error: claimErr.message }
+  if (!claimed) return { ok: false, error: 'تمت معالجة هذا الطلب مسبقاً' }
 
   const payout = walletKind === 'savings'
     ? await withdrawLawyerSavings(supabase, {
@@ -218,19 +239,21 @@ export async function reviewLawyerPayoutRequest(
           notes: `طلب صرف: ${req.title}`,
           createdBy: params.reviewerId,
         })
-  if (!payout.ok) return { ok: false, error: payout.error }
 
-  const { error: updateErr } = await supabase
-    .from('lawyer_payout_requests')
-    .update({
-      status: 'approved',
-      review_notes: params.reviewNotes?.trim() || null,
-      reviewed_by: params.reviewerId,
-      reviewed_at: new Date().toISOString(),
-    })
-    .eq('id', params.requestId)
-    .eq('status', 'pending')
+  if (!payout.ok) {
+    await supabase
+      .from('lawyer_payout_requests')
+      .update({
+        status: 'pending',
+        review_notes: null,
+        reviewed_by: null,
+        reviewed_at: null,
+      })
+      .eq('id', params.requestId)
+      .eq('status', 'approved')
+      .eq('reviewed_at', reviewedAt)
+    return { ok: false, error: payout.error }
+  }
 
-  if (updateErr) return { ok: false, error: updateErr.message }
   return { ok: true }
 }

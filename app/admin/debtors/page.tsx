@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtMoney, fmtDate } from '@/lib/utils'
-import { debtorSearchOrFilter, DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
+import { DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
 import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL } from '@/lib/ui-labels'
 import DebtorImportModal from '@/components/DebtorImportModal'
 import { BranchListFilterSelect } from '@/components/BranchListSelect'
@@ -23,8 +23,6 @@ import { appConfirm } from '@/lib/app-dialog'
 import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
 
 const PAGE_SIZE = 50
-const COLS = 'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, branch_list_id'
-const SELECT_COLS = `${COLS}, branch_list:branch_lists(name)`
 
 function debtorListName(debtor: { branch_list?: { name?: string } | null }): string {
   return debtor.branch_list?.name?.trim() || '—'
@@ -75,36 +73,48 @@ export default function DebtorsPage() {
   const [showAllDebtors, setShowAllDebtors] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Server-side fetch with optional search
+  // Server-side fetch with optional search (via admin API لتجاوز قيود RLS على المحاسب العام)
   const fetchDebtors = useCallback(async (searchTerm: string, listId: string, offset = 0, append = false) => {
+    if (!branchId) {
+      setDebtors([])
+      setTotal(0)
+      setLoading(false)
+      setLoadingMore(false)
+      return
+    }
     if (offset === 0 && !append) setLoading(true)
     else setLoadingMore(true)
 
-    const supabase = createClient()
-    let q = supabase
-      .from('debtors')
-      .select(SELECT_COLS, { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1)
+    try {
+      const params = new URLSearchParams({
+        branchId,
+        offset: String(offset),
+        limit: String(PAGE_SIZE),
+      })
+      if (listId) params.set('listId', listId)
+      if (searchTerm.trim()) params.set('search', searchTerm.trim())
 
-    if (branchId) q = (q as any).eq('branch_id', branchId)
-    if (listId) q = (q as any).eq('branch_list_id', listId)
-
-    if (searchTerm.trim()) {
-      const s = searchTerm.trim()
-      // ilike uses the trigram index for fast Arabic search
-      q = (q as any).or(debtorSearchOrFilter(s))
+      const res = await fetch(`/api/admin/debtors?${params}`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setError(typeof json.error === 'string' ? json.error : 'فشل تحميل المدينين')
+        if (!append) setDebtors([])
+        setTotal(0)
+      } else {
+        setError('')
+        const rows = json.debtors ?? []
+        if (append) setDebtors(prev => [...prev, ...rows])
+        else setDebtors(rows)
+        setTotal(json.total ?? 0)
+      }
+    } catch {
+      setError('فشل تحميل المدينين')
+      if (!append) setDebtors([])
+      setTotal(0)
+    } finally {
+      setLoading(false)
+      setLoadingMore(false)
     }
-
-    const { data, count } = await q
-    if (append) {
-      setDebtors(prev => [...prev, ...(data ?? [])])
-    } else {
-      setDebtors(data ?? [])
-    }
-    setTotal(count ?? 0)
-    setLoading(false)
-    setLoadingMore(false)
   }, [branchId])
 
   useEffect(() => {

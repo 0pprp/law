@@ -7,6 +7,7 @@ export interface StaffProfileRow {
   role: string | null
   branch_id?: string | null
   accountant_type?: AccountantType | null
+  is_active?: boolean | null
 }
 
 function isMissingAccountantTypeColumn(error: { message?: string; code?: string } | null): boolean {
@@ -28,7 +29,7 @@ export async function fetchStaffProfile(
 ): Promise<StaffProfileRow | null> {
   const withType = await supabase
     .from('profiles')
-    .select('full_name, role, branch_id, accountant_type')
+    .select('full_name, role, branch_id, accountant_type, is_active')
     .eq('id', userId)
     .single()
 
@@ -46,7 +47,7 @@ export async function fetchStaffProfile(
 
   const fallback = await supabase
     .from('profiles')
-    .select('full_name, role, branch_id')
+    .select('full_name, role, branch_id, is_active')
     .eq('id', userId)
     .single()
 

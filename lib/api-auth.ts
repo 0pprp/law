@@ -1,12 +1,17 @@
 import { createClient } from '@/lib/supabase/server'
 import { apiForbiddenResponse, canDelete, canReadAdminData, isViewer, STAFF_ROLES, writeForbiddenIfViewer } from '@/lib/permissions'
 import type { UserRole } from '@/lib/types'
+import type { AccountantType } from '@/lib/accountant-type'
+import { fetchStaffProfile } from '@/lib/staff-profile'
+import { normalizeAccountantType } from '@/lib/accountant-type'
 
 export type SessionProfile = {
   id: string
   role: UserRole
   branch_id: string | null
   full_name: string | null
+  accountant_type: AccountantType
+  is_active: boolean
 }
 
 export async function getSessionProfile(): Promise<{
@@ -18,16 +23,25 @@ export async function getSessionProfile(): Promise<{
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { supabase, user: null, profile: null }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('id, role, branch_id, full_name')
-    .eq('id', user.id)
-    .single()
+  const row = await fetchStaffProfile(supabase, user.id)
+  if (!row?.role) return { supabase, user: { id: user.id }, profile: null }
+
+  if (row.is_active === false) {
+    await supabase.auth.signOut()
+    return { supabase, user: { id: user.id }, profile: null }
+  }
 
   return {
     supabase,
     user: { id: user.id },
-    profile: profile as SessionProfile | null,
+    profile: {
+      id: user.id,
+      role: row.role as UserRole,
+      branch_id: row.branch_id ?? null,
+      full_name: row.full_name ?? null,
+      accountant_type: normalizeAccountantType(row.accountant_type),
+      is_active: true,
+    },
   }
 }
 

@@ -44,9 +44,14 @@ export default async function proxy(request: NextRequest) {
   if (user && isLoginPage) {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, is_active')
       .eq('id', user.id)
       .single()
+
+    if (profile?.is_active === false) {
+      await supabase.auth.signOut()
+      return NextResponse.redirect(new URL('/login', request.url))
+    }
 
     const role = profile?.role as UserRole
     const dest =
@@ -56,12 +61,20 @@ export default async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL(dest, request.url))
   }
 
-  if (user && (isAdminRoute || isLawyerRoute || isDelegateRoute)) {
+  if (user && (isAdminRoute || isLawyerRoute || isDelegateRoute || (isApiRoute && !isPublicAuthApi))) {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, is_active')
       .eq('id', user.id)
       .single()
+
+    if (profile?.is_active === false) {
+      await supabase.auth.signOut()
+      if (isApiRoute) {
+        return NextResponse.json({ error: 'الحساب غير فعال' }, { status: 403 })
+      }
+      return NextResponse.redirect(new URL('/login', request.url))
+    }
 
     const role = profile?.role as UserRole
 

@@ -17,17 +17,21 @@ import { cn } from '@/lib/utils'
 import { parseMoneyInput } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
-import { computeDebtorRequiredAmount, computeRemainingFromRequired } from '@/lib/debtor-balances'
 import { canAddDebtor } from '@/lib/permissions'
 import { useAdminRole } from '@/context/admin-role'
 import BranchListSelect from '@/components/BranchListSelect'
 import { useBranchLists } from '@/hooks/use-branch-lists'
+import {
+  isReceiptNumberMissing,
+  RECEIPT_NUMBER_DUP_BRANCH_ERROR,
+  RECEIPT_NUMBER_EMPTY_ERROR,
+} from '@/lib/receipt-number'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
 /** قيمة واجهة فقط — تُحفظ في DB كـ other لتفادي كسر القيود */
 const RECEIPT_TYPE_NONE = 'none'
 
-type DebtorFormField = 'selectedTaskDefId'
+type DebtorFormField = 'selectedTaskDefId' | 'receipt_number'
 
 type FieldErrors = Partial<Record<DebtorFormField, string>>
 
@@ -87,6 +91,7 @@ export default function NewDebtorPage() {
 
   function set(field: string, value: unknown) {
     setForm(prev => ({ ...prev, [field]: value }))
+    if (field === 'receipt_number') clearFieldError('receipt_number')
   }
 
   function inputClass(invalid?: boolean) {
@@ -96,11 +101,14 @@ export default function NewDebtorPage() {
     )
   }
 
-  /** التحقق الوحيد الإلزامي: المهمة المطلوبة */
+  /** المهمة مطلوبة + رقم الوصل غير فارغ */
   function validateForm(): FieldErrors {
     const errors: FieldErrors = {}
     if (!selectedTaskDefId) {
       errors.selectedTaskDefId = 'يجب اختيار المهمة المطلوبة قبل إضافة المدين.'
+    }
+    if (isReceiptNumberMissing(form.receipt_number)) {
+      errors.receipt_number = RECEIPT_NUMBER_EMPTY_ERROR
     }
     return errors
   }
@@ -132,7 +140,11 @@ export default function NewDebtorPage() {
     const validationErrors = validateForm()
     if (Object.keys(validationErrors).length > 0) {
       setFieldErrors(validationErrors)
-      setError(validationErrors.selectedTaskDefId ?? 'يجب اختيار المهمة المطلوبة قبل إضافة المدين.')
+      setError(
+        validationErrors.receipt_number
+        ?? validationErrors.selectedTaskDefId
+        ?? 'يجب إكمال الحقول المطلوبة قبل إضافة المدين.',
+      )
       setSaving(false)
       return
     }
@@ -144,92 +156,58 @@ export default function NewDebtorPage() {
       return
     }
 
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { router.push('/login'); return }
-
-    const taskDef = taskDefs.find(t => t.id === selectedTaskDefId)
-    // لا تُستنتج المحافظة من اسم الفرع — تُترك فارغة إن لم تُدخل
-    const governorate = null
-
     const remaining = parseMoneyInput(form.remaining_amount)
     const receiptAmount = parseMoneyInput(form.receipt_amount)
     const penalty = form.has_contract ? parseMoneyInput(form.penalty_amount) : 0
-    const required = computeDebtorRequiredAmount(remaining, penalty, receiptAmount)
-    const balanceRemaining = computeRemainingFromRequired(required, 0)
 
-    if (!taskDef?.task_type) {
-      setError('تعريف المهمة لا يحتوي على نوع مهمة (task_type) — راجع إعدادات المهام')
-      setSaving(false)
-      return
-    }
-
-    const { data: newDebtor, error: dbError } = await supabase.from('debtors').insert({
-      full_name: form.full_name.trim() || '',
-      phone: form.phone.trim() || null,
-      governorate,
-      address: form.address.trim() || null,
-      id_number: form.id_number.trim() || null,
-      export_date: today,
-      receipt_type: resolveReceiptType(form.receipt_type),
-      receipt_number: form.receipt_number.trim() || null,
-      receipt_amount: receiptAmount,
-      remaining_amount: balanceRemaining,
-      required_amount: required,
-      lawyer_fees: 0,
-      penalty_amount: penalty,
-      receipt_signed_legal_costs: form.receipt_signed_legal_costs,
-      notes: form.notes.trim() || null,
-      created_by: user.id,
-      branch_id: branchId,
-      branch_list_id: branchListId || null,
-    }).select('id').single()
-
-    if (dbError || !newDebtor) {
-      setError(dbError?.message ?? 'فشل إنشاء المدين')
-      setSaving(false)
-      return
-    }
-
-    const { data: newTask, error: taskErr } = await supabase.from('tasks').insert({
-      debtor_id: newDebtor.id,
-      task_definition_id: selectedTaskDefId,
-      task_type: taskDef.task_type,
-      task_status: 'waiting_assignment',
-      reward_amount: taskDef?.fee_amount ?? 0,
-      created_by: user.id,
-      branch_id: branchId,
-    }).select('id').single()
-
-    if (taskErr) {
-      await supabase.from('debtors').delete().eq('id', newDebtor.id)
-      setError(`فشل إنشاء المهمة الأولية: ${taskErr.message}`)
-      setSaving(false)
-      return
-    }
-
-    const { error: linkErr } = await supabase.from('debtors').update({ current_task_id: newTask.id }).eq('id', newDebtor.id)
-    if (linkErr) {
-      await supabase.from('tasks').delete().eq('id', newTask.id)
-      await supabase.from('debtors').delete().eq('id', newDebtor.id)
-      setError(`فشل ربط المهمة بالمدين: ${linkErr.message}`)
-      setSaving(false)
-      return
-    }
-
-    if (pdfFile) {
-      try {
-        await uploadDebtorPdfFile(newDebtor.id, pdfFile)
-      } catch (uploadError) {
-        await supabase.from('tasks').delete().eq('id', newTask.id)
-        await supabase.from('debtors').delete().eq('id', newDebtor.id)
-        setError(`فشل رفع ملف PDF: ${uploadError instanceof Error ? uploadError.message : 'خطأ غير معروف'}`)
+    try {
+      const res = await fetch('/api/admin/debtors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          branchId,
+          taskDefinitionId: selectedTaskDefId,
+          full_name: form.full_name.trim(),
+          phone: form.phone.trim(),
+          address: form.address.trim(),
+          id_number: form.id_number.trim(),
+          receipt_type: resolveReceiptType(form.receipt_type),
+          receipt_number: form.receipt_number,
+          receipt_amount: receiptAmount,
+          remaining_amount: remaining,
+          penalty_amount: penalty,
+          has_contract: form.has_contract,
+          receipt_signed_legal_costs: form.receipt_signed_legal_costs,
+          notes: form.notes.trim(),
+          branch_list_id: branchListId || null,
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json.id) {
+        const msg = typeof json.error === 'string' ? json.error : 'فشل إنشاء المدين'
+        if (msg === RECEIPT_NUMBER_DUP_BRANCH_ERROR || msg === RECEIPT_NUMBER_EMPTY_ERROR) {
+          setFieldErrors({ receipt_number: msg })
+        }
+        setError(msg)
         setSaving(false)
         return
       }
-    }
 
-    router.push('/admin/debtors')
+      if (pdfFile) {
+        try {
+          await uploadDebtorPdfFile(json.id, pdfFile)
+        } catch (uploadError) {
+          setError(`تم إنشاء المدين لكن فشل رفع ملف PDF: ${uploadError instanceof Error ? uploadError.message : 'خطأ غير معروف'}`)
+          setSaving(false)
+          return
+        }
+      }
+
+      router.push('/admin/debtors')
+    } catch {
+      setError('فشل إنشاء المدين')
+      setSaving(false)
+    }
   }
 
   const selectedDef = taskDefs.find(t => t.id === selectedTaskDefId)
@@ -354,8 +332,14 @@ export default function NewDebtorPage() {
                   searchable={false}
                 />
               </FormField>
-              <FormField label={RECEIPT_NUMBER_LABEL} hint="اختياري">
-                <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={inputClass()} dir="ltr" />
+              <FormField label={RECEIPT_NUMBER_LABEL} required error={fieldErrors.receipt_number}>
+                <input
+                  type="text"
+                  value={form.receipt_number}
+                  onChange={e => set('receipt_number', e.target.value)}
+                  className={inputClass(!!fieldErrors.receipt_number)}
+                  dir="ltr"
+                />
               </FormField>
               <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`} hint="اختياري — يُنسّق تلقائياً كل 3 أرقام">
                 <MoneyInput

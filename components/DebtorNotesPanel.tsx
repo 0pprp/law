@@ -14,7 +14,14 @@ interface Note {
   user: { full_name: string } | null
 }
 
-export default function DebtorNotesPanel({ debtorId }: { debtorId: string }) {
+export default function DebtorNotesPanel({
+  debtorId,
+  profileNotes = null,
+}: {
+  debtorId: string
+  /** ملاحظات حقل debtors.notes (مثل استيراد Excel القديم) */
+  profileNotes?: string | null
+}) {
   const canWrite = useCanWrite()
   const [notes, setNotes] = useState<Note[]>([])
   const [loading, setLoading] = useState(true)
@@ -50,11 +57,18 @@ export default function DebtorNotesPanel({ debtorId }: { debtorId: string }) {
     setSaving(false)
   }
 
+  const legacy = String(profileNotes ?? '').trim()
+  const legacyAlreadyListed = legacy
+    ? notes.some(n => String(n.message ?? '').trim() === legacy)
+    : true
+  const showLegacy = Boolean(legacy) && !legacyAlreadyListed
+  const totalCount = notes.length + (showLegacy ? 1 : 0)
+
   return (
     <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-[rgba(118,118,118,0.08)]">
-        <h3 className="text-sm font-bold text-[#231F20]">الملاحظات ({notes.length})</h3>
+        <h3 className="text-sm font-bold text-[#231F20]">الملاحظات ({totalCount})</h3>
       </div>
 
       {/* Add note */}
@@ -86,10 +100,21 @@ export default function DebtorNotesPanel({ debtorId }: { debtorId: string }) {
         <div className="flex justify-center py-8">
           <div className="w-6 h-6 border-2 border-[#2C8780]/30 border-t-[#2C8780] rounded-full animate-spin" />
         </div>
-      ) : !notes.length ? (
+      ) : !totalCount ? (
         <div className="py-8 text-center text-[#767676] text-sm">لا توجد ملاحظات</div>
       ) : (
         <div className="divide-y divide-[rgba(118,118,118,0.08)]">
+          {showLegacy && (
+            <div className="px-5 py-3.5 bg-[#F3F1F2]/40">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-6 h-6 rounded-full bg-[#2C8780]/10 flex items-center justify-center shrink-0">
+                  <span className="text-[10px] font-bold text-[#2C8780]">م</span>
+                </div>
+                <span className="text-xs font-semibold text-[#231F20]">ملاحظة المستورد / الملف</span>
+              </div>
+              <p className="text-sm text-[#231F20] leading-relaxed pr-8 whitespace-pre-wrap">{legacy}</p>
+            </div>
+          )}
           {notes.map(note => (
             <div key={note.id} className="px-5 py-3.5">
               <div className="flex items-center gap-2 mb-1">
@@ -101,7 +126,7 @@ export default function DebtorNotesPanel({ debtorId }: { debtorId: string }) {
                 <span className="text-xs font-semibold text-[#231F20]">{note.user?.full_name ?? 'مجهول'}</span>
                 <span className="text-[10px] text-[#767676] font-mono mr-auto" dir="ltr">{fmtDateTime(note.created_at)}</span>
               </div>
-              {note.message && <p className="text-sm text-[#231F20] leading-relaxed pr-8">{note.message}</p>}
+              {note.message && <p className="text-sm text-[#231F20] leading-relaxed pr-8 whitespace-pre-wrap">{note.message}</p>}
             </div>
           ))}
         </div>

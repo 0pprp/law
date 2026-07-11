@@ -110,11 +110,14 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
 
     let attachmentPath: string | null = null
     if (attachmentFile) {
-      const ext = attachmentFile.name.split('.').pop() ?? 'bin'
-      const filePath = `expenses/${taskId}/${Date.now()}.${ext}`
-      const { error: uploadErr } = await supabase.storage.from('task-files').upload(filePath, attachmentFile, { upsert: false })
-      if (uploadErr) { setError(`فشل رفع المرفق: ${uploadErr.message}`); setSaving(false); return }
-      attachmentPath = filePath
+      const body = new FormData()
+      body.append('file', attachmentFile)
+      body.append('taskId', taskId)
+      body.append('kind', 'expense')
+      const res = await fetch('/api/worker/upload-task-file', { method: 'POST', body })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(`فشل رفع المرفق: ${data.error || 'خطأ غير معروف'}`); setSaving(false); return }
+      attachmentPath = data.filePath as string
     }
 
     const { error: dbErr } = await (supabase as any).from('expenses').insert({

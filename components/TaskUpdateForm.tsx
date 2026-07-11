@@ -98,21 +98,16 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
   }
 
   async function uploadFile(file: File, key: string): Promise<void> {
-    const supabase = createClient()
-    const ext = file.name.split('.').pop() ?? 'bin'
-    const filePath = `${task.id}/${key}-${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from('task-files').upload(filePath, file, { upsert: false })
-    if (error) return
-    const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('task_attachments').insert({
-      task_id: task.id,
-      file_name: file.name,
-      file_path: filePath,
-      file_size: file.size,
-      mime_type: file.type,
-      description: key,
-      uploaded_by: user?.id,
-    })
+    const body = new FormData()
+    body.append('file', file)
+    body.append('taskId', task.id)
+    body.append('description', key)
+    body.append('kind', 'attachment')
+    const res = await fetch('/api/worker/upload-task-file', { method: 'POST', body })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || 'فشل رفع الملف')
+    }
   }
 
   async function submit() {
@@ -124,8 +119,15 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
 
     // Upload files
     setUploading(true)
-    for (const [key, file] of Object.entries(files)) {
-      await uploadFile(file, key)
+    try {
+      for (const [key, file] of Object.entries(files)) {
+        await uploadFile(file, key)
+      }
+    } catch (e) {
+      setUploading(false)
+      setSaving(false)
+      setError(e instanceof Error ? e.message : 'فشل رفع الملف')
+      return
     }
     setUploading(false)
 
@@ -655,19 +657,19 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
     if (!file) return
     setUploading(true)
     setUploadError('')
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setUploadError('يرجى تسجيل الدخول'); setUploading(false); return }
-    const ext = file.name.split('.').pop() ?? 'bin'
-    const filePath = `${task.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-    const { error: storageErr } = await supabase.storage.from('task-files').upload(filePath, file, { upsert: false })
-    if (storageErr) { setUploadError(storageErr.message); setUploading(false); if (fileInputRef.current) fileInputRef.current.value = ''; return }
-    await supabase.from('task_attachments').insert({
-      task_id: task.id, file_name: file.name, file_path: filePath,
-      file_size: file.size, mime_type: file.type,
-      description: 'مرفق من المحامي', uploaded_by: user.id,
-    })
-    await logActivity({ action: 'upload_task_file', entity_type: 'task', entity_id: task.id, description: `رفع ملف: ${file.name}` }, supabase)
+    const body = new FormData()
+    body.append('file', file)
+    body.append('taskId', task.id)
+    body.append('description', 'مرفق من المحامي')
+    body.append('kind', 'attachment')
+    const res = await fetch('/api/worker/upload-task-file', { method: 'POST', body })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      setUploadError(data.error || 'فشل رفع الملف')
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
     setUploading(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
     router.refresh()

@@ -263,6 +263,28 @@ export async function withdrawDelegateAvailable(
     return { ok: false, error: 'لا يمكن السحب بأكثر من الرصيد القابل للصرف' }
   }
 
+  const nextAvailable = wallet.available_balance - amount
+  const nextWithdrawn = wallet.total_withdrawn + amount
+
+  // Optimistic lock: only one concurrent withdraw can win the balance version.
+  const { data: claimed, error: wErr } = await supabase
+    .from('delegate_wallets')
+    .update({
+      available_balance: nextAvailable,
+      total_withdrawn: nextWithdrawn,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('delegate_id', delegateId)
+    .eq('available_balance', wallet.available_balance)
+    .gte('available_balance', amount)
+    .select('delegate_id')
+    .maybeSingle()
+
+  if (wErr) return { ok: false, error: wErr.message }
+  if (!claimed) {
+    return { ok: false, error: 'تعذر السحب — الرصيد تغيّر، أعد المحاولة' }
+  }
+
   const { error: txErr } = await supabase.from('delegate_wallet_transactions').insert({
     delegate_id: delegateId,
     type: 'delegate_wallet_withdrawal',
@@ -270,18 +292,18 @@ export async function withdrawDelegateAvailable(
     notes: notes?.trim() || 'سحب من رصيد المندوب القابل للصرف',
     created_by: actorId,
   })
-  if (txErr) return { ok: false, error: txErr.message }
-
-  const { error: wErr } = await supabase
-    .from('delegate_wallets')
-    .update({
-      available_balance: wallet.available_balance - amount,
-      total_withdrawn: wallet.total_withdrawn + amount,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('delegate_id', delegateId)
-
-  if (wErr) return { ok: false, error: wErr.message }
+  if (txErr) {
+    await supabase
+      .from('delegate_wallets')
+      .update({
+        available_balance: wallet.available_balance,
+        total_withdrawn: wallet.total_withdrawn,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('delegate_id', delegateId)
+      .eq('available_balance', nextAvailable)
+    return { ok: false, error: txErr.message }
+  }
 
   await markDelegateTasksWithdrawnForAmount(supabase, delegateId, amount)
   return { ok: true }

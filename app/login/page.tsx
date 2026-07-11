@@ -44,7 +44,11 @@ export default function LoginPage() {
         return
       }
 
-      router.replace(data.redirectTo ?? '/admin/dashboard')
+      const allowed = new Set(['/lawyer', '/delegate', '/admin/dashboard'])
+      const dest = data.redirectTo && allowed.has(data.redirectTo)
+        ? data.redirectTo
+        : '/admin/dashboard'
+      router.replace(dest)
     } catch {
       setError('حدث خطأ في الاتصال، يرجى المحاولة مرة أخرى')
       setLoading(false)

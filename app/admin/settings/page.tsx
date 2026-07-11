@@ -14,6 +14,17 @@ import BranchListsTab from '@/components/settings/BranchListsTab'
 import { formatMoney } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 
+async function settingsWrite(payload: Record<string, unknown>): Promise<{ ok: boolean; error?: string; row?: Record<string, unknown> }> {
+  const res = await fetch('/api/admin/branch-settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok) return { ok: false, error: typeof json.error === 'string' ? json.error : 'فشل الحفظ' }
+  return { ok: true, row: json.row }
+}
+
 // ── Shared styles ──────────────────────────────────────────────
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/20 focus:border-[#2C8780] transition-all'
 const SEL = INP + ' cursor-pointer'
@@ -155,27 +166,25 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
     if (editingId && !canModify) return
     if (!form?.name.trim()) { setErr('اسم المحكمة مطلوب'); return }
     setSaving(true); setErr('')
-    // branch_id is always the current branch from context — no manual selection
     const payload = { name: form.name.trim(), branch_id: branchId || null }
-    const sb = createClient()
-    const { error } = editingId
-      ? await sb.from('courts').update(payload).eq('id', editingId)
-      : await sb.from('courts').insert({ ...payload, is_active: true })
-    if (error) { setErr(error.message); setSaving(false); return }
+    const res = editingId
+      ? await settingsWrite({ action: 'update', table: 'courts', id: editingId, branchId, row: payload })
+      : await settingsWrite({ action: 'insert', table: 'courts', branchId, row: { ...payload, is_active: true } })
+    if (!res.ok) { setErr(res.error ?? 'فشل الحفظ'); setSaving(false); return }
     setForm(null); load()
     setSaving(false)
   }
 
   async function toggle(c: Court) {
     if (!canModify) return
-    await createClient().from('courts').update({ is_active: !c.is_active }).eq('id', c.id)
-    setCourts(cs => cs.map(x => x.id === c.id ? { ...x, is_active: !x.is_active } : x))
+    const res = await settingsWrite({ action: 'update', table: 'courts', id: c.id, branchId, row: { is_active: !c.is_active } })
+    if (res.ok) setCourts(cs => cs.map(x => x.id === c.id ? { ...x, is_active: !x.is_active } : x))
   }
 
   async function del(c: Court) {
     if (!canModify) return
-    await createClient().from('courts').delete().eq('id', c.id)
-    setDeleting(null); load()
+    const res = await settingsWrite({ action: 'delete', table: 'courts', id: c.id, branchId })
+    if (res.ok) { setDeleting(null); load() }
   }
 
   const getBranch = (id: string | null) => branches.find(b => b.id === id)
@@ -304,26 +313,24 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
     if (editingId && !canModify) return
     if (!form?.name.trim()) { setErr('اسم الدائرة مطلوب'); return }
     setSaving(true); setErr('')
-    // Always save branch_id so the dept stays visible in the current branch
     const payload = { name: form.name.trim(), court_id: form.court_id || null, branch_id: branchId || null }
-    const sb = createClient()
-    const { error } = editingId
-      ? await sb.from('execution_departments').update(payload).eq('id', editingId)
-      : await sb.from('execution_departments').insert({ ...payload, is_active: true })
-    if (error) { setErr(error.message); setSaving(false); return }
+    const res = editingId
+      ? await settingsWrite({ action: 'update', table: 'execution_departments', id: editingId, branchId, row: payload })
+      : await settingsWrite({ action: 'insert', table: 'execution_departments', branchId, row: { ...payload, is_active: true } })
+    if (!res.ok) { setErr(res.error ?? 'فشل الحفظ'); setSaving(false); return }
     setForm(null); load(); setSaving(false)
   }
 
   async function toggle(d: ExecDept) {
     if (!canModify) return
-    await createClient().from('execution_departments').update({ is_active: !d.is_active }).eq('id', d.id)
-    setDepts(ds => ds.map(x => x.id === d.id ? { ...x, is_active: !x.is_active } : x))
+    const res = await settingsWrite({ action: 'update', table: 'execution_departments', id: d.id, branchId, row: { is_active: !d.is_active } })
+    if (res.ok) setDepts(ds => ds.map(x => x.id === d.id ? { ...x, is_active: !x.is_active } : x))
   }
 
   async function del(d: ExecDept) {
     if (!canModify) return
-    await createClient().from('execution_departments').delete().eq('id', d.id)
-    setDeleting(null); load()
+    const res = await settingsWrite({ action: 'delete', table: 'execution_departments', id: d.id, branchId })
+    if (res.ok) { setDeleting(null); load() }
   }
 
   const getCourtName = (id: string | null) => courts.find(c => c.id === id)?.name ?? '—'
@@ -516,12 +523,15 @@ function TaskDefsTab() {
     const badField = editForm.dynFields.find(f => !f.field_label.trim())
     if (badField !== undefined) { setErr('تحقق من أسماء الحقول'); return }
     setSaving(true); setErr('')
-    const sb = createClient()
 
-    const { error: e1 } = await (sb as any).from('task_definitions')
-      .update({ label: editForm.label.trim(), fee_amount: Number(editForm.fee) || 0, is_active: editForm.isActive })
-      .eq('id', editing.id)
-    if (e1) { setErr(e1.message); setSaving(false); return }
+    const upd = await settingsWrite({
+      action: 'update',
+      table: 'task_definitions',
+      id: editing.id,
+      branchId,
+      row: { label: editForm.label.trim(), fee_amount: Number(editForm.fee) || 0, is_active: editForm.isActive },
+    })
+    if (!upd.ok) { setErr(upd.error ?? 'فشل الحفظ'); setSaving(false); return }
 
     const fieldsPayload = editForm.dynFields.map((f, i) => ({
       field_key: `field_${i}_${f.field_type}`,
@@ -531,35 +541,13 @@ function TaskDefsTab() {
       sort_order: i,
     }))
 
-    // Atomic replace via RPC when available; fallback keeps old fields if insert fails
-    const { error: rpcErr } = await (sb as any).rpc('replace_task_required_fields', {
-      p_definition_id: editing.id,
-      p_fields: fieldsPayload,
+    const fieldsRes = await settingsWrite({
+      action: 'replace_required_fields',
+      definitionId: editing.id,
+      branchId,
+      fields: fieldsPayload,
     })
-
-    if (rpcErr) {
-      // Fallback: snapshot → delete → insert → restore on failure
-      const { data: oldFields } = await (sb as any)
-        .from('task_required_fields')
-        .select('task_definition_id, field_key, field_type, field_label, is_required, sort_order')
-        .eq('task_definition_id', editing.id)
-
-      await (sb as any).from('task_required_fields').delete().eq('task_definition_id', editing.id)
-
-      if (fieldsPayload.length > 0) {
-        const { error: insErr } = await (sb as any).from('task_required_fields').insert(
-          fieldsPayload.map(f => ({ ...f, task_definition_id: editing.id })),
-        )
-        if (insErr) {
-          if (oldFields?.length) {
-            await (sb as any).from('task_required_fields').insert(oldFields)
-          }
-          setErr(insErr.message)
-          setSaving(false)
-          return
-        }
-      }
-    }
+    if (!fieldsRes.ok) { setErr(fieldsRes.error ?? 'فشل حفظ الحقول'); setSaving(false); return }
 
     setEditing(null); load(); setSaving(false)
   }
@@ -587,29 +575,45 @@ function TaskDefsTab() {
     const invalidField = addForm.dynFields.find(f => !f.field_label.trim())
     if (invalidField !== undefined) { setErr('تحقق من أسماء الحقول'); return }
     setSaving(true); setErr('')
-    const sb = createClient()
 
     const maxOrder = defs.length > 0 ? Math.max(...defs.map(d => d.sort_order)) + 1 : 0
-    const { data: newDef, error } = await (sb as any).from('task_definitions').insert({
-      label: addForm.label.trim(),
-      fee_amount: Number(addForm.fee) || 0,
-      is_active: true,
-      sort_order: maxOrder,
-      branch_id: branchId,
-    }).select('id').single()
-
-    if (error || !newDef) { setErr(error?.message ?? 'فشل الإنشاء'); setSaving(false); return }
+    const created = await settingsWrite({
+      action: 'insert',
+      table: 'task_definitions',
+      branchId,
+      row: {
+        label: addForm.label.trim(),
+        fee_amount: Number(addForm.fee) || 0,
+        is_active: true,
+        sort_order: maxOrder,
+        branch_id: branchId,
+      },
+    })
+    if (!created.ok || !created.row?.id) {
+      setErr(created.error ?? 'فشل الإنشاء')
+      setSaving(false)
+      return
+    }
 
     if (addForm.dynFields.length > 0) {
       const fieldsToInsert = addForm.dynFields.map((f, i) => ({
-        task_definition_id: newDef.id,
         field_key: `field_${i}_${f.field_type}`,
         field_type: f.field_type,
         field_label: f.field_label.trim(),
         is_required: f.is_required,
         sort_order: i,
       }))
-      await (sb as any).from('task_required_fields').insert(fieldsToInsert)
+      const fieldsRes = await settingsWrite({
+        action: 'replace_required_fields',
+        definitionId: created.row.id,
+        branchId,
+        fields: fieldsToInsert,
+      })
+      if (!fieldsRes.ok) {
+        setErr(fieldsRes.error ?? 'فشل حفظ الحقول')
+        setSaving(false)
+        return
+      }
     }
 
     setAdding(false); load(); setSaving(false)
@@ -617,8 +621,14 @@ function TaskDefsTab() {
 
   async function toggle(def: TaskDef) {
     if (readOnly) return
-    await (createClient() as any).from('task_definitions').update({ is_active: !def.is_active }).eq('id', def.id)
-    setDefs(ds => ds.map(d => d.id === def.id ? { ...d, is_active: !d.is_active } : d))
+    const res = await settingsWrite({
+      action: 'update',
+      table: 'task_definitions',
+      id: def.id,
+      branchId,
+      row: { is_active: !def.is_active },
+    })
+    if (res.ok) setDefs(ds => ds.map(d => d.id === def.id ? { ...d, is_active: !d.is_active } : d))
   }
 
   const defFields = (def: TaskDef) => (reqFields as ReqField[]).filter(f => f.task_definition_id === def.id)
@@ -900,24 +910,30 @@ function ExpenseTypesTab() {
       requires_gps: form.requires_gps,
       branch_id: branchId || null,
     }
-    const sb = createClient()
-    const { error } = editingId
-      ? await sb.from('expense_types').update(payload).eq('id', editingId)
-      : await sb.from('expense_types').insert({ ...payload, is_active: true })
-    if (error) { setErr(error.message); setSaving(false); return }
+    const res = editingId
+      ? await settingsWrite({ action: 'update', table: 'expense_types', id: editingId, branchId, row: payload })
+      : await settingsWrite({ action: 'insert', table: 'expense_types', branchId, row: { ...payload, is_active: true } })
+    if (!res.ok) { setErr(res.error ?? 'فشل الحفظ'); setSaving(false); return }
     setForm(null); load(); setSaving(false)
   }
 
   async function toggle(t: ExpenseType) {
     if (readOnly) return
-    await createClient().from('expense_types').update({ is_active: !t.is_active }).eq('id', t.id)
-    setTypes(ts => ts.map(x => x.id === t.id ? { ...x, is_active: !x.is_active } : x))
+    const res = await settingsWrite({
+      action: 'update',
+      table: 'expense_types',
+      id: t.id,
+      branchId,
+      row: { is_active: !t.is_active },
+    })
+    if (res.ok) setTypes(ts => ts.map(x => x.id === t.id ? { ...x, is_active: !x.is_active } : x))
   }
 
   async function del(t: ExpenseType) {
     if (readOnly) return
-    await createClient().from('expense_types').delete().eq('id', t.id)
-    setDeleting(null); load()
+    const res = await settingsWrite({ action: 'delete', table: 'expense_types', id: t.id, branchId })
+    if (res.ok) { setDeleting(null); load() }
+    else setErr(res.error ?? 'فشل الحذف')
   }
 
   function Toggle({ val, onChange }: { val: boolean; onChange: (v: boolean) => void }) {

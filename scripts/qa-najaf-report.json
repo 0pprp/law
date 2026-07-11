@@ -1,0 +1,31 @@
+{
+  "startedAt": "2026-07-11T20:19:30.431Z",
+  "branch": {
+    "id": "8fa487e8-f974-419e-9e74-87d333196abc",
+    "name": "النجف الأشرف"
+  },
+  "pass": true,
+  "phases": {
+    "cleanup": {
+      "status": "pass",
+      "checks": [
+        {
+          "pass": true,
+          "message": "removed only QA Najaf users and debtors",
+          "data": {
+            "qa_njf_users_left": 0,
+            "najaf_qa_debtors_left": 0
+          }
+        }
+      ],
+      "errors": []
+    }
+  },
+  "errors": [],
+  "data": {},
+  "cleanup": {
+    "qa_njf_users_left": 0,
+    "najaf_qa_debtors_left": 0
+  },
+  "finishedAt": "2026-07-11T20:20:14.563Z"
+}

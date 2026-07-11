@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { TASK_TYPE_LABELS, RECEIPT_TYPE_LABELS } from '@/lib/types'
@@ -17,8 +18,9 @@ import DebtorAccountPaymentButton from '@/components/DebtorAccountPaymentButton'
 import DebtorPaymentsPanel from '@/components/DebtorPaymentsPanel'
 import DebtorExpensesList from '@/components/DebtorExpensesList'
 import DebtorAttachmentsList from '@/components/DebtorAttachmentsList'
-import { canEditRecords, canReadAdminData, canAddPayments, isGeneralAccountant } from '@/lib/permissions'
+import { canEditRecords, canAddPayments } from '@/lib/permissions'
 import { fetchStaffRoleFields } from '@/lib/staff-profile'
+import { canStaffReadBranch } from '@/lib/staff-branch-access'
 import type { UserRole } from '@/lib/types'
 
 function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
@@ -41,22 +43,23 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const allowEdit = canEditRecords(userRole)
   const allowPayments = canAddPayments(userRole)
 
+  // المحاسب العام وغيره ممن يتجاوز فرعه: قراءة عبر service role لتفادي قيود RLS القديمة
+  const admin = createAdminClient()
+  const { data: debtorProbe } = await admin.from('debtors').select('id, branch_id').eq('id', id).maybeSingle()
+  if (!debtorProbe) notFound()
+  if (!canStaffReadBranch(profile, debtorProbe.branch_id)) notFound()
+
+  const db = canStaffReadBranch(profile, debtorProbe.branch_id) ? admin : supabase
+
   const [{ data: debtor }, { data: payments }, { data: expenses }, { data: files }, { data: taskRows }] = await Promise.all([
-    supabase.from('debtors').select('*, branch_list:branch_lists(name)').eq('id', id).single(),
-    supabase.from('debtor_payments').select('*').eq('debtor_id', id).order('payment_date', { ascending: false }),
-    supabase.from('expenses').select('*, task:tasks!expenses_task_id_fkey(task_type)').eq('debtor_id', id).order('expense_date', { ascending: false }),
-    supabase.from('debtor_attachments').select('id, file_name, file_path, file_size, mime_type, created_at').eq('debtor_id', id).order('created_at', { ascending: false }),
-    supabase.from('tasks').select('id').eq('debtor_id', id),
+    db.from('debtors').select('*, branch_list:branch_lists(name)').eq('id', id).single(),
+    db.from('debtor_payments').select('*').eq('debtor_id', id).order('payment_date', { ascending: false }),
+    db.from('expenses').select('*, task:tasks!expenses_task_id_fkey(task_type)').eq('debtor_id', id).order('expense_date', { ascending: false }),
+    db.from('debtor_attachments').select('id, file_name, file_path, file_size, mime_type, created_at').eq('debtor_id', id).order('created_at', { ascending: false }),
+    db.from('tasks').select('id').eq('debtor_id', id),
   ])
 
   if (!debtor) notFound()
-
-  const canCrossBranch = canReadAdminData(userRole) || isGeneralAccountant(userRole, profile?.accountant_type)
-  if (!canCrossBranch) {
-    if (!profile?.branch_id || debtor.branch_id !== profile.branch_id) {
-      notFound()
-    }
-  }
 
   const taskIds = (taskRows ?? []).map(t => t.id)
   const totalPaymentsSum = (payments ?? []).reduce((s, p) => s + Number(p.amount), 0)
@@ -111,7 +114,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
             <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} mono />
           </div>
         </Card>
-        <DebtorNotesPanel debtorId={id} />
+        <DebtorNotesPanel debtorId={id} profileNotes={debtor.notes} />
       </div>
     </div>
   )

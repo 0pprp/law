@@ -24,6 +24,13 @@ import { fetchBranchLists } from '@/lib/branch-lists'
 import type { BranchList } from '@/lib/branch-lists'
 import { canEditRecords } from '@/lib/permissions'
 import { appConfirm } from '@/lib/app-dialog'
+import {
+  findDuplicateReceiptInBranch,
+  isReceiptNumberMissing,
+  normalizeReceiptNumberInput,
+  RECEIPT_NUMBER_DUP_BRANCH_ERROR,
+  RECEIPT_NUMBER_EMPTY_ERROR,
+} from '@/lib/receipt-number'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
 
@@ -121,9 +128,30 @@ export default function EditDebtorPage() {
     e.preventDefault()
     if (readOnly) return
     setSaving(true); setError('')
+    const receiptNumber = normalizeReceiptNumberInput(form.receipt_number)
+    if (isReceiptNumberMissing(receiptNumber)) {
+      setError(RECEIPT_NUMBER_EMPTY_ERROR)
+      setSaving(false)
+      return
+    }
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
+
+    if (debtorBranchId) {
+      const dup = await findDuplicateReceiptInBranch(supabase, debtorBranchId, receiptNumber, id)
+      if (dup.error) {
+        setError(dup.error)
+        setSaving(false)
+        return
+      }
+      if (dup.duplicate) {
+        setError(RECEIPT_NUMBER_DUP_BRANCH_ERROR)
+        setSaving(false)
+        return
+      }
+    }
+
     const receiptRemaining = parseMoneyInput(form.remaining_amount)
     const receiptAmount = parseMoneyInput(form.receipt_amount)
     const penalty = form.has_contract ? parseMoneyInput(form.penalty_amount) : 0
@@ -131,7 +159,7 @@ export default function EditDebtorPage() {
     const updatePayload: Record<string, unknown> = {
       full_name: form.full_name, phone: form.phone || null, address: form.address || null,
       id_number: form.id_number || null,
-      receipt_type: form.receipt_type, receipt_number: form.receipt_number || null,
+      receipt_type: form.receipt_type, receipt_number: receiptNumber,
       receipt_amount: receiptAmount,
       lawyer_fees: parseMoneyInput(form.lawyer_fees),
       penalty_amount: penalty,
@@ -224,7 +252,7 @@ export default function EditDebtorPage() {
                   searchable={false}
                 />
               </FormField>
-              <FormField label={RECEIPT_NUMBER_LABEL}>
+              <FormField label={RECEIPT_NUMBER_LABEL} required>
                 <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={formInputClass} dir="ltr" />
               </FormField>
               <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`}>
