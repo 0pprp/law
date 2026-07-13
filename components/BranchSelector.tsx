@@ -6,6 +6,7 @@ import { useBranch } from '@/context/branch'
 import { fetchSelectableBranches } from '@/lib/branches-cache'
 import { isMainBranchName, pickDefaultBranch } from '@/lib/branch-constants'
 import { canPickAnyBranch, isGeneralAccountant } from '@/lib/permissions'
+import { refreshAdminNotifications } from '@/lib/admin-notifications'
 
 interface Branch {
   id: string
@@ -98,6 +99,7 @@ export default function BranchSelector({
       })
       if (res.ok) {
         setBranch(id, name)
+        refreshAdminNotifications()
         setOpen(false)
         setSearch('')
       }
@@ -117,6 +119,7 @@ export default function BranchSelector({
       })
       if (res.ok) {
         setViewAllBranches()
+        refreshAdminNotifications()
         setOpen(false)
         setSearch('')
       }

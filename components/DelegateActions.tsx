@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { readApiError } from '@/lib/read-api-error'
 
@@ -75,28 +76,34 @@ export default function DelegateActions({ userId, isActive, fullName, canDelete 
     setLoading(false)
   }
 
-  if (!canDelete) {
-    return <span className="text-[10px] text-[#767676]">—</span>
-  }
-
   return (
-    <div className="flex items-center gap-3">
-      <button
-        onClick={toggle}
-        disabled={loading}
-        className={`text-xs font-medium disabled:opacity-50 transition-colors ${
-          isActive ? 'text-orange-600 hover:text-orange-800' : 'text-green-600 hover:text-green-800'
-        }`}
+    <div className="flex items-center justify-center gap-2 flex-wrap">
+      <Link
+        href={`/admin/delegates/${userId}/edit`}
+        className="text-xs text-[#231F20] hover:text-[#2C8780] border border-[rgba(118,118,118,0.2)] hover:border-[#2C8780]/40 px-2.5 py-1.5 rounded-lg transition-colors"
       >
-        {loading ? '...' : isActive ? 'تعطيل' : 'تفعيل'}
-      </button>
-      <button
-        onClick={remove}
-        disabled={loading}
-        className="text-xs font-medium text-red-600 hover:text-red-800 disabled:opacity-50 transition-colors"
-      >
-        {loading ? '...' : 'حذف'}
-      </button>
+        تعديل
+      </Link>
+      {canDelete && (
+        <>
+          <button
+            onClick={toggle}
+            disabled={loading}
+            className={`text-xs font-medium disabled:opacity-50 transition-colors ${
+              isActive ? 'text-orange-600 hover:text-orange-800' : 'text-green-600 hover:text-green-800'
+            }`}
+          >
+            {loading ? '...' : isActive ? 'تعطيل' : 'تفعيل'}
+          </button>
+          <button
+            onClick={remove}
+            disabled={loading}
+            className="text-xs font-medium text-red-600 hover:text-red-800 disabled:opacity-50 transition-colors"
+          >
+            {loading ? '...' : 'حذف'}
+          </button>
+        </>
+      )}
     </div>
   )
 }

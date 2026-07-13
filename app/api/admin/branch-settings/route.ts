@@ -5,6 +5,10 @@ import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { canManageSettings, apiForbiddenResponse } from '@/lib/permissions'
 import { pickAllowedFields } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
+import {
+  normalizeBranchListName,
+  sanitizeBranchListDisplayName,
+} from '@/lib/branch-list-normalize'
 
 const ALLOWED = new Set([
   'task_definitions',
@@ -30,7 +34,7 @@ const COLUMNS: Record<string, readonly string[]> = {
   task_definition_expenses: [
     'task_definition_id', 'name', 'max_amount', 'sort_order',
   ],
-  branch_lists: ['name', 'branch_id', 'is_active'],
+  branch_lists: ['name', 'branch_id', 'is_active', 'normalized_name'],
 }
 
 type Body = {
@@ -128,20 +132,83 @@ export async function POST(request: NextRequest) {
   }
 
   if (action === 'insert') {
-    const row = pickAllowedFields(body.row, allowedCols)
+    let row = pickAllowedFields(body.row, allowedCols)
+    if (table === 'branch_lists') {
+      const name = sanitizeBranchListDisplayName(row.name)
+      const key = normalizeBranchListName(name)
+      if (!name || !key) return safeClientError('اسم القائمة غير صالح', 400)
+      const { data: conflict } = await admin
+        .from('branch_lists')
+        .select('id, name')
+        .eq('branch_id', String(row.branch_id ?? branchId))
+        .eq('normalized_name', key)
+        .maybeSingle()
+      // إن لم يوجد العمود بعد، نقارن في الذاكرة
+      if (!conflict) {
+        const { data: all } = await admin
+          .from('branch_lists')
+          .select('id, name')
+          .eq('branch_id', String(row.branch_id ?? branchId))
+        const hit = (all ?? []).find(l => normalizeBranchListName(l.name) === key)
+        if (hit) {
+          return safeClientError(`هذه القائمة موجودة مسبقاً باسم: ${hit.name}`, 409)
+        }
+      } else {
+        return safeClientError(`هذه القائمة موجودة مسبقاً باسم: ${conflict.name}`, 409)
+      }
+      row = { ...row, name, normalized_name: key }
+    }
     if (Object.keys(row).length === 0) return safeClientError('لا توجد حقول صالحة', 400)
     const { data, error } = await admin.from(table).insert(row).select('*').single()
-    if (error) return apiServerError('branch-settings:insert', error, 'فشل الحفظ')
+    if (error) {
+      if (table === 'branch_lists' && String(error.message ?? '').includes('normalized_name')) {
+        const { normalized_name: _n, ...without } = row
+        const retry = await admin.from(table).insert(without).select('*').single()
+        if (retry.error) return apiServerError('branch-settings:insert', retry.error, 'فشل الحفظ')
+        return NextResponse.json({ ok: true, row: retry.data })
+      }
+      return apiServerError('branch-settings:insert', error, 'فشل الحفظ')
+    }
     return NextResponse.json({ ok: true, row: data })
   }
 
   if (action === 'update') {
     const id = String(body.id ?? '').trim()
     if (!id) return safeClientError('معرّف الصف مطلوب', 400)
-    const row = pickAllowedFields(body.row, allowedCols)
+    let row = pickAllowedFields(body.row, allowedCols)
+    if (table === 'branch_lists' && row.name != null) {
+      const name = sanitizeBranchListDisplayName(row.name)
+      const key = normalizeBranchListName(name)
+      if (!name || !key) return safeClientError('اسم القائمة غير صالح', 400)
+      const branchForList = String(row.branch_id ?? branchId)
+      const { data: existing } = await admin.from('branch_lists').select('branch_id').eq('id', id).maybeSingle()
+      const bId = existing?.branch_id ?? branchForList
+      const { data: all } = await admin.from('branch_lists').select('id, name, normalized_name').eq('branch_id', bId)
+      const hit = (all ?? []).find(
+        l => l.id !== id && (
+          l.normalized_name === key || normalizeBranchListName(l.name) === key
+        ),
+      )
+      if (hit) {
+        return NextResponse.json({
+          error: `يوجد اسم مطابق. هل تريد دمج القائمتين؟`,
+          conflict: { id: hit.id, name: hit.name },
+          code: 'BRANCH_LIST_MERGE_REQUIRED',
+        }, { status: 409 })
+      }
+      row = { ...row, name, normalized_name: key }
+    }
     if (Object.keys(row).length === 0) return safeClientError('لا توجد حقول صالحة', 400)
     const { data, error } = await admin.from(table).update(row).eq('id', id).select('*').single()
-    if (error) return apiServerError('branch-settings:update', error, 'فشل الحفظ')
+    if (error) {
+      if (table === 'branch_lists' && String(error.message ?? '').includes('normalized_name')) {
+        const { normalized_name: _n, ...without } = row
+        const retry = await admin.from(table).update(without).eq('id', id).select('*').single()
+        if (retry.error) return apiServerError('branch-settings:update', retry.error, 'فشل الحفظ')
+        return NextResponse.json({ ok: true, row: retry.data })
+      }
+      return apiServerError('branch-settings:update', error, 'فشل الحفظ')
+    }
     return NextResponse.json({ ok: true, row: data })
   }
 

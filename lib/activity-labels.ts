@@ -34,6 +34,7 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   create_viewer: 'إضافة مسؤول قانونية',
   create_employee: 'إضافة موظف',
   update_lawyer_identity: 'تحديث بيانات محامي',
+  update_delegate: 'تعديل مندوب',
   upload_lawyer_file: 'رفع مستمسك محامي',
   delete_lawyer_file: 'حذف مستمسك محامي',
   deactivate_lawyer: 'تعطيل محامي',

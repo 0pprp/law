@@ -3,10 +3,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId } from '@/context/branch'
-import { fetchBranchLists, countDebtorsOnBranchList, unlinkDebtorsFromBranchList } from '@/lib/branch-lists'
+import { fetchBranchLists, countDebtorsOnBranchList, unlinkDebtorsFromBranchList, findConflictingBranchList } from '@/lib/branch-lists'
 import type { BranchList } from '@/lib/branch-lists'
+import {
+  normalizeBranchListName,
+  sanitizeBranchListDisplayName,
+} from '@/lib/branch-list-normalize'
 import { useAdminRole } from '@/context/admin-role'
 import { canAddBranchReferenceData, canModifyBranchReferenceData } from '@/lib/permissions'
+import { appConfirm } from '@/lib/app-dialog'
 
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/20 focus:border-[#2C8780] transition-all'
 
@@ -56,6 +61,8 @@ export default function BranchListsTab() {
   const [deleteDebtorCount, setDeleteDebtorCount] = useState(0)
   const [deleteLoading, setDeleteLoading] = useState(false)
 
+  const [mergeCandidate, setMergeCandidate] = useState<{ id: string; name: string } | null>(null)
+
   const load = useCallback(async () => {
     if (!branchId) {
       setLists([])
@@ -88,25 +95,97 @@ export default function BranchListsTab() {
     if (!branchId) return
     if (!canAdd) return
     if (editingId && !canModify) return
-    const name = form?.name.trim() ?? ''
+    const name = sanitizeBranchListDisplayName(form?.name ?? '')
     if (!name) { setErr('اسم القائمة مطلوب'); return }
+
+    const key = normalizeBranchListName(name)
+    if (!key) { setErr('اسم القائمة غير صالح'); return }
 
     setSaving(true)
     setErr('')
+    setMergeCandidate(null)
     const sb = createClient()
-    const payload = { name, branch_id: branchId }
+
+    const conflict = await findConflictingBranchList(sb, branchId, name, editingId ?? undefined)
+    if (conflict) {
+      if (!editingId) {
+        setErr(`هذه القائمة موجودة مسبقاً باسم: ${conflict.name}`)
+        setSaving(false)
+        return
+      }
+      // تعديل إلى اسم يطابق قائمة أخرى — لا دمج تلقائي
+      setMergeCandidate({ id: conflict.id, name: conflict.name })
+      setErr(`يوجد اسم مطابق. هل تريد دمج القائمتين؟ القائمة الموجودة: «${conflict.name}»`)
+      setSaving(false)
+      return
+    }
+
+    const payload: Record<string, unknown> = { name, branch_id: branchId, normalized_name: key }
     const { error } = editingId
-      ? await sb.from('branch_lists').update({ name }).eq('id', editingId)
+      ? await sb.from('branch_lists').update({ name, normalized_name: key }).eq('id', editingId)
       : await sb.from('branch_lists').insert(payload)
 
     if (error) {
-      setErr(error.code === '23505' ? 'اسم القائمة موجود مسبقاً في هذا الفرع' : error.message)
-      setSaving(false)
-      return
+      if (String(error.message ?? '').includes('normalized_name')) {
+        const legacy = editingId
+          ? await sb.from('branch_lists').update({ name }).eq('id', editingId)
+          : await sb.from('branch_lists').insert({ name, branch_id: branchId })
+        if (legacy.error) {
+          setErr(legacy.error.code === '23505'
+            ? `هذه القائمة موجودة مسبقاً`
+            : legacy.error.message)
+          setSaving(false)
+          return
+        }
+      } else {
+        setErr(error.code === '23505'
+          ? `هذه القائمة موجودة مسبقاً باسم مطابق`
+          : error.message)
+        setSaving(false)
+        return
+      }
     }
     setForm(null)
     setSaving(false)
     load()
+  }
+
+  async function confirmMergeIntoExisting() {
+    if (!editingId || !mergeCandidate || !canModify) return
+    const ok = await appConfirm({
+      title: 'دمج القائمتين؟',
+      message: `سيتم نقل كل المدينين والمندوبين من القائمة الحالية إلى «${mergeCandidate.name}» ثم حذف القائمة الحالية.\nلا يمكن التراجع.`,
+      confirmLabel: 'دمج',
+      danger: true,
+    })
+    if (!ok) return
+
+    setSaving(true)
+    setErr('')
+    try {
+      const res = await fetch('/api/admin/merge-branch-lists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          canonicalId: mergeCandidate.id,
+          duplicateIds: [editingId],
+          displayName: mergeCandidate.name,
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setErr(typeof json.error === 'string' ? json.error : 'فشل الدمج')
+        setSaving(false)
+        return
+      }
+      setForm(null)
+      setMergeCandidate(null)
+      setSaving(false)
+      load()
+    } catch {
+      setErr('فشل الاتصال')
+      setSaving(false)
+    }
   }
 
   async function openDelete(item: BranchList) {
@@ -201,10 +280,16 @@ export default function BranchListsTab() {
           onClose={() => setForm(null)}
           footer={(
             <>
-              <button type="button" onClick={() => setForm(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-white border border-[rgba(118,118,118,0.2)] text-[#767676]">إلغاء</button>
-              <button type="button" onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60" style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-                {saving ? 'جارٍ الحفظ...' : editingId ? 'حفظ' : 'إضافة'}
-              </button>
+              <button type="button" onClick={() => { setForm(null); setMergeCandidate(null) }} className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-white border border-[rgba(118,118,118,0.2)] text-[#767676]">إلغاء</button>
+              {mergeCandidate && editingId ? (
+                <button type="button" onClick={() => void confirmMergeIntoExisting()} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60">
+                  {saving ? 'جارٍ الدمج...' : 'دمج القائمتين'}
+                </button>
+              ) : (
+                <button type="button" onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60" style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
+                  {saving ? 'جارٍ الحفظ...' : editingId ? 'حفظ' : 'إضافة'}
+                </button>
+              )}
             </>
           )}
         >

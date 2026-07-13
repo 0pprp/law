@@ -91,6 +91,19 @@ async function resolveBranchList(branchId, listName) {
     .select('id, name')
     .eq('branch_id', branchId)
 
+  // Prefer normalized match (hamza / ال / digits)
+  const collapse = s => String(s ?? '').replace(/\s+/g, ' ').trim()
+  const soft = s => collapse(s)
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/[٠-٩]/g, d => '0123456789'['٠١٢٣٤٥٦٧٨٩'.indexOf(d)] ?? d)
+    .replace(/^ال/, '')
+    .replace(/[\s\-]+/g, '')
+
+  const target = soft(name)
+  const byNorm = (lists ?? []).find(l => soft(l.name) === target)
+  if (byNorm) return byNorm
+
   const exact = (lists ?? []).find(l => normName(l.name) === name)
   if (exact) return exact
 

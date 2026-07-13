@@ -1,9 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import {
+  normalizeBranchListName,
+  preferBranchListDisplayName,
+  sanitizeBranchListDisplayName,
+} from '@/lib/branch-list-normalize'
 
 export interface BranchList {
   id: string
   branch_id: string
   name: string
+  normalized_name?: string | null
   created_at: string
   updated_at: string
 }
@@ -18,11 +24,24 @@ export async function fetchBranchLists(
 ): Promise<BranchList[]> {
   const { data, error } = await supabase
     .from('branch_lists')
-    .select('id, branch_id, name, created_at, updated_at')
+    .select('id, branch_id, name, normalized_name, created_at, updated_at')
     .eq('branch_id', branchId)
     .order('name')
 
   if (error) {
+    // عمود normalized_name قد لا يكون مطبّقاً بعد
+    if (String(error.message ?? '').includes('normalized_name')) {
+      const fallback = await supabase
+        .from('branch_lists')
+        .select('id, branch_id, name, created_at, updated_at')
+        .eq('branch_id', branchId)
+        .order('name')
+      if (fallback.error) {
+        console.error('[fetchBranchLists]', fallback.error.message)
+        return []
+      }
+      return sortBranchListsByName(fallback.data ?? [])
+    }
     console.error('[fetchBranchLists]', error.message)
     return []
   }
@@ -58,45 +77,108 @@ export async function unlinkDebtorsFromBranchList(
   return { ok: true }
 }
 
-/** إيجاد قائمة بالاسم أو إنشاؤها داخل الفرع (للاستيراد) */
+async function findListByNormalized(
+  supabase: SupabaseClient,
+  branchId: string,
+  key: string,
+  excludeId?: string,
+): Promise<{ id: string; name: string } | null> {
+  if (!key) return null
+
+  // محاولة بالعمود إن وُجد
+  let q = supabase
+    .from('branch_lists')
+    .select('id, name, normalized_name')
+    .eq('branch_id', branchId)
+    .eq('normalized_name', key)
+  if (excludeId) q = q.neq('id', excludeId)
+  const byCol = await q.maybeSingle()
+  if (!byCol.error && byCol.data) return { id: byCol.data.id, name: byCol.data.name }
+
+  // احتياطي: مقارنة في الذاكرة
+  const { data: lists, error } = await supabase
+    .from('branch_lists')
+    .select('id, name')
+    .eq('branch_id', branchId)
+  if (error) {
+    console.error('[findListByNormalized]', error.message)
+    return null
+  }
+  const hit = (lists ?? []).find(
+    l => (!excludeId || l.id !== excludeId) && normalizeBranchListName(l.name) === key,
+  )
+  return hit ? { id: hit.id, name: hit.name } : null
+}
+
+/**
+ * إيجاد قائمة بالاسم المطبع أو إنشاؤها داخل الفرع (للاستيراد والإضافة).
+ * لا ينشئ مكرراً بسبب الهمزة / ال / المسافات / الأرقام.
+ */
 export async function findOrCreateBranchList(
   supabase: SupabaseClient,
   branchId: string,
   rawName: string,
 ): Promise<{ id: string; name: string } | null> {
-  const name = rawName.trim()
-  if (!name) return null
+  const displayName = sanitizeBranchListDisplayName(rawName)
+  if (!displayName) return null
+  const key = normalizeBranchListName(displayName)
+  if (!key) return null
 
-  const { data: existing } = await supabase
-    .from('branch_lists')
-    .select('id, name')
-    .eq('branch_id', branchId)
-    .eq('name', name)
-    .maybeSingle()
-
+  const existing = await findListByNormalized(supabase, branchId, key)
   if (existing) return existing
+
+  const payload: Record<string, unknown> = {
+    branch_id: branchId,
+    name: displayName,
+    normalized_name: key,
+  }
 
   const { data: created, error } = await supabase
     .from('branch_lists')
-    .insert({ branch_id: branchId, name })
+    .insert(payload)
     .select('id, name')
     .single()
 
   if (error) {
-    if (error.code === '23505') {
-      const { data: retry } = await supabase
+    if (String(error.message ?? '').includes('normalized_name')) {
+      const { data: createdLegacy, error: legacyErr } = await supabase
         .from('branch_lists')
+        .insert({ branch_id: branchId, name: displayName })
         .select('id, name')
-        .eq('branch_id', branchId)
-        .eq('name', name)
-        .maybeSingle()
-      return retry ?? null
+        .single()
+      if (legacyErr) {
+        if (legacyErr.code === '23505') {
+          return findListByNormalized(supabase, branchId, key)
+        }
+        console.error('[findOrCreateBranchList]', legacyErr.message)
+        return null
+      }
+      return createdLegacy
+    }
+    if (error.code === '23505') {
+      return findListByNormalized(supabase, branchId, key)
     }
     console.error('[findOrCreateBranchList]', error.message)
     return null
   }
   return created
 }
+
+/** نتيجة فحص تكرار عند الإضافة/التعديل */
+export async function findConflictingBranchList(
+  supabase: SupabaseClient,
+  branchId: string,
+  rawName: string,
+  excludeId?: string,
+): Promise<{ id: string; name: string; normalized_name: string } | null> {
+  const key = normalizeBranchListName(rawName)
+  if (!key) return null
+  const hit = await findListByNormalized(supabase, branchId, key, excludeId)
+  if (!hit) return null
+  return { ...hit, normalized_name: key }
+}
+
+export { normalizeBranchListName, preferBranchListDisplayName, sanitizeBranchListDisplayName }
 
 export async function resolveDebtorIdsByBranchList(
   supabase: SupabaseClient,

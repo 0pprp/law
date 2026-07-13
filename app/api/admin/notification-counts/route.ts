@@ -80,12 +80,27 @@ export async function GET() {
 
     const admin = createAdminClient()
 
+    // Align pendingReview with review page: assigned + open debtors only
+    let openDebtorsQ = admin
+      .from('debtors')
+      .select('id')
+      .eq('branch_id', branchId)
+      .not('case_status', 'eq', 'closed')
+    const { data: openDebtors } = await openDebtorsQ
+    const openIds = (openDebtors ?? []).map(d => d.id)
+
+    const reviewPromise = openIds.length
+      ? admin
+          .from('tasks')
+          .select('id', { count: 'exact', head: true })
+          .eq('branch_id', branchId)
+          .in('task_status', [...REVIEW_QUEUE_STATUSES])
+          .not('assigned_to', 'is', null)
+          .in('debtor_id', openIds)
+      : Promise.resolve({ count: 0 })
+
     const [reviewRes, payoutRes, feeReceiptCount, expenseCountRes] = await Promise.all([
-      admin
-        .from('tasks')
-        .select('id', { count: 'exact', head: true })
-        .eq('branch_id', branchId)
-        .in('task_status', [...REVIEW_QUEUE_STATUSES]),
+      reviewPromise,
       admin
         .from('lawyer_payout_requests')
         .select('id', { count: 'exact', head: true })

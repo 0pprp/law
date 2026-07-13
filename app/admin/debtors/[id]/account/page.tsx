@@ -18,10 +18,11 @@ import DebtorAccountPaymentButton from '@/components/DebtorAccountPaymentButton'
 import DebtorPaymentsPanel from '@/components/DebtorPaymentsPanel'
 import DebtorExpensesList from '@/components/DebtorExpensesList'
 import DebtorAttachmentsList from '@/components/DebtorAttachmentsList'
-import { canEditRecords, canAddPayments } from '@/lib/permissions'
+import { canAddDebtor, canAssignTasks, canEditRecords, canAddPayments } from '@/lib/permissions'
 import { fetchStaffRoleFields } from '@/lib/staff-profile'
 import { canStaffReadBranch } from '@/lib/staff-branch-access'
 import type { UserRole } from '@/lib/types'
+import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 
 function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
@@ -42,6 +43,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const userRole = (profile?.role ?? 'employee') as UserRole
   const allowEdit = canEditRecords(userRole)
   const allowPayments = canAddPayments(userRole)
+  const allowChangeTask = canAddDebtor(userRole) || canAssignTasks(userRole)
 
   // المحاسب العام وغيره ممن يتجاوز فرعه: قراءة عبر service role لتفادي قيود RLS القديمة
   const admin = createAdminClient()
@@ -189,7 +191,16 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
               <Badge variant="default">{RECEIPT_TYPE_LABELS[debtor.receipt_type as ReceiptType] ?? debtor.receipt_type}</Badge>
             </div>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-3 shrink-0 flex-wrap">
+            {allowChangeTask && (
+              <div className="[&_button]:text-white [&_button]:border-white/30 [&_button]:hover:border-white/60">
+                <ChangeDebtorTaskButton
+                  debtorId={id}
+                  branchId={debtor.branch_id ?? null}
+                  compact
+                />
+              </div>
+            )}
             {allowEdit && (
               <Link href={`/admin/debtors/${id}/edit`} className="text-xs text-white/70 border border-white/20 hover:border-white/40 px-3 py-1.5 rounded-lg transition-colors">تعديل البيانات</Link>
             )}

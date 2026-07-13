@@ -22,7 +22,8 @@ import { useAdminRole } from '@/context/admin-role'
 import BranchListSelect from '@/components/BranchListSelect'
 import { fetchBranchLists } from '@/lib/branch-lists'
 import type { BranchList } from '@/lib/branch-lists'
-import { canEditRecords } from '@/lib/permissions'
+import { canAddDebtor, canAssignTasks, canEditRecords } from '@/lib/permissions'
+import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import { appConfirm } from '@/lib/app-dialog'
 import {
   findDuplicateReceiptInBranch,
@@ -198,6 +199,7 @@ export default function EditDebtorPage() {
   )
 
   const readOnly = !canEditRecords(role)
+  const allowChangeTask = canAddDebtor(role) || canAssignTasks(role)
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -207,6 +209,15 @@ export default function EditDebtorPage() {
         breadcrumb={[{ label: 'المدينون', href: '/admin/debtors' }, { label: 'تعديل' }]}
       />
 
+      {allowChangeTask && debtorBranchId && (
+        <div className="rounded-xl border border-[#2C8780]/20 bg-[#2C8780]/5 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-[#231F20]">المهمة المطلوبة</p>
+            <p className="text-xs text-[#767676]">يمكن تغييرها قبل تكليف المهمة فقط</p>
+          </div>
+          <ChangeDebtorTaskButton debtorId={id} branchId={debtorBranchId} />
+        </div>
+      )}
       {readOnly && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
           عرض البيانات فقط — لا تملك صلاحية تعديل المدين.

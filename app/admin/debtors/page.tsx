@@ -18,9 +18,10 @@ import DebtorImportModal from '@/components/DebtorImportModal'
 import { BranchListFilterSelect } from '@/components/BranchListSelect'
 import { useBranchLists } from '@/hooks/use-branch-lists'
 import { useAdminRole } from '@/context/admin-role'
-import { canAddDebtor, canDelete, canEditRecords, canImportDebtors, isLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { canAddDebtor, canAssignTasks, canDelete, canEditRecords, canImportDebtors, isLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { appConfirm } from '@/lib/app-dialog'
 import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
+import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 
 const PAGE_SIZE = 50
 
@@ -51,6 +52,7 @@ export default function DebtorsPage() {
   const allowEdit = canEditRecords(role)
   const allowAdd = canAddDebtor(role)
   const allowImport = canImportDebtors(role)
+  const allowChangeTask = canAddDebtor(role) || canAssignTasks(role)
   const showEditLink = allowEdit || isLegalManager(role)
   const showDeleteBtn = allowDelete
   const showAddBtn = allowAdd
@@ -296,8 +298,15 @@ export default function DebtorsPage() {
                       </TD>
                       <TD><span className="text-xs" dir="ltr">{fmtDate(debtor.created_at)}</span></TD>
                       <TD>
-                        <div className="flex items-center justify-center gap-2">
+                        <div className="flex items-center justify-center gap-2 flex-wrap">
                           <Link href={`/admin/debtors/${debtor.id}/account`} className="text-xs text-[#231F20] hover:text-[#2C8780] border border-[rgba(118,118,118,0.2)] hover:border-[#2C8780]/40 px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap">كشف الحساب</Link>
+                          {allowChangeTask && (
+                            <ChangeDebtorTaskButton
+                              debtorId={debtor.id}
+                              branchId={branchId}
+                              compact
+                            />
+                          )}
                           {showEditLink && (
                             <Link href={`/admin/debtors/${debtor.id}/edit`} className="text-xs text-[#231F20] hover:text-[#2C8780] border border-[rgba(118,118,118,0.2)] hover:border-[#2C8780]/40 px-2.5 py-1.5 rounded-lg transition-colors">تعديل</Link>
                           )}
@@ -340,8 +349,11 @@ export default function DebtorsPage() {
                       <p className={`font-semibold text-xs ${Number(debtor.remaining_amount) > 0 ? 'text-red-600' : 'text-green-600'}`} dir="ltr">{fmtMoney(debtor.remaining_amount)}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Link href={`/admin/debtors/${debtor.id}/account`} className="flex-1 text-center text-xs text-[#231F20] border border-[rgba(118,118,118,0.2)] px-3 py-1.5 rounded-lg">كشف الحساب</Link>
+                    {allowChangeTask && (
+                      <ChangeDebtorTaskButton debtorId={debtor.id} branchId={branchId} compact />
+                    )}
                     {showEditLink && (
                       <Link href={`/admin/debtors/${debtor.id}/edit`} className="flex-1 text-center text-xs text-[#231F20] border border-[rgba(118,118,118,0.2)] px-3 py-1.5 rounded-lg">تعديل</Link>
                     )}

@@ -303,14 +303,14 @@ function useAdminNotifications(branchId: string | null) {
       return
     }
     try {
-      const next = await fetchAdminNotificationCounts(force)
+      const next = await fetchAdminNotificationCounts(force, branchId)
       setCounts(next)
     } catch {
       // Non-critical badge counts — ignore transient fetch failures
     }
   }, [branchId])
 
-  useEffect(() => { void load(false) }, [load])
+  useEffect(() => { void load(true) }, [load])
 
   useEffect(() => {
     const onRefresh = () => { void load(true) }

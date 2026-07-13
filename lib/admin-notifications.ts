@@ -16,6 +16,7 @@ export const ADMIN_NOTIFICATIONS_REFRESH = 'admin-notifications-refresh'
 export function refreshAdminNotifications() {
   cachedCounts = null
   cachedAt = 0
+  cachedBranchKey = null
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(ADMIN_NOTIFICATIONS_REFRESH))
   }
@@ -44,16 +45,27 @@ const EMPTY_COUNTS: AdminNotificationCounts = {
 
 let cachedCounts: AdminNotificationCounts | null = null
 let cachedAt = 0
+let cachedBranchKey: string | null = null
 let inflight: Promise<AdminNotificationCounts> | null = null
 const CLIENT_TTL_MS = 45_000
 
-export async function fetchAdminNotificationCounts(force = false): Promise<AdminNotificationCounts> {
+export async function fetchAdminNotificationCounts(
+  force = false,
+  branchKey: string | null = null,
+): Promise<AdminNotificationCounts> {
+  const key = branchKey ?? '__none__'
   const now = Date.now()
-  if (!force && cachedCounts && now - cachedAt < CLIENT_TTL_MS) {
+  if (
+    !force
+    && cachedCounts
+    && cachedBranchKey === key
+    && now - cachedAt < CLIENT_TTL_MS
+  ) {
     return cachedCounts
   }
-  if (inflight) return inflight
+  if (inflight && cachedBranchKey === key) return inflight
 
+  cachedBranchKey = key
   inflight = (async () => {
     try {
       const res = await fetch('/api/admin/notification-counts', { cache: 'no-store' })
