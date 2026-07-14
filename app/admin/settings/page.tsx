@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
+import { useBranchId, useBranch } from '@/context/branch'
+import { OPERATION_BRANCH_REQUIRED_MSG } from '@/components/OperationBranchSelect'
 import { REQUIRED_FIELD_LABELS } from '@/lib/types'
 import type { RequiredField } from '@/lib/types'
 import { APPROVED_BRANCH_NAMES, filterSelectableBranches } from '@/lib/branch-constants'
@@ -141,7 +142,7 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
   const branchId = useBranchId()
   const [courts, setCourts] = useState<Court[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState<{ name: string } | null>(null)
+  const [form, setForm] = useState<{ name: string; branch_id: string } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -158,18 +159,20 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
 
   useEffect(() => { load() }, [load])
 
-  function openAdd() { if (!canAdd) return; setForm({ name: '' }); setEditingId(null); setErr('') }
-  function openEdit(c: Court) { if (!canModify) return; setForm({ name: c.name }); setEditingId(c.id); setErr('') }
+  function openAdd() { if (!canAdd) return; setForm({ name: '', branch_id: branchId ?? '' }); setEditingId(null); setErr('') }
+  function openEdit(c: Court) { if (!canModify) return; setForm({ name: c.name, branch_id: c.branch_id ?? branchId ?? '' }); setEditingId(c.id); setErr('') }
 
   async function save() {
     if (!canAdd) return
     if (editingId && !canModify) return
     if (!form?.name.trim()) { setErr('اسم المحكمة مطلوب'); return }
+    const targetBranchId = branchId || form.branch_id
+    if (!targetBranchId) { setErr(OPERATION_BRANCH_REQUIRED_MSG); return }
     setSaving(true); setErr('')
-    const payload = { name: form.name.trim(), branch_id: branchId || null }
+    const payload = { name: form.name.trim(), branch_id: targetBranchId }
     const res = editingId
-      ? await settingsWrite({ action: 'update', table: 'courts', id: editingId, branchId, row: payload })
-      : await settingsWrite({ action: 'insert', table: 'courts', branchId, row: { ...payload, is_active: true } })
+      ? await settingsWrite({ action: 'update', table: 'courts', id: editingId, branchId: targetBranchId, row: payload })
+      : await settingsWrite({ action: 'insert', table: 'courts', branchId: targetBranchId, row: { ...payload, is_active: true } })
     if (!res.ok) { setErr(res.error ?? 'فشل الحفظ'); setSaving(false); return }
     setForm(null); load()
     setSaving(false)
@@ -248,6 +251,21 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
             <label className="block text-xs font-bold text-[#231F20] mb-1.5">اسم المحكمة <span className="text-red-500">*</span></label>
             <input value={form.name} onChange={e => setForm(f => f ? { ...f, name: e.target.value } : f)} className={INP} placeholder="مثال: محكمة بداءة البصرة" autoFocus />
           </div>
+          {!branchId && (
+            <div className="mt-3">
+              <label className="block text-xs font-bold text-[#231F20] mb-1.5">الفرع <span className="text-red-500">*</span></label>
+              <PremiumSelect
+                value={form.branch_id}
+                onChange={v => setForm(f => f ? { ...f, branch_id: v } : f)}
+                options={[
+                  { value: '', label: '— اختر الفرع —' },
+                  ...branches.map(b => ({ value: b.id, label: b.name })),
+                ]}
+                placeholder="اختر الفرع"
+              />
+              <p className="text-[11px] text-[#767676] mt-1">{OPERATION_BRANCH_REQUIRED_MSG}</p>
+            </div>
+          )}
           <ErrMsg msg={err} />
         </Modal>
       )}
@@ -270,7 +288,7 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
   const [depts, setDepts] = useState<ExecDept[]>([])
   const [courts, setCourts] = useState<Court[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState<{ name: string; court_id: string } | null>(null)
+  const [form, setForm] = useState<{ name: string; court_id: string; branch_id: string } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -305,18 +323,20 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
 
   useEffect(() => { load() }, [load])
 
-  function openAdd() { if (!canAdd) return; setForm({ name: '', court_id: '' }); setEditingId(null); setErr('') }
-  function openEdit(d: ExecDept) { if (!canModify) return; setForm({ name: d.name, court_id: d.court_id ?? '' }); setEditingId(d.id); setErr('') }
+  function openAdd() { if (!canAdd) return; setForm({ name: '', court_id: '', branch_id: branchId ?? '' }); setEditingId(null); setErr('') }
+  function openEdit(d: ExecDept) { if (!canModify) return; setForm({ name: d.name, court_id: d.court_id ?? '', branch_id: d.branch_id ?? branchId ?? '' }); setEditingId(d.id); setErr('') }
 
   async function save() {
     if (!canAdd) return
     if (editingId && !canModify) return
     if (!form?.name.trim()) { setErr('اسم الدائرة مطلوب'); return }
+    const targetBranchId = branchId || form.branch_id
+    if (!targetBranchId) { setErr(OPERATION_BRANCH_REQUIRED_MSG); return }
     setSaving(true); setErr('')
-    const payload = { name: form.name.trim(), court_id: form.court_id || null, branch_id: branchId || null }
+    const payload = { name: form.name.trim(), court_id: form.court_id || null, branch_id: targetBranchId }
     const res = editingId
-      ? await settingsWrite({ action: 'update', table: 'execution_departments', id: editingId, branchId, row: payload })
-      : await settingsWrite({ action: 'insert', table: 'execution_departments', branchId, row: { ...payload, is_active: true } })
+      ? await settingsWrite({ action: 'update', table: 'execution_departments', id: editingId, branchId: targetBranchId, row: payload })
+      : await settingsWrite({ action: 'insert', table: 'execution_departments', branchId: targetBranchId, row: { ...payload, is_active: true } })
     if (!res.ok) { setErr(res.error ?? 'فشل الحفظ'); setSaving(false); return }
     setForm(null); load(); setSaving(false)
   }
@@ -399,6 +419,21 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
             <label className="block text-xs font-bold text-[#231F20] mb-1.5">اسم الدائرة <span className="text-red-500">*</span></label>
             <input value={form.name} onChange={e => setForm(f => f ? { ...f, name: e.target.value } : f)} className={INP} placeholder="مثال: دائرة تنفيذ الرصافة" />
           </div>
+          {!branchId && (
+            <div>
+              <label className="block text-xs font-bold text-[#231F20] mb-1.5">الفرع <span className="text-red-500">*</span></label>
+              <PremiumSelect
+                value={form.branch_id}
+                onChange={v => setForm(f => f ? { ...f, branch_id: v } : f)}
+                options={[
+                  { value: '', label: '— اختر الفرع —' },
+                  ...branches.map(b => ({ value: b.id, label: b.name })),
+                ]}
+                placeholder="اختر الفرع"
+              />
+              <p className="text-[11px] text-[#767676] mt-1">{OPERATION_BRANCH_REQUIRED_MSG}</p>
+            </div>
+          )}
           <div>
             <PremiumSelect
               value={form.court_id}
@@ -1051,6 +1086,8 @@ const TABS: { id: Tab; label: string }[] = [
 ]
 
 export default function SettingsPage() {
+  const branchId = useBranchId()
+  const { viewAllBranches } = useBranch()
   const [tab, setTab] = useState<Tab>('courts')
   const [branches, setBranches] = useState<Branch[]>([])
 
@@ -1058,6 +1095,23 @@ export default function SettingsPage() {
     createClient().from('branches').select('id, name, city').eq('is_active', true).in('name', [...APPROVED_BRANCH_NAMES]).order('name')
       .then(({ data }) => setBranches(filterSelectableBranches(data ?? [])))
   }, [])
+
+  if (viewAllBranches || !branchId) {
+    return (
+      <div className="space-y-5 max-w-5xl">
+        <div>
+          <h1 className="text-xl font-black text-[#231F20]">إعدادات الفرع</h1>
+          <p className="text-sm text-[#767676] mt-0.5">إدارة المحاكم والمهام والصرفيات</p>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 text-amber-950 text-sm rounded-xl px-4 py-4">
+          <p className="font-bold mb-1">حدّد الفرع لتتمكن من الوصول إلى هنا</p>
+          <p className="text-amber-900/80">
+            إعدادات الفرع خاصة بكل فرع على حدة. اختر فرعاً محدداً من القائمة العلوية (وليس «الكل») لعرض وتعديل المحاكم والمهام والقوائم والصرفيات.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-5 max-w-5xl">

@@ -94,7 +94,7 @@ export default function NewTaskPage() {
       due_date: form.due_date || null,
       admin_notes: form.admin_notes || null,
       case_id: null,
-      branch_id: branchId,
+      branch_id: branchId || (selectedDebtor as { branch_id?: string | null } | null)?.branch_id || null,
     }).select('id').single()
     if (dbError || !newTask) { setError(dbError?.message ?? 'فشل إنشاء المهمة'); setSaving(false); return }
     await supabase.from('debtors').update({ current_task_id: newTask.id }).eq('id', form.debtor_id)

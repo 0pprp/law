@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireMutationStaff, requireStaffProfile } from '@/lib/api-auth'
 import { canStaffReadBranch, canStaffWriteBranch } from '@/lib/staff-branch-access'
-import { canAddDebtor } from '@/lib/permissions'
+import { canAddDebtor, canUseViewAllBranchesFilter } from '@/lib/permissions'
 import { apiForbiddenResponse } from '@/lib/permissions'
 import { isMainBranchName } from '@/lib/branch-constants'
 import {
@@ -16,7 +16,7 @@ import { computeDebtorRequiredAmount, computeRemainingFromRequired } from '@/lib
 import { logActivity } from '@/lib/activity-log'
 
 const DEFAULT_COLS =
-  'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, branch_list_id, branch_list:branch_lists(name)'
+  'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, branch_list_id, branch_id, branch_list:branch_lists(name)'
 
 export async function GET(request: NextRequest) {
   const auth = await requireStaffProfile()
@@ -24,16 +24,20 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url)
   const branchId = searchParams.get('branchId')?.trim() || null
+  const viewAll = searchParams.get('viewAll') === '1'
   const listId = searchParams.get('listId')?.trim() || ''
   const search = searchParams.get('search')?.trim() || ''
   const offset = Math.max(0, Number(searchParams.get('offset') ?? 0) || 0)
   const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') ?? 50) || 50))
   const cols = searchParams.get('cols')?.trim() || DEFAULT_COLS
 
-  if (!branchId) {
+  if (viewAll) {
+    if (!canUseViewAllBranchesFilter(auth.profile?.role, auth.profile?.accountant_type)) {
+      return apiForbiddenResponse()
+    }
+  } else if (!branchId) {
     return NextResponse.json({ error: 'معرّف الفرع مطلوب' }, { status: 400 })
-  }
-  if (!canStaffReadBranch(auth.profile, branchId)) {
+  } else if (!canStaffReadBranch(auth.profile, branchId)) {
     return apiForbiddenResponse()
   }
 
@@ -41,10 +45,10 @@ export async function GET(request: NextRequest) {
   let q = admin
     .from('debtors')
     .select(cols, { count: 'exact' })
-    .eq('branch_id', branchId)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
+  if (!viewAll && branchId) q = q.eq('branch_id', branchId)
   if (listId) q = q.eq('branch_list_id', listId)
   if (search) {
     const s = search.replace(/[%_,]/g, '')
@@ -53,7 +57,23 @@ export async function GET(request: NextRequest) {
 
   const { data, count, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ debtors: data ?? [], total: count ?? 0 })
+
+  let debtors = (data ?? []) as unknown as Array<Record<string, unknown> & { branch_id?: string | null }>
+  if (viewAll && debtors.length) {
+    const branchIds = [...new Set(
+      debtors.map(d => d.branch_id).filter(Boolean),
+    )] as string[]
+    if (branchIds.length) {
+      const { data: branches } = await admin.from('branches').select('id, name').in('id', branchIds)
+      const nameMap = new Map((branches ?? []).map(b => [b.id, b.name]))
+      debtors = debtors.map(d => ({
+        ...d,
+        branch_name: d.branch_id ? nameMap.get(d.branch_id) ?? null : null,
+      }))
+    }
+  }
+
+  return NextResponse.json({ debtors, total: count ?? 0 })
 }
 
 export async function POST(request: NextRequest) {

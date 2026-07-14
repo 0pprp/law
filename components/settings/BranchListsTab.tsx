@@ -223,7 +223,7 @@ export default function BranchListsTab() {
   if (!branchId) {
     return (
       <p className="text-sm text-[#767676] bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-        اختر فرعاً من القائمة العلوية لإدارة قوائمه.
+        حدّد الفرع لتتمكن من الوصول إلى هنا.
       </p>
     )
   }

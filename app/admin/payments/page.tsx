@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
+import { useBranch, useBranchId } from '@/context/branch'
+import {
+  OperationBranchSelect,
+  OPERATION_BRANCH_REQUIRED_MSG,
+  useOperationBranch,
+} from '@/components/OperationBranchSelect'
 import { logActivity } from '@/lib/activity-log'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
@@ -30,6 +35,14 @@ const INP = formInputClass
 
 export default function PaymentsPage() {
   const branchId = useBranchId()
+  const { viewAllBranches } = useBranch()
+  const {
+    needsPick,
+    effectiveBranchId,
+    pickedId,
+    setPickedBranch,
+    validateOperationBranch,
+  } = useOperationBranch()
   const role = useAdminRole()
   const allowAdd = canAddPayments(role)
   const allowEdit = canEditRecords(role)
@@ -159,6 +172,8 @@ export default function PaymentsPage() {
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (!allowAdd) { setError(PERMISSION_DENIED_MSG); return }
+    const branchErr = validateOperationBranch()
+    if (branchErr) { setError(branchErr); return }
     if (!form.debtor_id || !form.amount || parseMoneyInput(form.amount) <= 0) {
       setError('يرجى اختيار المدين وإدخال مبلغ صحيح')
       return
@@ -175,7 +190,7 @@ export default function PaymentsPage() {
       payment_date: paymentDate,
       notes: form.notes || null,
       created_by: user.id,
-      ...(branchId ? { branch_id: branchId } : {}),
+      branch_id: effectiveBranchId,
     })
     if (dbErr) { setError(dbErr.message); setSaving(false); return }
     const syncResult = await syncDebtorRemainingAfterPayments(supabase, form.debtor_id)
@@ -242,13 +257,19 @@ export default function PaymentsPage() {
         <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-5">
           <h2 className="font-bold text-[#231F20] mb-4 pb-3 border-b border-[rgba(118,118,118,0.1)]">تسجيل تسديد جديد</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {needsPick && (
+              <OperationBranchSelect
+                value={pickedId}
+                onChange={(id, name) => setPickedBranch(id, name)}
+              />
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <FormField label="المدينة / المدين" required hint="اكتب للبحث — لا تُحمّل كل المدينين">
                 <DebtorSearchPicker
                   value={form.debtor_id}
                   onChange={handleDebtorPick}
-                  branchId={branchId}
-                  disabled={!branchId}
+                  branchId={effectiveBranchId}
+                  disabled={!effectiveBranchId}
                 />
               </FormField>
               <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`} required>

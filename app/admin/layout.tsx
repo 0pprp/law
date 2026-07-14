@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import AdminShell from '@/components/AdminShell'
 import { BRANCH_COOKIE, BRANCH_COOKIE_ALL } from '@/lib/branch-context'
 import { isMainBranchName } from '@/lib/branch-constants'
-import { canReadAllBranches, isGeneralAccountant } from '@/lib/permissions'
+import { canReadAllBranches, canUseViewAllBranchesFilter, isGeneralAccountant } from '@/lib/permissions'
 import { fetchStaffProfile } from '@/lib/staff-profile'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -22,7 +22,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!role) redirect('/login')
 
   const canPickBranch = canReadAllBranches(role, profile?.accountant_type)
-  const allowViewAll = isGeneralAccountant(role, profile?.accountant_type)
+  const allowViewAll = canUseViewAllBranchesFilter(role, profile?.accountant_type)
+  const defaultToAll = isGeneralAccountant(role, profile?.accountant_type)
 
   let initialBranchId: string | null = null
   let initialBranchName: string | null = null
@@ -31,7 +32,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (canPickBranch) {
     const cookieStore = await cookies()
     const raw = cookieStore.get(BRANCH_COOKIE)?.value ?? null
-    if (raw === BRANCH_COOKIE_ALL || (allowViewAll && !raw)) {
+    if (raw === BRANCH_COOKIE_ALL) {
+      if (allowViewAll) {
+        initialBranchId = null
+        initialBranchName = null
+        initialViewAll = true
+      }
+    } else if (defaultToAll && !raw) {
       initialBranchId = null
       initialBranchName = null
       initialViewAll = true
@@ -46,7 +53,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       if (isMainBranchName(initialBranchName)) {
         initialBranchId = null
         initialBranchName = null
-        initialViewAll = allowViewAll
+        initialViewAll = allowViewAll && defaultToAll
       }
     }
   } else {

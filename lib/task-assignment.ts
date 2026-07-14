@@ -373,6 +373,8 @@ export interface FetchCurrentBranchTasksOptions {
   assigned?: boolean
   overdue?: boolean
   taskDefinitionId?: string | null
+  /** عند «الكل»: عدة تعريفات بنفس الاسم عبر الفروع */
+  taskDefinitionIds?: string[] | null
   branchListId?: string | null
   debtorIds?: string[] | null
   offset?: number
@@ -468,7 +470,9 @@ function applyCurrentTaskListFilters(
   let query = q
   if (options?.debtorIds?.length) query = query.in('id', options.debtorIds)
   if (options?.branchListId) query = query.eq('branch_list_id', options.branchListId)
-  if (options?.taskDefinitionId) {
+  if (options?.taskDefinitionIds?.length) {
+    query = query.in('current_task.task_definition_id', options.taskDefinitionIds)
+  } else if (options?.taskDefinitionId) {
     query = query.eq('current_task.task_definition_id', options.taskDefinitionId)
   }
   if (options?.overdue) {
@@ -552,7 +556,7 @@ async function countCurrentTasksByAssignment(
   supabase: SupabaseClient,
   branchId: string | null,
   assigned: boolean,
-  options?: Pick<FetchCurrentBranchTasksOptions, 'debtorIds' | 'taskDefinitionId' | 'branchListId'>,
+  options?: Pick<FetchCurrentBranchTasksOptions, 'debtorIds' | 'taskDefinitionId' | 'taskDefinitionIds' | 'branchListId'>,
 ): Promise<number> {
   let q = supabase
     .from('debtors')
@@ -575,7 +579,7 @@ async function countCurrentTasksByAssignment(
 async function countOverdueTasks(
   supabase: SupabaseClient,
   branchId: string | null,
-  options?: Pick<FetchCurrentBranchTasksOptions, 'debtorIds' | 'taskDefinitionId' | 'branchListId'>,
+  options?: Pick<FetchCurrentBranchTasksOptions, 'debtorIds' | 'taskDefinitionId' | 'taskDefinitionIds' | 'branchListId'>,
 ): Promise<number> {
   let q = supabase
     .from('debtors')
@@ -725,6 +729,23 @@ export async function fetchDashboardData(
       sortOrder: def?.sort_order ?? 999,
       count,
     })
+  }
+
+  // عند كل الفروع: اجمع المراحل بنفس الاسم حتى لا تتكرر صناديق الفلترة
+  if (!branchId && stages.length > 1) {
+    const byLabel = new Map<string, UnassignedStageCount>()
+    for (const s of stages) {
+      const key = s.label.trim().toLowerCase() || s.id
+      const prev = byLabel.get(key)
+      if (!prev) {
+        byLabel.set(key, { ...s })
+      } else {
+        prev.count += s.count
+        if (s.sortOrder < prev.sortOrder) prev.sortOrder = s.sortOrder
+      }
+    }
+    stages.length = 0
+    stages.push(...byLabel.values())
   }
 
   stages.sort((a, b) => a.sortOrder - b.sortOrder)

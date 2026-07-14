@@ -3,7 +3,7 @@ import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { BRANCH_COOKIE, BRANCH_COOKIE_ALL } from '@/lib/branch-context'
 import { isMainBranchName } from '@/lib/branch-constants'
-import { canReadAllBranches, isGeneralAccountant } from '@/lib/permissions'
+import { canReadAllBranches, canUseViewAllBranchesFilter } from '@/lib/permissions'
 import { fetchStaffRoleFields } from '@/lib/staff-profile'
 
 export async function POST(req: Request) {
@@ -26,7 +26,7 @@ export async function POST(req: Request) {
     const cookieStore = await cookies()
 
     if (viewAll) {
-      if (!isGeneralAccountant(profile.role, profile.accountant_type)) {
+      if (!canUseViewAllBranchesFilter(profile.role, profile.accountant_type)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
       }
       cookieStore.set(BRANCH_COOKIE, BRANCH_COOKIE_ALL, {

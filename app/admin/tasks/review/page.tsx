@@ -22,7 +22,7 @@ import { buildCompletionFieldLabelMap, resolveCompletionFieldLabel } from '@/lib
 import { useAdminRole } from '@/context/admin-role'
 import { canReadAdminData, canReviewTasks } from '@/lib/permissions'
 
-interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number }
+interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number; branch_id?: string | null }
 
 function parseGps(val: string): { lat: number; lng: number } | null {
   if (!val) return null
@@ -127,6 +127,10 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
   const newGps = extractGpsFromCompletion(task.completion_data as Record<string, string>, gpsKeys)
   const hasExistingGps = debtor?.latitude != null && debtor?.longitude != null
   const showGpsUpdate = hasExistingGps && newGps != null
+  // عند «الكل»: اعرض مهام فرع هذه القضية فقط حتى لا تتكرر الأنواع
+  const scopedDefs = task.branch_id
+    ? taskDefs.filter(d => !d.branch_id || d.branch_id === task.branch_id)
+    : taskDefs
 
   async function proceedWithTransition(action: 'next' | 'close') {
     if (action === 'next' && !nextTaskId) {
@@ -183,14 +187,14 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
             <PremiumSelect
               value={nextTaskId}
               onChange={v => { setNextTaskId(v); setError('') }}
-              options={taskDefs.map(def => ({
+              options={scopedDefs.map(def => ({
                 value: def.id,
                 label: def.label,
                 hint: def.fee_amount ? `${Number(def.fee_amount).toLocaleString('en-US')} د.ع أتعاب` : undefined,
               }))}
               placeholder="— اختر المهمة التالية —"
               headerTitle="المهمة اللاحقة"
-              headerSubtitle={`${taskDefs.length} مهمة متاحة`}
+              headerSubtitle={`${scopedDefs.length} مهمة متاحة`}
               searchPlaceholder="بحث في المهام..."
             />
             <button
@@ -556,7 +560,7 @@ export default function TaskReviewPage() {
   useEffect(() => {
     const loadDefs = async () => {
       const supabase = createClient()
-      const data = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, sort_order, fee_amount')
+      const data = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, sort_order, fee_amount, branch_id')
       setTaskDefs(data as unknown as TaskDef[])
     }
     loadDefs()

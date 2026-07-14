@@ -15,7 +15,7 @@ import { taskOverdueDays } from '@/lib/local-date'
 import { fetchAssignmentLawyers, fetchBranchDelegates } from '@/lib/branch-profiles'
 import { isFindAddressTaskType } from '@/lib/delegate'
 import { formatErrorMessage } from '@/lib/format-error'
-import { scheduleBranchMaintenance } from '@/lib/branch-maintenance'
+import { ensureAutoAcceptAllAssignments, scheduleBranchMaintenance } from '@/lib/branch-maintenance'
 import { cacheGet, cacheSet, CACHE_TTL } from '@/lib/query-cache'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
@@ -25,7 +25,7 @@ import { fmtDate } from '@/lib/utils'
 import Link from 'next/link'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
-import { fetchActiveTaskDefinitions } from '@/lib/task-definitions'
+import { fetchActiveTaskDefinitions, dedupeTaskDefinitionsByLabel, expandTaskDefinitionIdsByLabel } from '@/lib/task-definitions'
 import { DatePicker } from '@/components/ui/date-picker'
 import { useAdminRole } from '@/context/admin-role'
 import { canAssignTasks } from '@/lib/permissions'
@@ -88,9 +88,10 @@ export default function TasksPage() {
 
   useEffect(() => {
     setFilterListId('')
+    setFilterDef('')
     setSearch('')
     setDebouncedSearch('')
-  }, [branchId])
+  }, [branchId, viewAllBranches])
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkLawyerId, setBulkLawyerId] = useState('')
@@ -101,6 +102,8 @@ export default function TasksPage() {
   const lawyersRef = useRef(lawyers)
   const delegatesRef = useRef(delegates)
   const taskDefsRef = useRef(taskDefs)
+  /** كل تعريفات الفروع (قبل إزالة التكرار) لتوسيع فلتر الاسم عند «الكل» */
+  const allTaskDefsRef = useRef<{ id: string; label: string }[]>([])
   lawyersRef.current = lawyers
   delegatesRef.current = delegates
   taskDefsRef.current = taskDefs
@@ -117,6 +120,7 @@ export default function TasksPage() {
       setLawyers([])
       setDelegates([])
       setTaskDefs([])
+      allTaskDefsRef.current = []
       setTotal(0)
       setUnassignedTotal(0)
       setAssignedTotal(0)
@@ -150,6 +154,8 @@ export default function TasksPage() {
       setLoadingMore(true)
     }
 
+    // موافقة تلقائية لكل الفروع أولاً ثم backfill للفرع الحالي
+    await ensureAutoAcceptAllAssignments()
     scheduleBranchMaintenance(supabase, branchId)
 
     try {
@@ -162,20 +168,35 @@ export default function TasksPage() {
         setTotal(0)
         setUnassignedTotal(0)
         setAssignedTotal(0)
-      setOverdueTotal(0)
+        setOverdueTotal(0)
         setPageOffset(0)
         setLoading(false)
         setLoadingMore(false)
         return
       }
 
-      const [defs, page, lawyersResult, delegatesResult] = await Promise.all([
-        append ? Promise.resolve(null) : fetchActiveTaskDefinitions(supabase, branchId, 'id, label'),
+      let defsForFilter = allTaskDefsRef.current
+      let displayDefs: { id: string; label: string }[] | null = null
+      if (!append) {
+        const raw = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label') as { id: string; label: string }[]
+        defsForFilter = raw
+        allTaskDefsRef.current = raw
+        displayDefs = viewAllBranches ? dedupeTaskDefinitionsByLabel(raw) : raw
+      }
+
+      const defFilterIds = filterDef
+        ? (viewAllBranches
+          ? expandTaskDefinitionIdsByLabel(defsForFilter, filterDef)
+          : [filterDef])
+        : null
+
+      const [page, lawyersResult, delegatesResult] = await Promise.all([
         fetchCurrentBranchTaskRowsPaginated(supabase, branchId, {
           assigned: taskView === 'assigned' ? true : taskView === 'waiting' ? false : undefined,
           overdue: taskView === 'overdue',
-          taskDefinitionId: filterDef || null,
-          branchListId: filterListId || null,
+          taskDefinitionId: (!viewAllBranches && filterDef) ? filterDef : null,
+          taskDefinitionIds: (viewAllBranches && defFilterIds?.length) ? defFilterIds : null,
+          branchListId: (!viewAllBranches && filterListId) ? filterListId : null,
           debtorIds,
           offset,
           limit: CURRENT_TASK_PAGE_SIZE,
@@ -198,7 +219,7 @@ export default function TasksPage() {
         const delegateList = delegatesResult
           ? delegatesResult.delegates
           : delegatesRef.current
-        const defsList = (defs as { id: string; label: string }[] | null) ?? taskDefsRef.current
+        const defsList = displayDefs ?? taskDefsRef.current
 
         cacheSet(cacheKey, {
           tasks: nextTasks,
@@ -213,7 +234,7 @@ export default function TasksPage() {
 
         if (lawyersResult) setLawyers(lawyerList)
         if (delegatesResult) setDelegates(delegateList)
-        if (defs) setTaskDefs(defsList)
+        if (displayDefs) setTaskDefs(defsList)
 
         return nextTasks
       })
@@ -429,12 +450,14 @@ export default function TasksPage() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <BranchListFilterSelect
-          value={filterListId}
-          onChange={setFilterListId}
-          lists={branchLists}
-        />
+      <div className={`grid grid-cols-1 gap-3 ${viewAllBranches ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+        {!viewAllBranches && (
+          <BranchListFilterSelect
+            value={filterListId}
+            onChange={setFilterListId}
+            lists={branchLists}
+          />
+        )}
         <PremiumSelect
           value={filterDef}
           onChange={setFilterDef}
@@ -566,7 +589,7 @@ export default function TasksPage() {
                 <TH>المدين</TH>
                 {!isOverdueView && <TH>الهاتف</TH>}
                 <TH>نوع المهمة</TH>
-                {isOverdueView && <TH>الفرع</TH>}
+                {isOverdueView || viewAllBranches ? <TH>الفرع</TH> : null}
                 {isOverdueView && <TH>القائمة</TH>}
                 {(taskView === 'assigned' || isOverdueView) && <TH>المكلّف</TH>}
                 {!isOverdueView && <TH>تاريخ إنشاء المهمة</TH>}
@@ -597,7 +620,7 @@ export default function TasksPage() {
                   </TD>
                   {!isOverdueView && <TD><span dir="ltr">{t.debtorPhone ?? '—'}</span></TD>}
                   <TD>{t.taskLabel}</TD>
-                  {isOverdueView && (
+                  {(isOverdueView || viewAllBranches) && (
                     <TD>{t.branchName ?? '—'}</TD>
                   )}
                   {isOverdueView && (

@@ -188,11 +188,13 @@ export default function ReportsPage() {
             />
           </div>
           <div>
-            <BranchListFilterSelect
-              value={draft.branchListId}
-              onChange={v => d('branchListId', v)}
-              lists={branchLists}
-            />
+            {!viewAllBranches && (
+              <BranchListFilterSelect
+                value={draft.branchListId}
+                onChange={v => d('branchListId', v)}
+                lists={branchLists}
+              />
+            )}
           </div>
         </div>
         <div className="flex gap-3">

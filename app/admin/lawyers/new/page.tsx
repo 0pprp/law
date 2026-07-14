@@ -8,10 +8,14 @@ import { logActivity } from '@/lib/activity-log'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
-import { useBranchId, useBranch } from '@/context/branch'
 import { useAdminRole } from '@/context/admin-role'
 import { canCreateLawyerUser, isLegalManager } from '@/lib/permissions'
 import { isMainBranchName } from '@/lib/branch-constants'
+import {
+  OperationBranchSelect,
+  OPERATION_BRANCH_REQUIRED_MSG,
+  useOperationBranch,
+} from '@/components/OperationBranchSelect'
 import { USER_ROLE_LABELS } from '@/lib/types'
 import type { UserRole } from '@/lib/types'
 import { PremiumSelect } from '@/components/ui/premium-select'
@@ -49,8 +53,14 @@ function formatSize(bytes: number) {
 
 export default function NewLawyerPage() {
   const router = useRouter()
-  const branchId = useBranchId()
-  const { branchName } = useBranch()
+  const {
+    needsPick,
+    effectiveBranchId: branchId,
+    effectiveBranchName: branchName,
+    pickedId,
+    setPickedBranch,
+    validateOperationBranch,
+  } = useOperationBranch()
   const role = useAdminRole()
   const readOnly = !canCreateLawyerUser(role)
   const legalOfficerMode = isLegalManager(role)
@@ -88,8 +98,9 @@ export default function NewLawyerPage() {
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (readOnly) return
-    if (!branchId || isMainBranchName(branchName)) {
-      setError('يجب اختيار فرعاً رسمياً من القائمة العلوية قبل إضافة مستخدم')
+    const branchErr = validateOperationBranch()
+    if (branchErr) {
+      setError(branchErr)
       return
     }
     if (!form.phone.trim()) {
@@ -169,6 +180,14 @@ export default function NewLawyerPage() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
+        {needsPick && (
+          <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] p-4">
+            <OperationBranchSelect
+              value={pickedId}
+              onChange={(id, name) => setPickedBranch(id, name)}
+            />
+          </div>
+        )}
         {branchId && branchName && !isMainBranchName(branchName) ? (
           <p className="text-xs text-[#767676] bg-[#F3F1F2] rounded-lg px-3 py-2">
             الفرع / المحافظة: <span className="font-bold text-[#231F20]">{branchName}</span>
@@ -188,7 +207,7 @@ export default function NewLawyerPage() {
           </p>
         ) : (
           <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
-            اختر فرعاً من القائمة العلوية قبل إضافة مستخدم.
+            {OPERATION_BRANCH_REQUIRED_MSG}
           </div>
         )}
 

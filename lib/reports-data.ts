@@ -287,7 +287,30 @@ async function fetchStageCounts(
     offset += CHUNK
   }
 
-  return { stageCounts: Array.from(stageMap.values()), totalActive }
+  let stageCounts = Array.from(stageMap.values())
+
+  // عند كل الفروع: دمج المراحل بنفس الاسم حتى لا تتكرر الصفوف
+  if (!branchId) {
+    const byLabel = new Map<string, { id: string; label: string; active: number; stalled: number; sort: number }>()
+    const sortById = new Map(taskDefs.map(d => [d.id, d.sort_order ?? 999]))
+    for (const s of stageCounts) {
+      const key = s.label.trim().toLowerCase() || s.id
+      const prev = byLabel.get(key)
+      if (!prev) {
+        byLabel.set(key, { ...s, sort: sortById.get(s.id) ?? 999 })
+      } else {
+        prev.active += s.active
+        prev.stalled += s.stalled
+        const sort = sortById.get(s.id) ?? 999
+        if (sort < prev.sort) prev.sort = sort
+      }
+    }
+    stageCounts = Array.from(byLabel.values())
+      .sort((a, b) => a.sort - b.sort)
+      .map(({ id, label, active, stalled }) => ({ id, label, active, stalled }))
+  }
+
+  return { stageCounts, totalActive }
 }
 
 function computeAvgTransitionDays(achievements: AchievementTask[]): number | null {
@@ -315,11 +338,11 @@ function computeAvgTransitionDays(achievements: AchievementTask[]): number | nul
 function buildTopTasks(achievements: AchievementTask[]): { label: string; count: number }[] {
   const map = new Map<string, { label: string; count: number }>()
   for (const t of achievements) {
-    const defId = t.task_definition_id ?? t.task_type ?? t.id
     const label = t.task_definitions?.label ?? t.task_type ?? '—'
-    const cur = map.get(defId) ?? { label, count: 0 }
+    const key = label.trim().toLowerCase() || (t.task_definition_id ?? t.id)
+    const cur = map.get(key) ?? { label, count: 0 }
     cur.count++
-    map.set(defId, cur)
+    map.set(key, cur)
   }
   return Array.from(map.values()).sort((a, b) => b.count - a.count).slice(0, 8)
 }

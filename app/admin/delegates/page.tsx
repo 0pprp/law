@@ -9,13 +9,13 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Button } from '@/components/ui/button'
 import { fmtDate, fmtMoney } from '@/lib/utils'
 import DelegateActions from '@/components/DelegateActions'
-import { canManageDelegates, canDeleteUsers, canReadAllBranches } from '@/lib/permissions'
+import { canManageDelegates, canDeleteUsers } from '@/lib/permissions'
 import { fetchStaffRoleFields } from '@/lib/staff-profile'
 import { fetchDelegateWallet } from '@/lib/delegate-wallet'
 
 export default async function DelegatesPage() {
   const supabase = await createClient()
-  const { branchId } = await getBranchContext()
+  const { branchId, viewAllBranches } = await getBranchContext()
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -25,7 +25,7 @@ export default async function DelegatesPage() {
 
   const canDelete = canDeleteUsers(myProfile?.role)
 
-  const showAllBranches = canReadAllBranches(myProfile?.role, myProfile?.accountant_type)
+  const showBranchCol = viewAllBranches || !branchId
 
   let q = supabase
     .from('profiles')
@@ -33,12 +33,11 @@ export default async function DelegatesPage() {
     .eq('role', 'delegate')
     .order('created_at', { ascending: false })
 
-  if (branchId && !showAllBranches) q = q.eq('branch_id', branchId)
-  else if (branchId) q = q.eq('branch_id', branchId)
+  if (branchId) q = q.eq('branch_id', branchId)
 
   const [{ data: delegates }, { data: branchRows }] = await Promise.all([
-    q,
-    showAllBranches || !branchId
+    branchId || viewAllBranches ? q : Promise.resolve({ data: [] as any[] }),
+    showBranchCol
       ? supabase.from('branches').select('id, name')
       : Promise.resolve({ data: [] as { id: string; name: string }[] }),
   ])
@@ -91,7 +90,7 @@ export default async function DelegatesPage() {
                 <tr>
                   <TH>الاسم</TH>
                   <TH>اسم المستخدم</TH>
-                  {(showAllBranches || !branchId) && <TH>الفرع</TH>}
+                  {showBranchCol && <TH>الفرع</TH>}
                   <TH>الهاتف</TH>
                   <TH>معلق</TH>
                   <TH>قابل للصرف</TH>
@@ -123,7 +122,7 @@ export default async function DelegatesPage() {
                           ? <span className="font-mono text-xs text-[#767676] bg-[rgba(118,118,118,0.06)] px-2 py-1 rounded-lg" dir="ltr">{d.username}</span>
                           : <Badge variant="warning">لا يوجد</Badge>}
                       </TD>
-                      {(showAllBranches || !branchId) && (
+                      {showBranchCol && (
                         <TD><span className="text-xs text-[#767676]">{branchNameMap.get(d.branch_id) ?? '—'}</span></TD>
                       )}
                       <TD><span className="text-xs font-mono text-[#767676]" dir="ltr">{d.phone ?? '—'}</span></TD>

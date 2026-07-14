@@ -8,8 +8,12 @@ import type { ReceiptType } from '@/lib/types'
 import Link from 'next/link'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
-import { useBranchId, useBranch } from '@/context/branch'
 import { isMainBranchName } from '@/lib/branch-constants'
+import {
+  OperationBranchSelect,
+  OPERATION_BRANCH_REQUIRED_MSG,
+  useOperationBranch,
+} from '@/components/OperationBranchSelect'
 import { LEGAL_ISSUE_DATE_LABEL, RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { FormFlow, FormFlowHero, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
@@ -47,8 +51,14 @@ export default function NewDebtorPage() {
   const router = useRouter()
   const role = useAdminRole()
   const readOnly = !canAddDebtor(role)
-  const branchId = useBranchId()
-  const { branchName } = useBranch()
+  const {
+    needsPick,
+    effectiveBranchId: branchId,
+    effectiveBranchName: branchName,
+    pickedId,
+    setPickedBranch,
+    validateOperationBranch,
+  } = useOperationBranch()
   const { lists: branchLists } = useBranchLists(branchId)
   const today = new Date().toISOString().split('T')[0]
   const [saving, setSaving] = useState(false)
@@ -131,8 +141,9 @@ export default function NewDebtorPage() {
     setSaving(true)
     setError('')
 
-    if (!branchId || isMainBranchName(branchName)) {
-      setError('يجب اختيار فرعاً رسمياً من القائمة العلوية قبل إضافة مدين')
+    const branchErr = validateOperationBranch()
+    if (branchErr) {
+      setError(branchErr)
       setSaving(false)
       return
     }
@@ -243,13 +254,21 @@ export default function NewDebtorPage() {
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <FormFlow>
+          {needsPick && (
+            <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] p-4 mb-1">
+              <OperationBranchSelect
+                value={pickedId}
+                onChange={(id, name) => setPickedBranch(id, name)}
+              />
+            </div>
+          )}
           {branchOk ? (
             <FormFlowHero
               branchName={branchName!}
               meta={[{ label: LEGAL_ISSUE_DATE_LABEL, value: today }]}
             />
           ) : (
-            <FormFlowHero warning="اختر فرعاً رسمياً من القائمة العلوية قبل إضافة مدين." />
+            <FormFlowHero warning={OPERATION_BRANCH_REQUIRED_MSG} />
           )}
 
           <FormFlowStep

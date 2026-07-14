@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { TASK_TYPE_LABELS, REQUIRED_FIELD_LABELS } from '@/lib/types'
 import type { TaskType, RequiredField } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
-import { useBranchId } from '@/context/branch'
+import { useBranchId, useBranch } from '@/context/branch'
 import { formatMoney } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 
@@ -234,6 +234,7 @@ function EditModal({ def, reqFields, expenseRows, onClose, onSaved }: {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function TaskDefinitionsPage() {
   const branchId = useBranchId()
+  const { viewAllBranches } = useBranch()
   const [defs, setDefs] = useState<TaskDef[]>([])
   const [reqFields, setReqFields] = useState<ReqField[]>([])
   const [defExpenses, setDefExpenses] = useState<TaskDefExpenseRow[]>([])
@@ -243,7 +244,7 @@ export default function TaskDefinitionsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     const supabase = createClient()
-    if (!branchId) {
+    if (!branchId || viewAllBranches) {
       setDefs([])
       setReqFields([])
       setLoading(false)
@@ -260,7 +261,7 @@ export default function TaskDefinitionsPage() {
     setReqFields(((fieldData ?? []) as ReqField[]).filter(f => defIds.has(f.task_definition_id)))
     setDefExpenses(((expData ?? []) as TaskDefExpenseRow[]).filter(e => defIds.has(e.task_definition_id)))
     setLoading(false)
-  }, [branchId])
+  }, [branchId, viewAllBranches])
 
   useEffect(() => { load() }, [load])
 
@@ -272,6 +273,21 @@ export default function TaskDefinitionsPage() {
 
   const editingFields = editing ? reqFields.filter(f => f.task_definition_id === editing.id) : []
   const editingExpenses = editing ? defExpenses.filter(e => e.task_definition_id === editing.id) : []
+
+  if (viewAllBranches || !branchId) {
+    return (
+      <div className="space-y-5 max-w-4xl">
+        <PageHeader
+          title="تعريفات المهام"
+          subtitle="إدارة أنواع المهام والأتعاب والحقول الإلزامية"
+        />
+        <div className="bg-amber-50 border border-amber-200 text-amber-950 text-sm rounded-xl px-4 py-4">
+          <p className="font-bold mb-1">حدّد الفرع لتتمكن من الوصول إلى هنا</p>
+          <p className="text-amber-900/80">اختر فرعاً محدداً من القائمة العلوية (وليس «الكل»).</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-5 max-w-4xl">

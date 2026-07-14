@@ -152,8 +152,14 @@ export default function DashboardPage() {
         <div className="relative z-10 p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center gap-6 sm:gap-8">
           <div className="flex-1">
             <p className="text-[#2C8780] text-xs font-bold tracking-[0.25em] uppercase mb-2.5">منصة التحصيل القانوني</p>
-            <h1 className="text-white text-2xl sm:text-3xl font-black leading-tight">لوحة مراحل القضايا</h1>
-            <p className="text-white/50 text-sm sm:text-base mt-2 font-medium">مهام غير مكلفة حسب نوع المهمة — والمكلفة وبانتظار المراجعة</p>
+            <h1 className="text-white text-2xl sm:text-3xl font-black leading-tight">
+              {viewAllBranches ? 'لوحة مراحل القضايا — كل الفروع' : 'لوحة مراحل القضايا'}
+            </h1>
+            <p className="text-white/50 text-sm sm:text-base mt-2 font-medium">
+              {viewAllBranches
+                ? 'إحصائيات مجمّعة لجميع الفروع — مهام غير مكلفة والمكلفة وبانتظار المراجعة'
+                : 'مهام غير مكلفة حسب نوع المهمة — والمكلفة وبانتظار المراجعة'}
+            </p>
           </div>
           <div className="flex items-stretch gap-5 sm:gap-6 shrink-0">
             <Link href="/admin/tasks" className="text-center group">

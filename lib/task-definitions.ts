@@ -21,3 +21,33 @@ export async function fetchActiveTaskDefinitions<T extends string = 'id, label, 
   if (error) console.error('[fetchActiveTaskDefinitions]', error.message)
   return (data ?? []) as Record<string, unknown>[]
 }
+
+function taskDefLabelKey(label: string | null | undefined, fallbackId: string): string {
+  const key = (label ?? '').trim().toLowerCase()
+  return key || fallbackId
+}
+
+/** واجهة فلترة «الكل»: خيار واحد لكل اسم مهمة (بدون تكرار بين الفروع). */
+export function dedupeTaskDefinitionsByLabel<T extends { id: string; label?: string | null }>(
+  defs: T[],
+): T[] {
+  const seen = new Map<string, T>()
+  for (const d of defs) {
+    const key = taskDefLabelKey(d.label, d.id)
+    if (!seen.has(key)) seen.set(key, d)
+  }
+  return [...seen.values()]
+}
+
+/** عند الفلترة بوضع «الكل»: كل معرّفات التعريفات التي تحمل نفس الاسم. */
+export function expandTaskDefinitionIdsByLabel(
+  defs: { id: string; label?: string | null }[],
+  selectedId: string,
+): string[] {
+  if (!selectedId) return []
+  const selected = defs.find(d => d.id === selectedId)
+  if (!selected) return [selectedId]
+  const key = taskDefLabelKey(selected.label, selected.id)
+  const ids = defs.filter(d => taskDefLabelKey(d.label, d.id) === key).map(d => d.id)
+  return ids.length ? ids : [selectedId]
+}

@@ -111,6 +111,18 @@ export function canPickAnyBranch(
   return canReadAllBranches(role, accountantType)
 }
 
+/**
+ * فلتر واجهة «الكل» (كل الفروع) — ليس فرعاً في قاعدة البيانات.
+ * المدير + المحاسب العام فقط (المحاسب العام يملكه مسبقاً).
+ * لا يُمنح لمسؤول القانونية / المحاسب الفرعي / المحامي / المندوب.
+ */
+export function canUseViewAllBranchesFilter(
+  role: string | null | undefined,
+  accountantType?: string | null,
+): boolean {
+  return isAdmin(role) || isGeneralAccountant(role, accountantType)
+}
+
 export function canViewAllUsersAcrossBranches(
   role: string | null | undefined,
   accountantType?: string | null,

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
+import { useBranch, useBranchId } from '@/context/branch'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import Link from 'next/link'
 import { logActivity } from '@/lib/activity-log'
@@ -47,6 +47,7 @@ const INP = 'w-full pr-9 pl-4 py-2.5 text-sm bg-white border border-[rgba(118,11
 
 export default function DebtorsPage() {
   const branchId = useBranchId()
+  const { viewAllBranches } = useBranch()
   const role = useAdminRole()
   const allowDelete = canDelete(role)
   const allowEdit = canEditRecords(role)
@@ -71,13 +72,13 @@ export default function DebtorsPage() {
   useEffect(() => {
     setFilterListId('')
     setSearch('')
-  }, [branchId])
+  }, [branchId, viewAllBranches])
   const [showAllDebtors, setShowAllDebtors] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Server-side fetch with optional search (via admin API لتجاوز قيود RLS على المحاسب العام)
   const fetchDebtors = useCallback(async (searchTerm: string, listId: string, offset = 0, append = false) => {
-    if (!branchId) {
+    if (!branchId && !viewAllBranches) {
       setDebtors([])
       setTotal(0)
       setLoading(false)
@@ -89,10 +90,11 @@ export default function DebtorsPage() {
 
     try {
       const params = new URLSearchParams({
-        branchId,
         offset: String(offset),
         limit: String(PAGE_SIZE),
       })
+      if (viewAllBranches) params.set('viewAll', '1')
+      else if (branchId) params.set('branchId', branchId)
       if (listId) params.set('listId', listId)
       if (searchTerm.trim()) params.set('search', searchTerm.trim())
 
@@ -117,7 +119,7 @@ export default function DebtorsPage() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [branchId])
+  }, [branchId, viewAllBranches])
 
   useEffect(() => {
     fetchDebtors(search, filterListId)
@@ -163,7 +165,7 @@ export default function DebtorsPage() {
     <div className="space-y-5">
       <PageHeader
         title="المدينون"
-        subtitle={`${total} مدين مسجّل في النظام`}
+        subtitle={viewAllBranches ? `${total} مدين في كل الفروع` : `${total} مدين مسجّل في النظام`}
         actions={showAddBtn || showImportBtn ? (
           <div className="flex items-center gap-2">
             {showImportBtn && (
@@ -179,6 +181,18 @@ export default function DebtorsPage() {
           </div>
         ) : undefined}
       />
+
+      {!branchId && !viewAllBranches && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
+          اختر فرعاً من القائمة العلوية لعرض المدينين، أو اختر «الكل».
+        </div>
+      )}
+
+      {viewAllBranches && (
+        <div className="bg-[#2C8780]/8 border border-[#2C8780]/20 text-[#1D6365] text-sm rounded-xl px-4 py-3">
+          عرض كل الفروع — للإضافة أو الاستيراد اختر فرعاً محدداً أو حدّد الفرع داخل نموذج الإضافة.
+        </div>
+      )}
 
       {/* Search bar */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
@@ -201,11 +215,13 @@ export default function DebtorsPage() {
               </button>
             )}
           </div>
-          <BranchListFilterSelect
-            value={filterListId}
-            onChange={setFilterListId}
-            lists={branchLists}
-          />
+          {!viewAllBranches && (
+            <BranchListFilterSelect
+              value={filterListId}
+              onChange={setFilterListId}
+              lists={branchLists}
+            />
+          )}
         </div>
         {(search || filterListId) && !loading && (
           <p className="text-xs text-[#767676] mt-2">
@@ -228,7 +244,9 @@ export default function DebtorsPage() {
               <Table>
                 <THead>
                   <tr>
-                    <TH>الاسم</TH><TH>القائمة</TH><TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
+                    <TH>الاسم</TH>
+                    {viewAllBranches && <TH>الفرع</TH>}
+                    <TH>القائمة</TH><TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
                     <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
                   </tr>
                 </THead>
@@ -261,6 +279,7 @@ export default function DebtorsPage() {
                 <THead>
                   <tr>
                     <TH>الاسم</TH>
+                    {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH>
                     <TH>رقم الهوية</TH>
                     <TH>{RECEIPT_NUMBER_LABEL}</TH>
@@ -284,6 +303,9 @@ export default function DebtorsPage() {
                           )}
                         </div>
                       </TD>
+                      {viewAllBranches && (
+                        <TD><span className="text-xs text-[#767676]">{debtor.branch_name ?? '—'}</span></TD>
+                      )}
                       <TD><span className="text-xs text-[#767676]">{debtorListName(debtor)}</span></TD>
                       <TD><span className="font-mono text-xs" dir="ltr">{debtor.id_number ?? '—'}</span></TD>
                       <TD><span className="font-mono text-xs" dir="ltr">{debtor.receipt_number ?? '—'}</span></TD>
@@ -303,7 +325,7 @@ export default function DebtorsPage() {
                           {allowChangeTask && (
                             <ChangeDebtorTaskButton
                               debtorId={debtor.id}
-                              branchId={branchId}
+                              branchId={debtor.branch_id ?? branchId}
                               compact
                             />
                           )}
@@ -336,6 +358,9 @@ export default function DebtorsPage() {
                     <Link href={`/admin/debtors/${debtor.id}/account`} className="font-semibold text-[#231F20]">{debtor.full_name}</Link>
                     <Badge variant="default" className="shrink-0">{RECEIPT_TYPE_LABELS[debtor.receipt_type as keyof typeof RECEIPT_TYPE_LABELS]}</Badge>
                   </div>
+                  {viewAllBranches && debtor.branch_name && (
+                    <p className="text-xs text-[#2C8780] mb-1">{debtor.branch_name}</p>
+                  )}
                   {debtor.id_number && <p className="text-xs text-[#767676] font-mono mb-1" dir="ltr">{debtor.id_number}</p>}
                   <p className="text-xs text-[#767676] mb-1">القائمة: {debtorListName(debtor)}</p>
                   {debtor.receipt_number && <p className="text-xs text-[#767676] font-mono mb-2" dir="ltr">{RECEIPT_NUMBER_LABEL}: {debtor.receipt_number}</p>}
@@ -352,7 +377,7 @@ export default function DebtorsPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <Link href={`/admin/debtors/${debtor.id}/account`} className="flex-1 text-center text-xs text-[#231F20] border border-[rgba(118,118,118,0.2)] px-3 py-1.5 rounded-lg">كشف الحساب</Link>
                     {allowChangeTask && (
-                      <ChangeDebtorTaskButton debtorId={debtor.id} branchId={branchId} compact />
+                      <ChangeDebtorTaskButton debtorId={debtor.id} branchId={debtor.branch_id ?? branchId} compact />
                     )}
                     {showEditLink && (
                       <Link href={`/admin/debtors/${debtor.id}/edit`} className="flex-1 text-center text-xs text-[#231F20] border border-[rgba(118,118,118,0.2)] px-3 py-1.5 rounded-lg">تعديل</Link>

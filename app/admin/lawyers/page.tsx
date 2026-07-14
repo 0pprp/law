@@ -10,7 +10,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { EmptyState } from '@/components/ui/empty-state'
 import { fmtDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { canCreateLawyerUser, canEditLawyerProfile, canDeleteUsers, canViewAllUsersAcrossBranches } from '@/lib/permissions'
+import { canCreateLawyerUser, canEditLawyerProfile, canDeleteUsers } from '@/lib/permissions'
 import { fetchStaffRoleFields } from '@/lib/staff-profile'
 
 const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange' | 'purple' | 'gray'>> = {
@@ -23,39 +23,54 @@ const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange
 
 export default async function LawyersPage() {
   const supabase = await createClient()
-  const { branchId } = await getBranchContext()
+  const { branchId, viewAllBranches } = await getBranchContext()
 
   const { data: { user } } = await supabase.auth.getUser()
   const myProfile = user ? await fetchStaffRoleFields(supabase, user.id) : null
   const canDelete = canDeleteUsers(myProfile?.role)
   const canAddUser = canCreateLawyerUser(myProfile?.role)
   const showUserActions = canAddUser
-  const showAllBranches = canViewAllUsersAcrossBranches(myProfile?.role, myProfile?.accountant_type)
+  const showAllBranches = viewAllBranches
+  const showBranchCol = viewAllBranches
 
-  let profilesQ = supabase.from('profiles').select('*').order('created_at', { ascending: false })
-  if (branchId && !showAllBranches) profilesQ = (profilesQ as any).eq('branch_id', branchId)
+  let profiles: any[] = []
+  let attachmentRows: { lawyer_id: string }[] = []
+  let branchRows: { id: string; name: string }[] = []
 
-  const [{ data: profiles }, { data: attachmentRows }, { data: branchRows }] = await Promise.all([
-    profilesQ,
-    supabase.from('lawyer_attachments').select('lawyer_id'),
-    showAllBranches ? supabase.from('branches').select('id, name') : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-  ])
-  const branchNameMap = new Map((branchRows ?? []).map(b => [b.id, b.name]))
+  if (branchId || viewAllBranches) {
+    let profilesQ = supabase.from('profiles').select('*').order('created_at', { ascending: false })
+    if (branchId) profilesQ = (profilesQ as any).eq('branch_id', branchId)
+
+    const result = await Promise.all([
+      profilesQ,
+      supabase.from('lawyer_attachments').select('lawyer_id'),
+      showBranchCol
+        ? supabase.from('branches').select('id, name')
+        : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    ])
+    profiles = (result[0].data as any[]) ?? []
+    attachmentRows = (result[1].data as { lawyer_id: string }[]) ?? []
+    branchRows = (result[2].data as { id: string; name: string }[]) ?? []
+  }
+
+  const branchNameMap = new Map(branchRows.map(b => [b.id, b.name]))
   const attachCountMap = new Map<string, number>()
-  for (const row of attachmentRows ?? []) {
+  for (const row of attachmentRows) {
     attachCountMap.set(row.lawyer_id, (attachCountMap.get(row.lawyer_id) ?? 0) + 1)
   }
 
-  const activeCount = (profiles ?? []).filter(p => p.is_active).length
+  const activeCount = profiles.filter(p => p.is_active).length
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="المستخدمون"
         subtitle={
-          showAllBranches
-            ? `${profiles?.length ?? 0} مستخدم في كل الفروع • ${activeCount} نشط`
-            : `${profiles?.length ?? 0} مستخدم • ${activeCount} نشط`
+          viewAllBranches
+            ? `${profiles.length} مستخدم في كل الفروع • ${activeCount} نشط`
+            : branchId
+              ? `${profiles.length} مستخدم • ${activeCount} نشط`
+              : 'اختر فرعاً أو «الكل» لعرض المستخدمين'
         }
         actions={
           showUserActions ? (
@@ -84,7 +99,7 @@ export default async function LawyersPage() {
                     <TH>اسم المستخدم</TH>
                     <TH>الدور</TH>
                     <TH>النوع</TH>
-                    {showAllBranches && <TH>الفرع</TH>}
+                    {showBranchCol && <TH>الفرع</TH>}
                     <TH>الهاتف</TH>
                     <TH>الحالة</TH>
                     <TH>المستمسكات</TH>
@@ -134,7 +149,7 @@ export default async function LawyersPage() {
                           <span className="text-[rgba(118,118,118,0.3)] text-xs">—</span>
                         )}
                       </TD>
-                      {showAllBranches && (
+                      {showBranchCol && (
                         <TD><span className="text-xs text-[#767676]">{branchNameMap.get(user.branch_id) ?? '—'}</span></TD>
                       )}
                       <TD><span className="text-xs font-mono text-[#767676]" dir="ltr">{user.phone ?? '—'}</span></TD>
@@ -197,7 +212,7 @@ export default async function LawyersPage() {
                         {ACCOUNTANT_TYPE_LABELS[(user.accountant_type as AccountantType) ?? 'branch']}
                       </Badge>
                     )}
-                    {showAllBranches && user.branch_id && (
+                    {showBranchCol && user.branch_id && (
                       <span className="text-xs text-[#767676]">{branchNameMap.get(user.branch_id) ?? '—'}</span>
                     )}
                     {(attachCountMap.get(user.id) ?? 0) > 0 && (

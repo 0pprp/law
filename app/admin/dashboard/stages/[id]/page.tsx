@@ -90,9 +90,19 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
     setSelected(new Set())
     const supabase = createClient()
 
-    const { data: def } = await supabase.from('task_definitions').select('label, task_type').eq('id', stageId).single()
+    const { data: def } = await supabase.from('task_definitions').select('id, label, task_type').eq('id', stageId).single()
     setStageLabel(def?.label ?? '—')
     setStageIsFindAddress(isFindAddressTaskType(def?.task_type))
+
+    let matchingDefIds = new Set<string>([stageId])
+    if (viewAllBranches && def?.label) {
+      const { data: sameLabel } = await supabase
+        .from('task_definitions')
+        .select('id')
+        .eq('is_active', true)
+        .eq('label', def.label)
+      for (const row of sameLabel ?? []) matchingDefIds.add(row.id)
+    }
 
     let q = supabase
       .from('debtors')
@@ -115,7 +125,7 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
     const mapped: StageDebtor[] = (data ?? [])
       .filter((d: any) => {
         const t = d.current_task
-        if (!t || t.task_definition_id !== stageId) return false
+        if (!t || !matchingDefIds.has(t.task_definition_id)) return false
         if (d.current_task_id !== t.id) return false
         if (branchId && t.branch_id !== branchId) return false
         return !taskLawyerId(t)
@@ -274,7 +284,7 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
         </p>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className={`grid grid-cols-1 gap-3 ${viewAllBranches ? '' : 'md:grid-cols-2'}`}>
         <div className="bg-white rounded-xl border px-4 py-2.5 flex items-center gap-3">
           <svg className="w-4 h-4 text-[#767676] shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -283,11 +293,13 @@ export default function StageDetailPage({ params }: { params: Promise<{ id: stri
             placeholder={DEBTOR_SEARCH_PLACEHOLDER}
             className="flex-1 text-sm bg-transparent focus:outline-none" />
         </div>
-        <BranchListFilterSelect
-          value={filterListId}
-          onChange={setFilterListId}
-          lists={branchLists}
-        />
+        {!viewAllBranches && (
+          <BranchListFilterSelect
+            value={filterListId}
+            onChange={setFilterListId}
+            lists={branchLists}
+          />
+        )}
       </div>
 
       {canAssign && filtered.length > 0 && (

@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useBranch } from '@/context/branch'
 import { fetchSelectableBranches } from '@/lib/branches-cache'
 import { isMainBranchName, pickDefaultBranch } from '@/lib/branch-constants'
-import { canPickAnyBranch, isGeneralAccountant } from '@/lib/permissions'
+import { canPickAnyBranch, canUseViewAllBranchesFilter, isAdmin, isGeneralAccountant } from '@/lib/permissions'
 import { refreshAdminNotifications } from '@/lib/admin-notifications'
 
 interface Branch {
@@ -45,7 +45,7 @@ export default function BranchSelector({
   initialBranchName,
 }: Props) {
   const canPickBranch = canPickAnyBranch(userRole, accountantType)
-  const allowViewAll = isGeneralAccountant(userRole, accountantType)
+  const allowViewAll = canUseViewAllBranchesFilter(userRole, accountantType)
   const { branchId, branchName, viewAllBranches, setBranch, setViewAllBranches } = useBranch()
 
   const [open, setOpen] = useState(false)
@@ -325,7 +325,11 @@ export default function BranchSelector({
           >
             <span className="text-[10px] text-[#767676]">
               {allowViewAll
-                ? 'محاسب عام · فلتر الفروع'
+                ? isAdmin(userRole)
+                  ? 'مدير · عرض فرع أو الكل'
+                  : isGeneralAccountant(userRole, accountantType)
+                    ? 'محاسب عام · فلتر الفروع'
+                    : 'فلتر الفروع'
                 : 'يمكن التبديل بين الفروع'}
             </span>
             <div className="flex items-center gap-1">

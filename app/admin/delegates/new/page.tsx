@@ -8,10 +8,14 @@ import { logActivity } from '@/lib/activity-log'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
-import { useBranchId, useBranch } from '@/context/branch'
 import { useAdminRole } from '@/context/admin-role'
 import { canManageDelegates } from '@/lib/permissions'
 import { isMainBranchName } from '@/lib/branch-constants'
+import {
+  OperationBranchSelect,
+  OPERATION_BRANCH_REQUIRED_MSG,
+  useOperationBranch,
+} from '@/components/OperationBranchSelect'
 
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
@@ -29,8 +33,14 @@ function Field({ label, required: req, hint, children }: { label: string; requir
 
 export default function NewDelegatePage() {
   const router = useRouter()
-  const branchId = useBranchId()
-  const { branchName } = useBranch()
+  const {
+    needsPick,
+    effectiveBranchId: branchId,
+    effectiveBranchName: branchName,
+    pickedId,
+    setPickedBranch,
+    validateOperationBranch,
+  } = useOperationBranch()
   const role = useAdminRole()
   const canCreate = canManageDelegates(role)
   const [saving, setSaving] = useState(false)
@@ -51,8 +61,9 @@ export default function NewDelegatePage() {
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (!canCreate) return
-    if (!branchId || isMainBranchName(branchName)) {
-      setError('يجب اختيار فرعاً رسمياً من القائمة العلوية قبل إضافة مندوب')
+    const branchErr = validateOperationBranch()
+    if (branchErr) {
+      setError(branchErr)
       return
     }
     if (!form.phone.trim()) {
@@ -108,6 +119,14 @@ export default function NewDelegatePage() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
+        {needsPick && (
+          <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] p-4">
+            <OperationBranchSelect
+              value={pickedId}
+              onChange={(id, name) => setPickedBranch(id, name)}
+            />
+          </div>
+        )}
         {branchId && branchName && !isMainBranchName(branchName) ? (
           <p className="text-xs text-[#767676] bg-[#F3F1F2] rounded-lg px-3 py-2">
             الفرع / المحافظة: <span className="font-bold text-[#231F20]">{branchName}</span>
@@ -115,7 +134,7 @@ export default function NewDelegatePage() {
           </p>
         ) : (
           <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
-            اختر فرعاً من القائمة العلوية قبل إضافة مندوب.
+            {OPERATION_BRANCH_REQUIRED_MSG}
           </div>
         )}
 

@@ -79,8 +79,8 @@ export interface AchievementByLawyer {
 export function buildAchievementByType(achievements: AchievementTask[]): AchievementByType[] {
   const map = new Map<string, AchievementByType>()
   for (const t of achievements) {
-    const key = t.task_definition_id ?? t.task_type ?? t.id
     const label = achievementLabel(t)
+    const key = label.trim().toLowerCase() || (t.task_definition_id ?? t.task_type ?? t.id)
     const cur = map.get(key) ?? { key, label, count: 0, fees: 0 }
     cur.count++
     cur.fees += achievementFee(t)
