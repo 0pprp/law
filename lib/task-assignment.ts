@@ -2,7 +2,6 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { TaskStatus } from '@/lib/types'
 import {
   endOfLocalDay,
-  endOfNextLocalDay,
   localTodayYmd,
   OVERDUE_TERMINAL_STATUSES,
 } from '@/lib/local-date'
@@ -824,16 +823,14 @@ export async function validateLawyerTaskAssignment(
 
 export function buildPendingAssignmentPayload(lawyerId: string, dueDate?: string) {
   const now = new Date()
-  const expires = dueDate
-    ? endOfLocalDay(dueDate)
-    : endOfNextLocalDay(now)
-  const safeExpires = expires.getTime() > now.getTime() ? expires : endOfNextLocalDay(now)
+  // موافقة تلقائية في اليوم التالي لتاريخ التكليف (لا ترتبط بتاريخ نهاية التكليف)
+  const expires = endOfLocalDay(localTodayYmd(now))
 
   return {
     assigned_to: lawyerId,
     task_status: 'assignment_pending_acceptance' as TaskStatus,
     assigned_at: now.toISOString(),
-    assignment_expires_at: safeExpires.toISOString(),
+    assignment_expires_at: expires.toISOString(),
     assignment_rejected_by: null,
     ...(dueDate ? { due_date: dueDate } : {}),
   }
@@ -1148,31 +1145,44 @@ export async function autoAcceptExpiredAssignments(
   supabase: SupabaseClient,
   filters?: { branchId?: string | null; lawyerId?: string },
 ): Promise<number> {
-  const now = new Date().toISOString()
+  const nowIso = new Date().toISOString()
+  const today = localTodayYmd()
+
   let q = supabase
     .from('tasks')
-    .select('id, assignment_expires_at')
+    .select('id, assigned_at, assignment_expires_at')
     .eq('task_status', 'assignment_pending_acceptance')
-    .lt('assignment_expires_at', now)
 
   if (filters?.branchId) q = (q as any).eq('branch_id', filters.branchId)
   if (filters?.lawyerId) q = (q as any).eq('assigned_to', filters.lawyerId)
 
-  const { data: expired } = await q
-  if (!expired?.length) return 0
+  const { data: pending } = await q.limit(500)
+  if (!pending?.length) return 0
 
-  const ids = expired.map(t => t.id)
+  // يوم تقويمي واحد بعد تاريخ التكليف → مكلفة (موافقة تلقائية)
+  const ids = pending
+    .filter((t: { assigned_at?: string | null; assignment_expires_at?: string | null }) => {
+      if (t.assignment_expires_at && t.assignment_expires_at < nowIso) return true
+      if (t.assigned_at) {
+        return localTodayYmd(new Date(t.assigned_at)) < today
+      }
+      return false
+    })
+    .map((t: { id: string }) => t.id)
+
+  if (!ids.length) return 0
+
   await supabase
     .from('tasks')
     .update({
       task_status: 'assigned',
-      accepted_at: now,
+      accepted_at: nowIso,
       acceptance_method: 'auto',
     } as any)
     .in('id', ids)
     .eq('task_status', 'assignment_pending_acceptance')
 
-  return expired.length
+  return ids.length
 }
 
 export async function acceptTaskAssignment(supabase: SupabaseClient, taskId: string) {

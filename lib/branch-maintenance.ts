@@ -2,7 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { batchBackfillDebtorCurrentTasks } from '@/lib/debtor-current-task'
 import { autoAcceptExpiredAssignments } from '@/lib/task-assignment'
 
-const SESSION_PREFIX = 'qalat_maint:'
+/** bump when auto-accept / backfill rules change so sessions re-run */
+const SESSION_PREFIX = 'qalat_maint_v2:'
 
 function maintenanceKey(branchId: string): string {
   return `${SESSION_PREFIX}${branchId}`
