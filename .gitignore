@@ -47,3 +47,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local DB dumps & one-off verify scripts with potential secrets
+/backup-*/
+/backup-before-migration.mjs
+/verify-migration.mjs
+/verify-rls.mjs
+/scripts/qa-*-report.json
+/scripts/qa-workflow-civil-criminal-report.json

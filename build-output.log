@@ -1,0 +1,113 @@
+
+> qalat-app@0.1.0 build
+> next build
+
+▲ Next.js 16.2.9 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 6.1s
+  Running TypeScript ...
+  Finished TypeScript in 6.3s ...
+  Collecting page data using 27 workers ...
+  Generating static pages using 27 workers (0/77) ...
+  Generating static pages using 27 workers (19/77) 
+  Generating static pages using 27 workers (38/77) 
+  Generating static pages using 27 workers (57/77) 
+✓ Generating static pages using 27 workers (77/77) in 280ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /admin/accounts
+├ ƒ /admin/activity
+├ ƒ /admin/branches
+├ ƒ /admin/closed-cases
+├ ƒ /admin/dashboard
+├ ƒ /admin/dashboard/stages/[id]
+├ ƒ /admin/debtors
+├ ƒ /admin/debtors/[id]/account
+├ ƒ /admin/debtors/[id]/edit
+├ ƒ /admin/debtors/[id]/profile
+├ ƒ /admin/debtors/new
+├ ƒ /admin/delegates
+├ ƒ /admin/delegates/[id]/edit
+├ ƒ /admin/delegates/new
+├ ƒ /admin/delegates/report
+├ ƒ /admin/delegates/wallets
+├ ƒ /admin/expenses
+├ ƒ /admin/finance
+├ ƒ /admin/lawyers
+├ ƒ /admin/lawyers/[id]/edit
+├ ƒ /admin/lawyers/new
+├ ƒ /admin/legal-manager-wallet
+├ ƒ /admin/payments
+├ ƒ /admin/reports
+├ ƒ /admin/settings
+├ ƒ /admin/settings/task-definitions
+├ ƒ /admin/settings/task-fees
+├ ƒ /admin/task-files
+├ ƒ /admin/tasks
+├ ƒ /admin/tasks/[id]/edit
+├ ƒ /admin/tasks/new
+├ ƒ /admin/tasks/review
+├ ƒ /api/admin/approve-task
+├ ƒ /api/admin/assign-tasks
+├ ƒ /api/admin/auto-accept-assignments
+├ ƒ /api/admin/branch-settings
+├ ƒ /api/admin/change-debtor-task
+├ ƒ /api/admin/debtor-file-url
+├ ƒ /api/admin/debtors
+├ ƒ /api/admin/debtors/import
+├ ƒ /api/admin/debtors/receipts
+├ ƒ /api/admin/delegate-notified
+├ ƒ /api/admin/delegate-withdraw
+├ ƒ /api/admin/delegates
+├ ƒ /api/admin/delete-debtor-file
+├ ƒ /api/admin/delete-lawyer-file
+├ ƒ /api/admin/delete-task-file
+├ ƒ /api/admin/delete-user
+├ ƒ /api/admin/finance-requests
+├ ƒ /api/admin/lawyer-file-url
+├ ƒ /api/admin/lawyer-wallet
+├ ƒ /api/admin/lawyers
+├ ƒ /api/admin/legal-manager-payout-request
+├ ƒ /api/admin/legal-manager-wallet-manual
+├ ƒ /api/admin/merge-branch-lists
+├ ƒ /api/admin/notification-counts
+├ ƒ /api/admin/payout-request
+├ ƒ /api/admin/reject-task
+├ ƒ /api/admin/release-task-fee
+├ ƒ /api/admin/set-branch
+├ ƒ /api/admin/task-file-url
+├ ƒ /api/admin/task-transition
+├ ƒ /api/admin/toggle-user-active
+├ ƒ /api/admin/upload-debtor-file
+├ ƒ /api/admin/upload-lawyer-file
+├ ƒ /api/auth/login
+├ ƒ /api/delegate/wallet
+├ ƒ /api/lawyer/payout-request
+├ ƒ /api/lawyer/task-assignment
+├ ƒ /api/lawyer/task-expenses
+├ ƒ /api/lawyer/wallet
+├ ƒ /api/worker/upload-task-file
+├ ƒ /delegate
+├ ƒ /delegate/profile
+├ ƒ /delegate/tasks
+├ ƒ /delegate/tasks/[id]
+├ ƒ /lawyer
+├ ƒ /lawyer/account
+├ ƒ /lawyer/profile
+├ ƒ /lawyer/tasks
+├ ƒ /lawyer/tasks/[id]
+└ ○ /login
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+
+EXIT_CODE=0

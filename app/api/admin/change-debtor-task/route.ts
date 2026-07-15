@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
   const admin = createAdminClient()
   const { data: debtor, error: debtorErr } = await admin
     .from('debtors')
-    .select('id, branch_id, current_task_id, full_name, case_status')
+    .select('id, branch_id, current_task_id, full_name, case_status, case_type')
     .eq('id', debtorId)
     .maybeSingle()
 
@@ -56,9 +56,11 @@ export async function POST(request: NextRequest) {
     return apiForbiddenResponse()
   }
 
+  const debtorCaseType = (debtor as { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil'
+
   const { data: def, error: defErr } = await admin
     .from('task_definitions')
-    .select('id, label, task_type, fee_amount, branch_id, is_active')
+    .select('id, label, task_type, fee_amount, branch_id, is_active, case_type')
     .eq('id', taskDefinitionId)
     .maybeSingle()
 
@@ -67,6 +69,10 @@ export async function POST(request: NextRequest) {
   }
   if (def.branch_id !== debtor.branch_id) {
     return NextResponse.json({ error: 'المهمة يجب أن تكون من نفس فرع المدين' }, { status: 400 })
+  }
+  const defCaseType = (def as { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil'
+  if (defCaseType !== debtorCaseType) {
+    return NextResponse.json({ error: 'تعريف المهمة لا يطابق نوع دعوى المدين' }, { status: 400 })
   }
 
   const fee = Number(def.fee_amount) || 0

@@ -31,6 +31,7 @@ import { useAdminRole } from '@/context/admin-role'
 import { canAssignTasks } from '@/lib/permissions'
 import { BranchListFilterSelect } from '@/components/BranchListSelect'
 import { useBranchLists } from '@/hooks/use-branch-lists'
+import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, type CaseType } from '@/lib/case-type'
 
 type TaskView = 'waiting' | 'assigned' | 'overdue'
 
@@ -84,11 +85,13 @@ export default function TasksPage() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [filterDef, setFilterDef] = useState('')
   const [filterListId, setFilterListId] = useState('')
+  const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>('')
   const { lists: branchLists } = useBranchLists(branchId)
 
   useEffect(() => {
     setFilterListId('')
     setFilterDef('')
+    setFilterCaseType('')
     setSearch('')
     setDebouncedSearch('')
   }, [branchId, viewAllBranches])
@@ -131,7 +134,7 @@ export default function TasksPage() {
     }
 
     const offset = offsetOverride ?? 0
-    const cacheKey = `tasks:assign:${branchId ?? 'all'}:${taskView}:${filterDef}:${filterListId}:${debouncedSearch}:${offset}`
+    const cacheKey = `tasks:assign:${branchId ?? 'all'}:${taskView}:${filterDef}:${filterListId}:${filterCaseType}:${debouncedSearch}:${offset}`
 
     if (!append) {
       const cached = cacheGet<TasksPageCache>(cacheKey)
@@ -178,7 +181,12 @@ export default function TasksPage() {
       let defsForFilter = allTaskDefsRef.current
       let displayDefs: { id: string; label: string }[] | null = null
       if (!append) {
-        const raw = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label') as { id: string; label: string }[]
+        const raw = await fetchActiveTaskDefinitions(
+          supabase,
+          branchId,
+          'id, label',
+          filterCaseType ? { caseType: filterCaseType } : undefined,
+        ) as { id: string; label: string }[]
         defsForFilter = raw
         allTaskDefsRef.current = raw
         displayDefs = viewAllBranches ? dedupeTaskDefinitionsByLabel(raw) : raw
@@ -197,6 +205,7 @@ export default function TasksPage() {
           taskDefinitionId: (!viewAllBranches && filterDef) ? filterDef : null,
           taskDefinitionIds: (viewAllBranches && defFilterIds?.length) ? defFilterIds : null,
           branchListId: (!viewAllBranches && filterListId) ? filterListId : null,
+          caseType: filterCaseType || null,
           debtorIds,
           offset,
           limit: CURRENT_TASK_PAGE_SIZE,
@@ -254,7 +263,7 @@ export default function TasksPage() {
     }
     setLoading(false)
     setLoadingMore(false)
-  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, debouncedSearch])
+  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, filterCaseType, debouncedSearch])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -265,7 +274,7 @@ export default function TasksPage() {
   useEffect(() => {
     setPageOffset(0)
     load(false, 0)
-  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, debouncedSearch, load])
+  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, filterCaseType, debouncedSearch, load])
 
   function loadMore() {
     if (loadingMore || tasks.length >= total) return
@@ -378,12 +387,13 @@ export default function TasksPage() {
     await load(false, 0)
   }
 
-  const hasFilters = search || filterDef || filterListId
+  const hasFilters = search || filterDef || filterListId || filterCaseType
   function clearFilters() {
     setSearch('')
     setDebouncedSearch('')
     setFilterDef('')
     setFilterListId('')
+    setFilterCaseType('')
   }
 
   return (
@@ -450,7 +460,7 @@ export default function TasksPage() {
         </button>
       </div>
 
-      <div className={`grid grid-cols-1 gap-3 ${viewAllBranches ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+      <div className={`grid grid-cols-1 gap-3 ${viewAllBranches ? 'md:grid-cols-3' : 'md:grid-cols-4'}`}>
         {!viewAllBranches && (
           <BranchListFilterSelect
             value={filterListId}
@@ -458,6 +468,15 @@ export default function TasksPage() {
             lists={branchLists}
           />
         )}
+        <PremiumSelect
+          value={filterCaseType}
+          onChange={v => setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')}
+          options={CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+          placeholder="كل أنواع الدعاوى"
+          fieldLabel="نوع الدعوى"
+          headerTitle="تصفية حسب نوع الدعوى"
+          searchable={false}
+        />
         <PremiumSelect
           value={filterDef}
           onChange={setFilterDef}
@@ -588,6 +607,7 @@ export default function TasksPage() {
                 )}
                 <TH>المدين</TH>
                 {!isOverdueView && <TH>الهاتف</TH>}
+                <TH>نوع الدعوى</TH>
                 <TH>نوع المهمة</TH>
                 {isOverdueView || viewAllBranches ? <TH>الفرع</TH> : null}
                 {isOverdueView && <TH>القائمة</TH>}
@@ -619,6 +639,7 @@ export default function TasksPage() {
                     </Link>
                   </TD>
                   {!isOverdueView && <TD><span dir="ltr">{t.debtorPhone ?? '—'}</span></TD>}
+                  <TD>{CASE_TYPE_LABELS[t.caseType] ?? 'دعوى مدنية'}</TD>
                   <TD>{t.taskLabel}</TD>
                   {(isOverdueView || viewAllBranches) && (
                     <TD>{t.branchName ?? '—'}</TD>

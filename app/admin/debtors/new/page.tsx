@@ -30,16 +30,17 @@ import {
   RECEIPT_NUMBER_DUP_BRANCH_ERROR,
   RECEIPT_NUMBER_EMPTY_ERROR,
 } from '@/lib/receipt-number'
+import { CASE_TYPE_OPTIONS, type CaseType } from '@/lib/case-type'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
 /** قيمة واجهة فقط — تُحفظ في DB كـ other لتفادي كسر القيود */
 const RECEIPT_TYPE_NONE = 'none'
 
-type DebtorFormField = 'selectedTaskDefId' | 'receipt_number'
+type DebtorFormField = 'caseType' | 'selectedTaskDefId' | 'receipt_number'
 
 type FieldErrors = Partial<Record<DebtorFormField, string>>
 
-interface TaskDef { id: string; label: string; fee_amount: number; task_type: string | null }
+interface TaskDef { id: string; label: string; fee_amount: number; task_type: string | null; case_type?: string | null }
 
 function resolveReceiptType(value: string): ReceiptType {
   if (!value || value === RECEIPT_TYPE_NONE) return 'other'
@@ -66,6 +67,7 @@ export default function NewDebtorPage() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [taskDefs, setTaskDefs] = useState<TaskDef[]>([])
+  const [caseType, setCaseType] = useState<CaseType | ''>('')
   const [selectedTaskDefId, setSelectedTaskDefId] = useState('')
   const [branchListId, setBranchListId] = useState('')
 
@@ -85,10 +87,21 @@ export default function NewDebtorPage() {
   })
 
   useEffect(() => {
-    let q = createClient().from('task_definitions').select('id, label, fee_amount, task_type').eq('is_active', true)
-    if (branchId) q = (q as any).eq('branch_id', branchId)
-    q.order('sort_order').order('label').then(({ data }) => setTaskDefs(data ?? []))
-  }, [branchId])
+    if (!branchId || !caseType) {
+      setTaskDefs([])
+      return
+    }
+    let q = createClient()
+      .from('task_definitions')
+      .select('id, label, fee_amount, task_type, case_type')
+      .eq('is_active', true)
+      .eq('case_type', caseType)
+      .eq('branch_id', branchId)
+    q.order('sort_order').order('label').then(({ data }) => {
+      setTaskDefs((data ?? []) as TaskDef[])
+      setSelectedTaskDefId(prev => ((data ?? []) as TaskDef[]).some(d => d.id === prev) ? prev : '')
+    })
+  }, [branchId, caseType])
 
   function clearFieldError(field: DebtorFormField) {
     setFieldErrors(prev => {
@@ -104,6 +117,13 @@ export default function NewDebtorPage() {
     if (field === 'receipt_number') clearFieldError('receipt_number')
   }
 
+  function handleCaseTypeChange(v: string) {
+    setCaseType(v === 'civil' || v === 'criminal' ? v : '')
+    setSelectedTaskDefId('')
+    clearFieldError('caseType')
+    clearFieldError('selectedTaskDefId')
+  }
+
   function inputClass(invalid?: boolean) {
     return cn(
       formInputClass,
@@ -111,9 +131,12 @@ export default function NewDebtorPage() {
     )
   }
 
-  /** المهمة مطلوبة + رقم الوصل غير فارغ */
+  /** نوع الدعوى والمهمة مطلوبان + رقم الوصل غير فارغ */
   function validateForm(): FieldErrors {
     const errors: FieldErrors = {}
+    if (!caseType) {
+      errors.caseType = 'يجب اختيار نوع الدعوى قبل إضافة المدين.'
+    }
     if (!selectedTaskDefId) {
       errors.selectedTaskDefId = 'يجب اختيار المهمة المطلوبة قبل إضافة المدين.'
     }
@@ -152,7 +175,8 @@ export default function NewDebtorPage() {
     if (Object.keys(validationErrors).length > 0) {
       setFieldErrors(validationErrors)
       setError(
-        validationErrors.receipt_number
+        validationErrors.caseType
+        ?? validationErrors.receipt_number
         ?? validationErrors.selectedTaskDefId
         ?? 'يجب إكمال الحقول المطلوبة قبل إضافة المدين.',
       )
@@ -177,6 +201,7 @@ export default function NewDebtorPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           branchId,
+          case_type: caseType,
           taskDefinitionId: selectedTaskDefId,
           full_name: form.full_name.trim(),
           phone: form.phone.trim(),
@@ -273,26 +298,40 @@ export default function NewDebtorPage() {
 
           <FormFlowStep
             step={1}
-            title="المهمة المطلوبة"
-            subtitle="هذا الحقل الإلزامي الوحيد — بدون اختيار المهمة لا يمكن إضافة المدين"
+            title="نوع الدعوى والمهمة"
+            subtitle="حدد نوع الدعوى أولاً ثم اختر المهمة المطابقة — كلاهما إلزامي"
             icon={
               <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
               </svg>
             }
           >
-            <FormField label="المهمة المطلوبة" required error={fieldErrors.selectedTaskDefId}>
-              <PremiumSelect
-                value={selectedTaskDefId}
-                onChange={v => { setSelectedTaskDefId(v); clearFieldError('selectedTaskDefId') }}
-                options={taskOptions}
-                placeholder="— اختر المهمة المطلوبة —"
-                headerTitle="اختر المهمة المطلوبة"
-                headerSubtitle={`${taskDefs.length} مهمة متاحة في هذا الفرع`}
-                searchPlaceholder="بحث في المهام..."
-                disabled={!branchOk}
-              />
-            </FormField>
+            <div className="space-y-4">
+              <FormField label="نوع الدعوى" required error={fieldErrors.caseType}>
+                <PremiumSelect
+                  value={caseType}
+                  onChange={handleCaseTypeChange}
+                  options={CASE_TYPE_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+                  placeholder="— اختر نوع الدعوى —"
+                  headerTitle="نوع الدعوى"
+                  headerSubtitle="مدنية أو جزائية"
+                  searchable={false}
+                  disabled={!branchOk}
+                />
+              </FormField>
+              <FormField label="المهمة المطلوبة" required error={fieldErrors.selectedTaskDefId}>
+                <PremiumSelect
+                  value={selectedTaskDefId}
+                  onChange={v => { setSelectedTaskDefId(v); clearFieldError('selectedTaskDefId') }}
+                  options={taskOptions}
+                  placeholder={caseType ? '— اختر المهمة المطلوبة —' : '— اختر نوع الدعوى أولاً —'}
+                  headerTitle="اختر المهمة المطلوبة"
+                  headerSubtitle={`${taskDefs.length} مهمة متاحة لهذا النوع`}
+                  searchPlaceholder="بحث في المهام..."
+                  disabled={!branchOk || !caseType}
+                />
+              </FormField>
+            </div>
             {selectedDef && (
               <div className="mt-3 flex items-start gap-2.5 bg-[#2C8780]/6 border border-[#2C8780]/20 rounded-xl px-4 py-3">
                 <div className="w-8 h-8 rounded-lg bg-[#2C8780]/12 flex items-center justify-center shrink-0">

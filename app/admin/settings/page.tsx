@@ -29,7 +29,7 @@ async function settingsWrite(payload: Record<string, unknown>): Promise<{ ok: bo
 // ── Shared styles ──────────────────────────────────────────────
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/20 focus:border-[#2C8780] transition-all'
 const SEL = INP + ' cursor-pointer'
-type Tab = 'courts' | 'exec-depts' | 'task-defs' | 'expense-types' | 'branch-lists'
+type Tab = 'courts' | 'exec-depts' | 'task-defs' | 'criminal-task-defs' | 'expense-types' | 'branch-lists'
 
 // ── Shared Modal Wrapper ───────────────────────────────────────
 function Modal({ title, onClose, children, footer }: {
@@ -484,7 +484,7 @@ const FIELD_TYPE_OPTIONS = [
 
 interface TaskDef {
   id: string; label: string; fee_amount: number
-  sort_order: number; is_active: boolean
+  sort_order: number; is_active: boolean; case_type?: string | null
 }
 
 interface ReqField {
@@ -496,7 +496,7 @@ interface DynField { field_label: string; field_type: string; is_required: boole
 
 interface EditForm { label: string; fee: string; isActive: boolean; dynFields: DynField[] }
 
-function TaskDefsTab() {
+function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }) {
   const readOnly = !useCanWrite()
   const branchId = useBranchId()
   const [defs, setDefs] = useState<TaskDef[]>([])
@@ -512,7 +512,7 @@ function TaskDefsTab() {
   const load = useCallback(async () => {
     setLoading(true)
     const sb = createClient()
-    let dq = (sb as any).from('task_definitions').select('*').order('sort_order')
+    let dq = (sb as any).from('task_definitions').select('*').eq('case_type', caseType).order('sort_order')
     if (branchId) dq = dq.eq('branch_id', branchId)
     const [{ data: d }, { data: f }] = await Promise.all([
       dq,
@@ -521,7 +521,7 @@ function TaskDefsTab() {
     setDefs(d ?? [])
     setReqFields(f ?? [])
     setLoading(false)
-  }, [branchId])
+  }, [branchId, caseType])
 
   useEffect(() => { load() }, [load])
 
@@ -622,6 +622,7 @@ function TaskDefsTab() {
         is_active: true,
         sort_order: maxOrder,
         branch_id: branchId,
+        case_type: caseType,
       },
     })
     if (!created.ok || !created.row?.id) {
@@ -673,7 +674,9 @@ function TaskDefsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="bg-[#2C8780]/8 border border-[#2C8780]/20 rounded-xl px-4 py-2.5 text-xs text-[#231F20] flex-1 ml-4">
-          الحقول المحددة هنا تظهر للمحامي إجباريًا عند تسليم المهمة.
+          {caseType === 'criminal'
+            ? 'إعدادات المهام الجزائية — الحقول هنا تظهر للمحامي إجباريًا عند تسليم مهمة جزائية.'
+            : 'الحقول المحددة هنا تظهر للمحامي إجباريًا عند تسليم المهمة.'}
         </div>
         {!readOnly && <AddBtn label="إضافة نوع مهمة" onClick={openAdd} />}
       </div>
@@ -1081,6 +1084,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'courts',        label: 'المحاكم' },
   { id: 'exec-depts',    label: 'دوائر التنفيذ' },
   { id: 'task-defs',     label: 'أنواع المهام' },
+  { id: 'criminal-task-defs', label: 'المهام الجزائية' },
   { id: 'expense-types', label: 'أنواع الصرفيات' },
   { id: 'branch-lists',  label: 'قوائم الفرع' },
 ]
@@ -1142,7 +1146,8 @@ export default function SettingsPage() {
       {/* Tab Content */}
       {tab === 'courts'        && <CourtsTab branches={branches} />}
       {tab === 'exec-depts'    && <ExecDeptsTab branches={branches} />}
-      {tab === 'task-defs'     && <TaskDefsTab />}
+      {tab === 'task-defs'     && <TaskDefsTab caseType="civil" />}
+      {tab === 'criminal-task-defs' && <TaskDefsTab caseType="criminal" />}
       {tab === 'expense-types' && <ExpenseTypesTab />}
       {tab === 'branch-lists'  && <BranchListsTab />}
     </div>

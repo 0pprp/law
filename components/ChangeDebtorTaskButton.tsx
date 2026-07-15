@@ -44,24 +44,25 @@ export default function ChangeDebtorTaskButton({
     setLoading(true)
     try {
       const supabase = createClient()
-      const list = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, fee_amount')
+      const { data: debtorMeta } = await supabase
+        .from('debtors')
+        .select('current_task_id, case_type')
+        .eq('id', debtorId)
+        .maybeSingle()
+      const caseType = debtorMeta?.case_type === 'criminal' ? 'criminal' : 'civil'
+
+      const list = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, fee_amount', { caseType })
       setDefs(list.map(d => ({
         id: String(d.id),
         label: String(d.label ?? ''),
         fee_amount: Number(d.fee_amount) || 0,
       })))
 
-      const { data: debtor } = await supabase
-        .from('debtors')
-        .select('current_task_id')
-        .eq('id', debtorId)
-        .maybeSingle()
-
-      if (debtor?.current_task_id) {
+      if (debtorMeta?.current_task_id) {
         const { data: task } = await supabase
           .from('tasks')
           .select('task_definition_id, task_definitions(label)')
-          .eq('id', debtor.current_task_id)
+          .eq('id', debtorMeta.current_task_id)
           .maybeSingle()
         const defId = task?.task_definition_id ?? ''
         setSelectedId(defId)

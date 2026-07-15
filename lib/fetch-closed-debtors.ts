@@ -15,10 +15,11 @@ export interface ClosedDebtorRow {
   created_at: string
   branch_id: string | null
   last_task_id: string | null
+  case_type: 'civil' | 'criminal'
 }
 
 const CLOSED_DEBTOR_COLS =
-  'id, full_name, phone, receipt_number, id_number, required_amount, closed_at, created_at, branch_id, last_task_id'
+  'id, full_name, phone, receipt_number, id_number, required_amount, closed_at, created_at, branch_id, last_task_id, case_type'
 
 function taskLabel(
   task: { task_type?: string | null; task_definition_id?: string | null },
@@ -128,6 +129,7 @@ function normalizeDebtor(raw: Record<string, unknown>): ClosedDebtorRow {
     created_at: String(raw.created_at ?? ''),
     branch_id: (raw.branch_id as string | null) ?? null,
     last_task_id: (raw.last_task_id as string | null) ?? null,
+    case_type: raw.case_type === 'criminal' ? 'criminal' : 'civil',
   }
 }
 
@@ -135,6 +137,7 @@ export interface FetchClosedDebtorsOptions {
   offset?: number
   limit?: number
   debtorIds?: string[] | null
+  caseType?: 'civil' | 'criminal' | null
 }
 
 export interface PaginatedClosedDebtorsResult {
@@ -158,6 +161,7 @@ async function queryClosedPaginated(
       .select(CLOSED_DEBTOR_COLS, { count: 'exact' })
       .eq(statusColumn, 'closed')
     if (branchId) q = q.eq('branch_id', branchId)
+    if (options?.caseType) q = q.eq('case_type', options.caseType)
     if (options?.debtorIds?.length) q = q.in('id', options.debtorIds)
     return q
   }

@@ -615,6 +615,21 @@ export async function creditLegalManagerBonusOnApproval(
     }
   }
 
+  // الدعاوى الجزائية: لا تُحتسب نسبة مسؤول القانونية
+  const { data: debtorCase } = await supabase
+    .from('debtors')
+    .select('case_type')
+    .eq('id', debtorId)
+    .maybeSingle()
+  if ((debtorCase as { case_type?: string } | null)?.case_type === 'criminal') {
+    return {
+      ok: true,
+      amount: 0,
+      skipped: true,
+      reason: 'دعوى جزائية — لا نسبة لمسؤول القانونية',
+    }
+  }
+
   const recipientId = await resolveLegalManagerRecipient(
     supabase,
     reviewerId,

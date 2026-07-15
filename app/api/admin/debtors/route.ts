@@ -16,7 +16,7 @@ import { computeDebtorRequiredAmount, computeRemainingFromRequired } from '@/lib
 import { logActivity } from '@/lib/activity-log'
 
 const DEFAULT_COLS =
-  'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, branch_list_id, branch_id, branch_list:branch_lists(name)'
+  'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, case_type, branch_list_id, branch_id, branch_list:branch_lists(name)'
 
 export async function GET(request: NextRequest) {
   const auth = await requireStaffProfile()
@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
   const viewAll = searchParams.get('viewAll') === '1'
   const listId = searchParams.get('listId')?.trim() || ''
   const search = searchParams.get('search')?.trim() || ''
+  const caseType = searchParams.get('caseType')?.trim() || ''
   const offset = Math.max(0, Number(searchParams.get('offset') ?? 0) || 0)
   const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') ?? 50) || 50))
   const cols = searchParams.get('cols')?.trim() || DEFAULT_COLS
@@ -50,6 +51,7 @@ export async function GET(request: NextRequest) {
 
   if (!viewAll && branchId) q = q.eq('branch_id', branchId)
   if (listId) q = q.eq('branch_list_id', listId)
+  if (caseType === 'civil' || caseType === 'criminal') q = q.eq('case_type', caseType)
   if (search) {
     const s = search.replace(/[%_,]/g, '')
     q = q.or(`full_name.ilike.%${s}%,phone.ilike.%${s}%,receipt_number.ilike.%${s}%`)
@@ -92,6 +94,11 @@ export async function POST(request: NextRequest) {
   const taskDefinitionId = String(body.taskDefinitionId ?? '').trim()
   const fullName = String(body.full_name ?? '').trim()
   const receiptNumber = normalizeReceiptNumberInput(String(body.receipt_number ?? ''))
+  const caseTypeRaw = String(body.case_type ?? '').trim()
+  if (caseTypeRaw !== 'civil' && caseTypeRaw !== 'criminal') {
+    return NextResponse.json({ error: 'يجب اختيار نوع الدعوى (مدنية أو جزائية)' }, { status: 400 })
+  }
+  const caseType = caseTypeRaw
 
   if (!branchId || !taskDefinitionId || !fullName) {
     return NextResponse.json({ error: 'الفرع والمهمة والاسم مطلوبة' }, { status: 400 })
@@ -113,12 +120,16 @@ export async function POST(request: NextRequest) {
 
   const { data: taskDef, error: tdErr } = await admin
     .from('task_definitions')
-    .select('id, fee_amount, task_type')
+    .select('id, fee_amount, task_type, case_type')
     .eq('id', taskDefinitionId)
     .eq('branch_id', branchId)
     .maybeSingle()
   if (tdErr || !taskDef?.task_type) {
     return NextResponse.json({ error: 'تعريف المهمة غير صالح لهذا الفرع' }, { status: 400 })
+  }
+  const defCase = (taskDef as { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil'
+  if (defCase !== caseType) {
+    return NextResponse.json({ error: 'تعريف المهمة لا يطابق نوع الدعوى المختار' }, { status: 400 })
   }
 
   const remaining = Number(body.remaining_amount ?? 0) || 0
@@ -149,6 +160,7 @@ export async function POST(request: NextRequest) {
       created_by: auth.user!.id,
       branch_id: branchId,
       branch_list_id: String(body.branch_list_id ?? '').trim() || null,
+      case_type: caseType,
     })
     .select('id')
     .single()

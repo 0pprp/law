@@ -87,7 +87,11 @@ export default function DebtorImportModal({ open, onClose, onComplete }: Props) 
 
     try {
       const supabase = createClient()
-      let defsQ = supabase.from('task_definitions').select('id, label, fee_amount').eq('is_active', true)
+      let defsQ = supabase
+        .from('task_definitions')
+        .select('id, label, fee_amount')
+        .eq('is_active', true)
+        .eq('case_type', 'civil')
       defsQ = (defsQ as typeof defsQ).eq('branch_id', branchId)
       const rows = await parseImportExcel(excelFile)
       setProgress({ phase: 'reading_zip', current: 0, total: 1, message: 'قراءة ملفات PDF...' })

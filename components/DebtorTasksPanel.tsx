@@ -336,7 +336,7 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
         .select('*, lawyer:profiles!tasks_assigned_to_fkey(full_name, role), courts(name), execution_departments(name), task_definitions(label)')
         .eq('debtor_id', debtorId)
         .order('created_at', { ascending: false }),
-      supabase.from('debtors').select('current_task_id, case_status').eq('id', debtorId).single(),
+      supabase.from('debtors').select('current_task_id, case_status, case_type').eq('id', debtorId).single(),
       (() => {
         let q = (supabase as any).from('task_definitions').select('*').eq('is_active', true).order('sort_order')
         if (branchId) q = q.eq('branch_id', branchId)
@@ -347,7 +347,10 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
     ])
     setTasks(t ?? [])
     setDebtorMeta(debtor ?? null)
-    setDefs(d ?? [])
+    const caseType = debtor?.case_type === 'criminal' ? 'criminal' : 'civil'
+    setDefs(((d ?? []) as TaskDef[]).filter(def =>
+      ((def as TaskDef & { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil') === caseType,
+    ))
     setCourts(c ?? [])
     setExecDepts(e ?? [])
     setLoading(false)

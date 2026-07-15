@@ -21,8 +21,9 @@ import { fetchActiveTaskDefinitions } from '@/lib/task-definitions'
 import { buildCompletionFieldLabelMap, resolveCompletionFieldLabel } from '@/lib/completion-field-labels'
 import { useAdminRole } from '@/context/admin-role'
 import { canReadAdminData, canReviewTasks } from '@/lib/permissions'
+import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, normalizeCaseType, type CaseType } from '@/lib/case-type'
 
-interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number; branch_id?: string | null }
+interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number; branch_id?: string | null; case_type?: string | null }
 
 function parseGps(val: string): { lat: number; lng: number } | null {
   if (!val) return null
@@ -128,9 +129,11 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
   const hasExistingGps = debtor?.latitude != null && debtor?.longitude != null
   const showGpsUpdate = hasExistingGps && newGps != null
   // عند «الكل»: اعرض مهام فرع هذه القضية فقط حتى لا تتكرر الأنواع
-  const scopedDefs = task.branch_id
-    ? taskDefs.filter(d => !d.branch_id || d.branch_id === task.branch_id)
-    : taskDefs
+  const debtorCaseType = normalizeCaseType(debtor?.case_type)
+  const scopedDefs = taskDefs.filter(d => {
+    if (task.branch_id && d.branch_id && d.branch_id !== task.branch_id) return false
+    return normalizeCaseType(d.case_type) === debtorCaseType
+  })
 
   async function proceedWithTransition(action: 'next' | 'close') {
     if (action === 'next' && !nextTaskId) {
@@ -443,6 +446,7 @@ export default function TaskReviewPage() {
   const [reviewing, setReviewing] = useState<any | null>(null)
   const [filterLawyer, setFilterLawyer] = useState('')
   const [filterDelegate, setFilterDelegate] = useState('')
+  const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>('')
   const [lawyers, setLawyers] = useState<any[]>([])
   const [delegates, setDelegates] = useState<{ id: string; full_name: string }[]>([])
   const lawyersRef = useRef(lawyers)
@@ -466,7 +470,7 @@ export default function TaskReviewPage() {
 
     if (append) setLoadingMore(true)
     else {
-      const cacheKey = `tasks:review:v3:${branchId ?? 'all'}:${assigneeFilterId ?? 'all'}:${offset}`
+      const cacheKey = `tasks:review:v4:${branchId ?? 'all'}:${assigneeFilterId ?? 'all'}:${filterCaseType || 'all'}:${offset}`
       const cached = cacheGet<{ tasks: any[]; lawyers: any[]; delegates: any[]; total: number }>(cacheKey)
       if (cached && !append) {
         setTasks(cached.tasks)
@@ -487,6 +491,7 @@ export default function TaskReviewPage() {
           offset,
           limit: REVIEW_TASK_PAGE_SIZE,
           lawyerId: assigneeFilterId,
+          caseType: filterCaseType || null,
           includeCompletionData: true,
         }),
         append ? Promise.resolve(lawyersRef.current) : fetchBranchLawyers(supabase, branchId),
@@ -525,7 +530,7 @@ export default function TaskReviewPage() {
 
       setTasks(prev => {
         const merged = append ? [...prev, ...nextTasks] : nextTasks
-        cacheSet(`tasks:review:v3:${branchId ?? 'all'}:${assigneeFilterId ?? 'all'}:${offset}`, {
+        cacheSet(`tasks:review:v4:${branchId ?? 'all'}:${assigneeFilterId ?? 'all'}:${filterCaseType || 'all'}:${offset}`, {
           tasks: merged,
           lawyers: l ?? [],
           delegates: nextDelegates,
@@ -550,17 +555,17 @@ export default function TaskReviewPage() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [branchId, viewAllBranches, assigneeFilterId])
+  }, [branchId, viewAllBranches, assigneeFilterId, filterCaseType])
 
   useEffect(() => {
     setPageOffset(0)
     load(false, 0)
-  }, [branchId, viewAllBranches, assigneeFilterId, load])
+  }, [branchId, viewAllBranches, assigneeFilterId, filterCaseType, load])
 
   useEffect(() => {
     const loadDefs = async () => {
       const supabase = createClient()
-      const data = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, sort_order, fee_amount, branch_id')
+      const data = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, sort_order, fee_amount, branch_id, case_type')
       setTaskDefs(data as unknown as TaskDef[])
     }
     loadDefs()
@@ -587,6 +592,16 @@ export default function TaskReviewPage() {
       />
 
       <div className="flex flex-wrap items-center gap-3">
+        <div className="w-60">
+          <PremiumSelect
+            value={filterCaseType}
+            onChange={(v) => setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')}
+            options={CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+            placeholder="كل أنواع الدعاوى"
+            headerTitle="تصفية حسب نوع الدعوى"
+            searchable={false}
+          />
+        </div>
         <div className="w-60">
           <PremiumSelect
             value={filterLawyer}
@@ -653,6 +668,9 @@ export default function TaskReviewPage() {
                     <div className="min-w-0">
                       <p className="text-white font-bold text-sm leading-tight">{taskLabel}</p>
                       <p className="text-white/70 text-xs mt-0.5 truncate">{task.debtors?.full_name ?? '—'}</p>
+                      <p className="text-white/55 text-[11px] mt-0.5">
+                        {CASE_TYPE_LABELS[normalizeCaseType(task.debtors?.case_type)]}
+                      </p>
                     </div>
                     <Badge variant="purple">بانتظار الاعتماد</Badge>
                   </div>

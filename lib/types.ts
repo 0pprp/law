@@ -96,6 +96,8 @@ export interface Debtor {
   employer: string | null
   branch_id?: string | null
   branch_list_id?: string | null
+  /** مدنية | جزائية — الافتراضي مدنية */
+  case_type?: 'civil' | 'criminal'
   receipt_type: ReceiptType
   receipt_number: string | null
   receipt_amount: number

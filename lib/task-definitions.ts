@@ -8,6 +8,7 @@ export async function fetchActiveTaskDefinitions<T extends string = 'id, label, 
   supabase: SupabaseClient,
   branchId: string | null,
   select: T = 'id, label, sort_order' as T,
+  options?: { caseType?: 'civil' | 'criminal' | null },
 ): Promise<Record<string, unknown>[]> {
   let q = supabase
     .from('task_definitions')
@@ -15,6 +16,7 @@ export async function fetchActiveTaskDefinitions<T extends string = 'id, label, 
     .eq('is_active', true)
     .order('sort_order')
   if (branchId) q = q.eq('branch_id', branchId)
+  if (options?.caseType) q = q.eq('case_type', options.caseType)
 
   const { data, error } = await q
 

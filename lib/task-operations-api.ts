@@ -140,9 +140,20 @@ export async function applyTaskTransition(
 
   const { data: nextDef } = await supabase
     .from('task_definitions')
-    .select('id, label, fee_amount, task_type')
+    .select('id, label, fee_amount, task_type, case_type')
     .eq('id', nextTaskDefId)
     .maybeSingle()
+
+  const { data: debtorRow } = await supabase
+    .from('debtors')
+    .select('case_type')
+    .eq('id', task.debtor_id)
+    .maybeSingle()
+  const debtorCase = debtorRow?.case_type === 'criminal' ? 'criminal' : 'civil'
+  const nextCase = nextDef?.case_type === 'criminal' ? 'criminal' : 'civil'
+  if (nextCase !== debtorCase) {
+    return { ok: false, error: 'المهمة اللاحقة يجب أن تطابق نوع دعوى المدين' }
+  }
 
   const { data: newTask, error: insertErr } = await supabase.from('tasks').insert({
     debtor_id: task.debtor_id,

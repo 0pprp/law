@@ -537,6 +537,7 @@ export async function executeDebtorImport(
       created_by: ctx.userId,
       branch_id: ctx.branchId,
       branch_list_id: listRefs[i]?.id ?? null,
+      case_type: 'civil',
     }))
 
     const { data: debtors, error: dErr } = await supabase

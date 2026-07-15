@@ -15,6 +15,7 @@ export interface ReportFilters {
   debtorId?: string
   lawyerId?: string
   branchListId?: string
+  caseType?: 'civil' | 'criminal' | ''
 }
 
 const CHUNK = 500
@@ -40,17 +41,28 @@ async function resolveScopedDebtorIds(
   branchId: string | null,
   filters: ReportFilters,
 ): Promise<string[] | null> {
+  let ids: string[] | null = null
+
   if (filters.debtorId) {
     if (filters.branchListId && branchId) {
       const listIds = await resolveDebtorIdsByBranchList(supabase, branchId, filters.branchListId)
       if (!listIds.includes(filters.debtorId)) return []
     }
-    return [filters.debtorId]
+    ids = [filters.debtorId]
+  } else if (filters.branchListId && branchId) {
+    ids = await resolveDebtorIdsByBranchList(supabase, branchId, filters.branchListId)
   }
-  if (filters.branchListId && branchId) {
-    return resolveDebtorIdsByBranchList(supabase, branchId, filters.branchListId)
+
+  if (!filters.caseType) return ids
+
+  let q = supabase.from('debtors').select('id').eq('case_type', filters.caseType)
+  if (branchId) q = q.eq('branch_id', branchId)
+  if (ids) {
+    if (!ids.length) return []
+    q = q.in('id', ids)
   }
-  return null
+  const { data } = await q
+  return (data ?? []).map(d => d.id)
 }
 
 function applyDebtorScope<T extends { eq: (col: string, val: string) => T; in: (col: string, vals: string[]) => T }>(
@@ -236,6 +248,7 @@ async function fetchStageCounts(
   supabase: SupabaseClient,
   branchId: string | null,
   taskDefs: { id: string; label: string; sort_order: number }[],
+  caseType?: 'civil' | 'criminal' | '' | null,
 ): Promise<{ stageCounts: ReportSnapshot['stageCounts']; totalActive: number }> {
   const stageMap = new Map<string, { id: string; label: string; active: number; stalled: number }>()
   for (const def of taskDefs) {
@@ -254,6 +267,7 @@ async function fetchStageCounts(
       .order('id')
       .range(offset, offset + CHUNK - 1)
     if (branchId) debtorsQ = debtorsQ.eq('branch_id', branchId)
+    if (caseType) debtorsQ = debtorsQ.eq('case_type', caseType)
 
     const { data: debtors, error } = await debtorsQ
 
@@ -389,18 +403,26 @@ export async function fetchReportSnapshot(
           .order('full_name')
       : Promise.resolve({ data: [] as { id: string; full_name: string; governorate: string | null; lawyer_type: string | null }[] }),
     branchId
-      ? supabase
-          .from('task_definitions')
-          .select('id, label, sort_order')
-          .eq('branch_id', branchId)
-          .eq('is_active', true)
-          .order('sort_order')
-      : supabase
-          .from('task_definitions')
-          .select('id, label, sort_order')
-          .eq('is_active', true)
-          .order('sort_order')
-          .limit(200),
+      ? (() => {
+          let q = supabase
+            .from('task_definitions')
+            .select('id, label, sort_order')
+            .eq('branch_id', branchId)
+            .eq('is_active', true)
+            .order('sort_order')
+          if (filters.caseType) q = q.eq('case_type', filters.caseType)
+          return q
+        })()
+      : (() => {
+          let q = supabase
+            .from('task_definitions')
+            .select('id, label, sort_order')
+            .eq('is_active', true)
+            .order('sort_order')
+            .limit(200)
+          if (filters.caseType) q = q.eq('case_type', filters.caseType)
+          return q
+        })(),
     closedQ,
   ])
 
@@ -429,7 +451,7 @@ export async function fetchReportSnapshot(
     sumRequiredAmount(supabase, branchId, scopedDebtorIds),
     fetchAchievementTasks(supabase, branchId, filters, scopedDebtorIds),
     countOpenTasks(supabase, branchId, filters, scopedDebtorIds),
-    fetchStageCounts(supabase, branchId, taskDefs),
+    fetchStageCounts(supabase, branchId, taskDefs, filters.caseType || null),
   ])
 
   return {

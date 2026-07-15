@@ -20,9 +20,17 @@ import {
 } from '@/lib/reports-data'
 import { BranchListFilterSelect } from '@/components/BranchListSelect'
 import { useBranchLists } from '@/hooks/use-branch-lists'
+import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
 
-interface Filters { dateFrom: string; dateTo: string; debtorId: string; lawyerId: string; branchListId: string }
-const EMPTY: Filters = { dateFrom: '', dateTo: '', debtorId: '', lawyerId: '', branchListId: '' }
+interface Filters {
+  dateFrom: string
+  dateTo: string
+  debtorId: string
+  lawyerId: string
+  branchListId: string
+  caseType: '' | 'civil' | 'criminal'
+}
+const EMPTY: Filters = { dateFrom: '', dateTo: '', debtorId: '', lawyerId: '', branchListId: '', caseType: '' }
 
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
@@ -128,7 +136,16 @@ export default function ReportsPage() {
     }
   }, [snapshot])
 
-  function d(k: keyof Filters, v: string) { setDraft(prev => ({ ...prev, [k]: v })) }
+  function d(k: keyof Filters, v: string) {
+    if (k === 'caseType') {
+      setDraft(prev => ({
+        ...prev,
+        caseType: v === 'civil' || v === 'criminal' ? v : '',
+      }))
+      return
+    }
+    setDraft(prev => ({ ...prev, [k]: v }))
+  }
   const hasApplied = Object.values(applied).some(Boolean)
 
   return (
@@ -151,7 +168,7 @@ export default function ReportsPage() {
 
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-5">
         <p className="text-xs font-bold text-[#767676] uppercase tracking-wider mb-3">معايير التقرير</p>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
           <div className="md:col-span-1">
             <DateRangePicker
               dateFrom={draft.dateFrom}
@@ -160,6 +177,17 @@ export default function ReportsPage() {
               fieldLabel="فترة التقرير"
               headerTitle="اختر فترة التقرير"
               placeholder="اختر فترة التقرير"
+            />
+          </div>
+          <div>
+            <PremiumSelect
+              value={draft.caseType}
+              onChange={v => d('caseType', v)}
+              options={CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+              fieldLabel="نوع الدعوى"
+              placeholder="كل أنواع الدعاوى"
+              headerTitle="تصفية حسب نوع الدعوى"
+              searchable={false}
             />
           </div>
           <div>

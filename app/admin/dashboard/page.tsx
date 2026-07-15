@@ -21,7 +21,8 @@ import {
 } from '@/lib/task-assignment'
 
 interface DashboardCache {
-  stages: UnassignedStageCount[]
+  civilStages: UnassignedStageCount[]
+  criminalStages: UnassignedStageCount[]
   unassigned: number
   assigned: number
   pendingReview: number
@@ -36,6 +37,73 @@ function TaskStageIcon() {
   )
 }
 
+function StageGrid({
+  stages,
+  loading,
+  emptyHref,
+  showAddLink,
+}: {
+  stages: UnassignedStageCount[]
+  loading: boolean
+  emptyHref: string
+  showAddLink: boolean
+}) {
+  const stageTotal = stages.reduce((sum, s) => sum + s.count, 0)
+  if (loading) {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-32 bg-white rounded-xl border animate-pulse" />
+        ))}
+      </div>
+    )
+  }
+  if (stages.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl border p-10 text-center">
+        <p className="text-sm font-semibold text-[#231F20]">لا توجد مهام غير مكلفة حالياً</p>
+        {showAddLink && (
+          <Link href={emptyHref} className="inline-flex mt-4 text-xs font-semibold text-[#2C8780] hover:underline">
+            إضافة مدين جديد ←
+          </Link>
+        )}
+      </div>
+    )
+  }
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+      {stages.map((s, i) => {
+        const pct = stageTotal > 0 ? Math.round((s.count / stageTotal) * 100) : 0
+        return (
+          <StatCard
+            key={s.id}
+            label={s.label}
+            value={s.count}
+            sub={`${s.count} غير مكلفة · ${pct}%`}
+            accent={stageAccent(i)}
+            icon={<TaskStageIcon />}
+            iconBg={stageIconBg(i)}
+            footer={
+              <div className="space-y-2">
+                <div className="h-1.5 bg-[rgba(118,118,118,0.1)] rounded-full overflow-hidden">
+                  <div className="h-full bg-yellow-400 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                </div>
+                <Link
+                  href={`/admin/dashboard/stages/${s.id}`}
+                  className="block w-full py-1.5 text-center text-[11px] font-bold text-white rounded-lg hover:opacity-90 transition-opacity"
+                  style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+                >
+                  عرض غير المكلفة
+                </Link>
+              </div>
+            }
+          />
+        )
+      })}
+    </div>
+  )
+}
+
 export default function DashboardPage() {
   const branchId = useBranchId()
   const { viewAllBranches } = useBranch()
@@ -45,7 +113,8 @@ export default function DashboardPage() {
   const legalManagerView = isLegalManager(role)
   const accountantView = isAccountant(role)
   const [lmWalletBalance, setLmWalletBalance] = useState<number | null>(null)
-  const [stages, setStages] = useState<UnassignedStageCount[]>([])
+  const [civilStages, setCivilStages] = useState<UnassignedStageCount[]>([])
+  const [criminalStages, setCriminalStages] = useState<UnassignedStageCount[]>([])
   const [totalPendingReview, setTotalPendingReview] = useState(0)
   const [totalWaiting, setTotalWaiting] = useState(0)
   const [totalAssigned, setTotalAssigned] = useState(0)
@@ -56,7 +125,8 @@ export default function DashboardPage() {
     const supabase = createClient()
 
     if (!branchId && !viewAllBranches) {
-      setStages([])
+      setCivilStages([])
+      setCriminalStages([])
       setTotalWaiting(0)
       setTotalAssigned(0)
       setTotalPendingReview(0)
@@ -65,10 +135,11 @@ export default function DashboardPage() {
       return
     }
 
-    const cacheKey = `dashboard:${branchId ?? 'all'}`
+    const cacheKey = `dashboard:v2:${branchId ?? 'all'}`
     const cached = cacheGet<DashboardCache>(cacheKey)
     if (cached) {
-      setStages(cached.stages)
+      setCivilStages(cached.civilStages)
+      setCriminalStages(cached.criminalStages)
       setTotalWaiting(cached.unassigned)
       setTotalAssigned(cached.assigned)
       setTotalPendingReview(cached.pendingReview)
@@ -78,7 +149,8 @@ export default function DashboardPage() {
     }
 
     setLoading(true)
-    setStages([])
+    setCivilStages([])
+    setCriminalStages([])
     setTotalWaiting(0)
     setTotalAssigned(0)
     setTotalPendingReview(0)
@@ -94,22 +166,25 @@ export default function DashboardPage() {
         .limit(5)
       if (branchId) aq = (aq as any).eq('branch_id', branchId)
 
-      const [dashData, pendingReview, activityRes] = await Promise.all([
-        fetchDashboardData(supabase, branchId),
+      const [civilData, criminalData, pendingReview, activityRes] = await Promise.all([
+        fetchDashboardData(supabase, branchId, { caseType: 'civil' }),
+        fetchDashboardData(supabase, branchId, { caseType: 'criminal' }),
         fetchPendingReviewCount(supabase, branchId),
         aq,
       ])
 
       const next: DashboardCache = {
-        stages: dashData.stages,
-        unassigned: dashData.unassigned,
-        assigned: dashData.assigned,
+        civilStages: civilData.stages,
+        criminalStages: criminalData.stages,
+        unassigned: civilData.unassigned + criminalData.unassigned,
+        assigned: civilData.assigned + criminalData.assigned,
         pendingReview,
         recentActivity: activityRes.data ?? [],
       }
       cacheSet(cacheKey, next, CACHE_TTL.dashboard)
 
-      setStages(next.stages)
+      setCivilStages(next.civilStages)
+      setCriminalStages(next.criminalStages)
       setTotalWaiting(next.unassigned)
       setTotalAssigned(next.assigned)
       setTotalPendingReview(next.pendingReview)
@@ -131,8 +206,6 @@ export default function DashboardPage() {
     })
   }, [legalManagerView])
 
-  const stageTotal = stages.reduce((sum, s) => sum + s.count, 0)
-
   const {
     visibleItems: visibleActivity,
     expanded: activityExpanded,
@@ -143,8 +216,6 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 w-full">
-
-      {/* Hero */}
       <div className="rounded-2xl overflow-hidden relative" style={{ background: 'linear-gradient(135deg, #231F20 0%, #1a1617 100%)' }}>
         <div className="absolute inset-0 overflow-hidden">
           <div className="absolute -top-16 -right-16 w-64 h-64 bg-[#2C8780]/10 rounded-full" />
@@ -157,8 +228,8 @@ export default function DashboardPage() {
             </h1>
             <p className="text-white/50 text-sm sm:text-base mt-2 font-medium">
               {viewAllBranches
-                ? 'إحصائيات مجمّعة لجميع الفروع — مهام غير مكلفة والمكلفة وبانتظار المراجعة'
-                : 'مهام غير مكلفة حسب نوع المهمة — والمكلفة وبانتظار المراجعة'}
+                ? 'إحصائيات مجمّعة لجميع الفروع — مدنية وجزائية'
+                : 'مهام غير مكلفة حسب نوع المهمة — والمدنية والجزائية'}
             </p>
           </div>
           <div className="flex items-stretch gap-5 sm:gap-6 shrink-0">
@@ -196,67 +267,36 @@ export default function DashboardPage() {
           value={lmWalletBalance === null ? '—' : fmtMoney(lmWalletBalance)}
           accent="teal"
           valueColor="text-[#2C8780]"
-          sub="لك نسبة 5% من أتعاب كل إنجاز معتمد"
+          sub="لك نسبة 5% من أتعاب كل إنجاز معتمد (الدعاوى المدنية فقط)"
         />
       )}
 
-      {/* Stage boxes — unassigned only */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-black text-[#231F20] text-base sm:text-lg">المراحل القانونية (غير مكلفة)</h2>
+          <h2 className="font-black text-[#231F20] text-base sm:text-lg">القضايا المدنية غير المكلفة</h2>
           <span className="text-sm text-[#454042] font-medium">المهام المكلفة لا تظهر هنا</span>
         </div>
-
-        {loading ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {[...Array(6)].map((_, i) => (
-              <div key={i} className="h-32 bg-white rounded-xl border animate-pulse" />
-            ))}
-          </div>
-        ) : stages.length === 0 ? (
-          <div className="bg-white rounded-2xl border p-12 text-center">
-            <p className="text-sm font-semibold text-[#231F20]">لا توجد مهام غير مكلفة حالياً</p>
-            {showAddDebtorLink && (
-            <Link href="/admin/debtors/new" className="inline-flex mt-4 text-xs font-semibold text-[#2C8780] hover:underline">
-              إضافة مدين جديد ←
-            </Link>
-            )}
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {stages.map((s, i) => {
-              const pct = stageTotal > 0 ? Math.round((s.count / stageTotal) * 100) : 0
-              return (
-                <StatCard
-                  key={s.id}
-                  label={s.label}
-                  value={s.count}
-                  sub={`${s.count} غير مكلفة · ${pct}%`}
-                  accent={stageAccent(i)}
-                  icon={<TaskStageIcon />}
-                  iconBg={stageIconBg(i)}
-                  footer={
-                    <div className="space-y-2">
-                      <div className="h-1.5 bg-[rgba(118,118,118,0.1)] rounded-full overflow-hidden">
-                        <div className="h-full bg-yellow-400 rounded-full transition-all" style={{ width: `${pct}%` }} />
-                      </div>
-                      <Link
-                        href={`/admin/dashboard/stages/${s.id}`}
-                        className="block w-full py-1.5 text-center text-[11px] font-bold text-white rounded-lg hover:opacity-90 transition-opacity"
-                        style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
-                      >
-                        عرض غير المكلفة
-                      </Link>
-                    </div>
-                  }
-                />
-              )
-            })}
-          </div>
-        )}
+        <StageGrid
+          stages={civilStages}
+          loading={loading}
+          emptyHref="/admin/debtors/new"
+          showAddLink={showAddDebtorLink}
+        />
       </div>
 
-      {/* Quick actions — حسب الدور دون تغيير صلاحيات المدير */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-black text-[#231F20] text-base sm:text-lg">القضايا الجزائية غير المكلفة</h2>
+          <span className="text-sm text-[#454042] font-medium">نفس سير التكليف الحالي</span>
+        </div>
+        <StageGrid
+          stages={criminalStages}
+          loading={loading}
+          emptyHref="/admin/debtors/new"
+          showAddLink={showAddDebtorLink}
+        />
+      </div>
+
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {(accountantView
           ? [

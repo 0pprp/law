@@ -12,6 +12,8 @@ import {
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import Link from 'next/link'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, type CaseType } from '@/lib/case-type'
 
 interface ClosedCase {
   id: string
@@ -23,6 +25,7 @@ interface ClosedCase {
   branch_name: string
   total_paid: number
   last_task_label: string | null
+  case_type: 'civil' | 'criminal'
 }
 
 export default function ClosedCasesPage() {
@@ -35,6 +38,7 @@ export default function ClosedCasesPage() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>('')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [loadError, setLoadError] = useState('')
 
@@ -67,7 +71,7 @@ export default function ClosedCasesPage() {
     const { rows: debtors, total: count, error } = await fetchBranchClosedDebtorsPaginated(
       supabase,
       branchId,
-      { offset, limit: CLOSED_CASES_PAGE_SIZE, debtorIds },
+      { offset, limit: CLOSED_CASES_PAGE_SIZE, debtorIds, caseType: filterCaseType || null },
     )
 
     if (error) {
@@ -109,6 +113,7 @@ export default function ClosedCasesPage() {
       branch_name: (d.branch_id && branchMap.get(d.branch_id)) || '—',
       total_paid: paidMap.get(d.id) ?? 0,
       last_task_label: lastTaskLabels.get(d.id) ?? null,
+      case_type: d.case_type,
     }))
 
     setCases(prev => (append ? [...prev, ...pageCases] : pageCases))
@@ -116,7 +121,7 @@ export default function ClosedCasesPage() {
     setPageOffset(offset + pageCases.length)
     setLoading(false)
     setLoadingMore(false)
-  }, [branchId, viewAllBranches, debouncedSearch])
+  }, [branchId, viewAllBranches, debouncedSearch, filterCaseType])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -140,13 +145,24 @@ export default function ClosedCasesPage() {
             {total} قضية محسومة — المدينون الذين أُغلقت قضاياهم بعد اعتماد الإنجاز
           </p>
         </div>
-        <input
-          type="search"
-          placeholder={DEBTOR_SEARCH_PLACEHOLDER}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="px-4 py-2 border border-slate-200 rounded-lg text-sm w-full sm:w-64"
-        />
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <div className="w-full sm:w-52">
+            <PremiumSelect
+              value={filterCaseType}
+              onChange={v => setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')}
+              options={CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+              placeholder="كل أنواع الدعاوى"
+              searchable={false}
+            />
+          </div>
+          <input
+            type="search"
+            placeholder={DEBTOR_SEARCH_PLACEHOLDER}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="px-4 py-2 border border-slate-200 rounded-lg text-sm w-full sm:w-64"
+          />
+        </div>
       </div>
 
       {loadError && (
@@ -167,6 +183,7 @@ export default function ClosedCasesPage() {
             <thead className="bg-slate-50 border-b border-slate-100">
               <tr>
                 <th className="text-right px-4 py-3 font-medium text-slate-600">المدين</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">نوع الدعوى</th>
                 <th className="text-right px-4 py-3 font-medium text-slate-600">الهاتف</th>
                 <th className="text-right px-4 py-3 font-medium text-slate-600">الفرع</th>
                 <th className="text-right px-4 py-3 font-medium text-slate-600">آخر مهمة منفذة</th>
@@ -180,6 +197,7 @@ export default function ClosedCasesPage() {
               {cases.map(c => (
                 <tr key={c.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-900">{c.full_name}</td>
+                  <td className="px-4 py-3 text-slate-600">{CASE_TYPE_LABELS[c.case_type]}</td>
                   <td className="px-4 py-3 text-slate-600 font-mono text-xs" dir="ltr">{c.phone ?? '—'}</td>
                   <td className="px-4 py-3 text-slate-600">{c.branch_name}</td>
                   <td className="px-4 py-3 text-slate-600">{c.last_task_label ?? '—'}</td>

@@ -50,6 +50,7 @@ export interface CurrentBranchTaskRow {
   branch_id: string | null
   branchName: string | null
   branchListName: string | null
+  caseType: 'civil' | 'criminal'
   lawyerId: string | null
   lawyerName: string | null
   lawyerRole: string | null
@@ -100,6 +101,7 @@ export interface PendingReviewTask {
     phone: string | null
     governorate: string | null
     case_status: string | null
+    case_type?: string | null
     branch_id: string | null
     latitude?: number | null
     longitude?: number | null
@@ -123,6 +125,7 @@ export interface FetchPendingReviewOptions {
   offset?: number
   limit?: number
   lawyerId?: string | null
+  caseType?: 'civil' | 'criminal' | null
   includeCompletionData?: boolean
 }
 
@@ -146,7 +149,7 @@ async function hydratePendingReviewTasks(
   const debtorIds = [...new Set(rawTasks.map(t => t.debtor_id as string))]
   let debtorsQ = supabase
     .from('debtors')
-    .select('id, full_name, phone, governorate, case_status, branch_id')
+    .select('id, full_name, phone, governorate, case_status, case_type, branch_id')
     .in('id', debtorIds)
   if (branchId) debtorsQ = debtorsQ.eq('branch_id', branchId)
 
@@ -216,6 +219,7 @@ export async function fetchPendingReviewTasksPaginated(
     .select('id')
     .not('case_status', 'eq', 'closed')
   if (branchId) openDebtorsQ = openDebtorsQ.eq('branch_id', branchId)
+  if (options?.caseType) openDebtorsQ = openDebtorsQ.eq('case_type', options.caseType)
   const { data: openDebtors } = await openDebtorsQ
   const openIds = (openDebtors ?? []).map(d => d.id)
   if (!openIds.length) return { tasks: [], total: 0 }
@@ -328,6 +332,7 @@ const CURRENT_TASK_EMBED = `
   full_name,
   phone,
   receipt_number,
+  case_type,
   current_task_id,
   case_status,
   current_task:tasks!current_task_id(
@@ -350,6 +355,7 @@ const CURRENT_TASK_EMBED_INNER = `
   full_name,
   phone,
   receipt_number,
+  case_type,
   branch_list_id,
   branch_list:branch_lists(name),
   current_task_id,
@@ -377,6 +383,7 @@ export interface FetchCurrentBranchTasksOptions {
   taskDefinitionIds?: string[] | null
   branchListId?: string | null
   debtorIds?: string[] | null
+  caseType?: 'civil' | 'criminal' | null
   offset?: number
   limit?: number
 }
@@ -417,6 +424,7 @@ function debtorRowsToTaskRows(debtors: any[], branchId: string | null): CurrentB
       branch_id: task.branch_id,
       branchName: null,
       branchListName: bl?.name?.trim() ?? null,
+      caseType: d.case_type === 'criminal' ? 'criminal' : 'civil',
       lawyerId: taskLawyerId(task),
       lawyerName: null,
       lawyerRole: null,
@@ -470,6 +478,7 @@ function applyCurrentTaskListFilters(
   let query = q
   if (options?.debtorIds?.length) query = query.in('id', options.debtorIds)
   if (options?.branchListId) query = query.eq('branch_list_id', options.branchListId)
+  if (options?.caseType) query = query.eq('case_type', options.caseType)
   if (options?.taskDefinitionIds?.length) {
     query = query.in('current_task.task_definition_id', options.taskDefinitionIds)
   } else if (options?.taskDefinitionId) {
@@ -492,6 +501,7 @@ function applyCurrentTaskListFilters(
 async function scanCurrentTaskMeta(
   supabase: SupabaseClient,
   branchId: string | null,
+  caseType?: 'civil' | 'criminal' | null,
 ): Promise<CurrentTaskMeta> {
   let unassigned = 0
   let assigned = 0
@@ -507,6 +517,7 @@ async function scanCurrentTaskMeta(
       .order('id')
       .range(offset, offset + STATS_CHUNK_SIZE - 1)
     if (branchId) debtorsQ = debtorsQ.eq('branch_id', branchId)
+    if (caseType) debtorsQ = debtorsQ.eq('case_type', caseType)
 
     const { data: debtors, error } = await debtorsQ
 
@@ -706,8 +717,9 @@ export async function fetchCurrentTaskStats(
 export async function fetchDashboardData(
   supabase: SupabaseClient,
   branchId: string | null,
+  options?: { caseType?: 'civil' | 'criminal' | null },
 ): Promise<{ stages: UnassignedStageCount[]; unassigned: number; assigned: number }> {
-  const meta = await scanCurrentTaskMeta(supabase, branchId)
+  const meta = await scanCurrentTaskMeta(supabase, branchId, options?.caseType ?? null)
   if (meta.unassigned === 0) {
     return { stages: [], unassigned: 0, assigned: meta.assigned }
   }

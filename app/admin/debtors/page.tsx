@@ -22,6 +22,8 @@ import { canAddDebtor, canAssignTasks, canDelete, canEditRecords, canImportDebto
 import { appConfirm } from '@/lib/app-dialog'
 import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, normalizeCaseType, type CaseType } from '@/lib/case-type'
 
 const PAGE_SIZE = 50
 
@@ -66,18 +68,20 @@ export default function DebtorsPage() {
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [filterListId, setFilterListId] = useState('')
+  const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>('')
   const [importOpen, setImportOpen] = useState(false)
   const { lists: branchLists } = useBranchLists(branchId)
 
   useEffect(() => {
     setFilterListId('')
+    setFilterCaseType('')
     setSearch('')
   }, [branchId, viewAllBranches])
   const [showAllDebtors, setShowAllDebtors] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Server-side fetch with optional search (via admin API لتجاوز قيود RLS على المحاسب العام)
-  const fetchDebtors = useCallback(async (searchTerm: string, listId: string, offset = 0, append = false) => {
+  const fetchDebtors = useCallback(async (searchTerm: string, listId: string, caseType: '' | CaseType = '', offset = 0, append = false) => {
     if (!branchId && !viewAllBranches) {
       setDebtors([])
       setTotal(0)
@@ -96,6 +100,7 @@ export default function DebtorsPage() {
       if (viewAllBranches) params.set('viewAll', '1')
       else if (branchId) params.set('branchId', branchId)
       if (listId) params.set('listId', listId)
+      if (caseType) params.set('caseType', caseType)
       if (searchTerm.trim()) params.set('search', searchTerm.trim())
 
       const res = await fetch(`/api/admin/debtors?${params}`)
@@ -122,20 +127,20 @@ export default function DebtorsPage() {
   }, [branchId, viewAllBranches])
 
   useEffect(() => {
-    fetchDebtors(search, filterListId)
-  }, [fetchDebtors, filterListId])
+    fetchDebtors(search, filterListId, filterCaseType)
+  }, [fetchDebtors, filterListId, filterCaseType])
 
   function handleSearch(val: string) {
     setSearch(val)
     setShowAllDebtors(false)
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      fetchDebtors(val, filterListId)
+      fetchDebtors(val, filterListId, filterCaseType)
     }, 300)
   }
 
   function loadMore() {
-    fetchDebtors(search, filterListId, debtors.length, true)
+    fetchDebtors(search, filterListId, filterCaseType, debtors.length, true)
   }
 
   async function deleteDebtor(id: string, name: string) {
@@ -154,7 +159,7 @@ export default function DebtorsPage() {
     if (dbErr) { setError(`فشل الحذف: ${dbErr.message}`); setDeletingId(null); return }
     await logActivity({ action: 'delete_debtor', entity_type: 'debtor', entity_id: id, description: `حذف مدين: ${name}` }, supabase)
     setDeletingId(null)
-    fetchDebtors(search, filterListId)
+    fetchDebtors(search, filterListId, filterCaseType)
   }
 
   const hasMore = debtors.length < total
@@ -196,7 +201,7 @@ export default function DebtorsPage() {
 
       {/* Search bar */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className={`grid grid-cols-1 gap-3 ${viewAllBranches ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
           <div className="relative">
             <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-[#767676]">
               <SearchIcon />
@@ -215,6 +220,15 @@ export default function DebtorsPage() {
               </button>
             )}
           </div>
+          <PremiumSelect
+            value={filterCaseType}
+            onChange={v => setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')}
+            options={CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+            placeholder="كل أنواع الدعاوى"
+            fieldLabel="نوع الدعوى"
+            headerTitle="تصفية حسب نوع الدعوى"
+            searchable={false}
+          />
           {!viewAllBranches && (
             <BranchListFilterSelect
               value={filterListId}
@@ -223,10 +237,11 @@ export default function DebtorsPage() {
             />
           )}
         </div>
-        {(search || filterListId) && !loading && (
+        {(search || filterListId || filterCaseType) && !loading && (
           <p className="text-xs text-[#767676] mt-2">
             {total === 0 ? 'لا نتائج' : `${total} نتيجة`}
             {search ? ` للبحث عن "${search}"` : ''}
+            {filterCaseType ? ` · ${CASE_TYPE_LABELS[filterCaseType]}` : ''}
             {filterListId ? ' ضمن القائمة المحددة' : ''}
           </p>
         )}
@@ -245,6 +260,7 @@ export default function DebtorsPage() {
                 <THead>
                   <tr>
                     <TH>الاسم</TH>
+                    <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH><TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
                     <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
@@ -279,6 +295,7 @@ export default function DebtorsPage() {
                 <THead>
                   <tr>
                     <TH>الاسم</TH>
+                    <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH>
                     <TH>رقم الهوية</TH>
@@ -302,6 +319,11 @@ export default function DebtorsPage() {
                             <p className="text-[11px] text-[#767676] mt-0.5 font-mono" dir="ltr">{debtor.phone}</p>
                           )}
                         </div>
+                      </TD>
+                      <TD>
+                        <span className="text-xs text-[#767676]">
+                          {CASE_TYPE_LABELS[normalizeCaseType(debtor.case_type)]}
+                        </span>
                       </TD>
                       {viewAllBranches && (
                         <TD><span className="text-xs text-[#767676]">{debtor.branch_name ?? '—'}</span></TD>
@@ -361,6 +383,9 @@ export default function DebtorsPage() {
                   {viewAllBranches && debtor.branch_name && (
                     <p className="text-xs text-[#2C8780] mb-1">{debtor.branch_name}</p>
                   )}
+                  <p className="text-xs text-[#767676] mb-1">
+                    نوع الدعوى: {CASE_TYPE_LABELS[normalizeCaseType(debtor.case_type)]}
+                  </p>
                   {debtor.id_number && <p className="text-xs text-[#767676] font-mono mb-1" dir="ltr">{debtor.id_number}</p>}
                   <p className="text-xs text-[#767676] mb-1">القائمة: {debtorListName(debtor)}</p>
                   {debtor.receipt_number && <p className="text-xs text-[#767676] font-mono mb-2" dir="ltr">{RECEIPT_NUMBER_LABEL}: {debtor.receipt_number}</p>}
@@ -426,7 +451,7 @@ export default function DebtorsPage() {
       <DebtorImportModal
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onComplete={() => fetchDebtors(search, filterListId)}
+        onComplete={() => fetchDebtors(search, filterListId, filterCaseType)}
       />
     </div>
   )

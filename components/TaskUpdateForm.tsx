@@ -61,6 +61,7 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
   const [error, setError] = useState('')
   const [generalNotes, setGeneralNotes] = useState('')
   const [teamOptions, setTeamOptions] = useState<{ value: string; label: string }[]>([])
+  const [gpsLoading, setGpsLoading] = useState(false)
 
   useEffect(() => {
     const branchId = (task as { branch_id?: string | null }).branch_id
@@ -196,17 +197,22 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
   }
 
   function getGPS(key: string) {
-    if (!navigator.geolocation) { setError('المتصفح لا يدعم تحديد الموقع — أدخل الإحداثيات يدوياً'); return }
+    if (!navigator.geolocation) { setError('المتصفح لا يدعم تحديد الموقع'); return }
     setError('')
+    setGpsLoading(true)
     navigator.geolocation.getCurrentPosition(
-      pos => set(key, `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`),
+      pos => {
+        set(key, `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`)
+        setGpsLoading(false)
+      },
       (err) => {
         const messages: Record<number, string> = {
-          1: 'تم رفض إذن الموقع — فعّل الموقع من إعدادات المتصفح أو أدخل الإحداثيات يدوياً',
-          2: 'تعذر تحديد الموقع — تحقق من GPS أو أدخل الإحداثيات يدوياً',
-          3: 'انتهت مهلة تحديد الموقع — حاول مرة أخرى أو أدخل الإحداثيات يدوياً',
+          1: 'تم رفض إذن الموقع — فعّل الموقع من إعدادات المتصفح وحاول مرة أخرى',
+          2: 'تعذر تحديد الموقع — تحقق من تشغيل خدمة GPS وحاول مرة أخرى',
+          3: 'انتهت مهلة تحديد الموقع — حاول مرة أخرى',
         }
-        setError(messages[err.code] ?? 'تعذر تحديد الموقع — أدخل الإحداثيات يدوياً من خرائط Google')
+        setError(messages[err.code] ?? 'تعذر تحديد الموقع — حاول مرة أخرى')
+        setGpsLoading(false)
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
     )
@@ -293,25 +299,44 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
           </div>
         )
 
-      case 'gps':
+      case 'gps': {
+        const confirmed = !!values[f.field_key]
         return (
           <div key={f.id}>
-            <label className="block text-xs font-bold text-[#231F20] mb-1.5">{label} {req && <span className="text-red-500">*</span>}</label>
-            <div className="flex gap-2">
-              <input type="text" value={values[f.field_key] ?? ''}
-                onChange={e => { set(f.field_key, e.target.value); setError('') }}
-                className={INP + ' flex-1'} placeholder="33.315200, 44.366100" dir="ltr" />
-              <button type="button" onClick={() => getGPS(f.field_key)}
-                className="shrink-0 px-3 py-2 text-xs font-bold text-white rounded-lg"
-                style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-                📍 تحديد
-              </button>
-            </div>
-            <p className="text-[10px] text-[#767676] mt-1.5">
-              إذا فشل التحديد التلقائي: افتح Google Maps → اضغط مطولاً على الموقع → انسخ الإحداثيات والصقها هنا
-            </p>
+            <label className="block text-xs font-bold text-[#231F20] mb-2">
+              {label} {req && <span className="text-red-500">*</span>}
+            </label>
+            <button
+              type="button"
+              onClick={() => getGPS(f.field_key)}
+              disabled={gpsLoading}
+              className="w-full py-3.5 px-4 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-70"
+              style={{
+                background: confirmed
+                  ? 'linear-gradient(135deg,#16a34a,#15803d)'
+                  : 'linear-gradient(135deg,#2C8780,#1D6365)',
+                color: '#fff',
+              }}
+            >
+              {gpsLoading ? (
+                <>
+                  <span className="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  جارٍ تحديد الموقع...
+                </>
+              ) : confirmed ? (
+                <>✓ تم التحديد — اضغط لتحديث الموقع</>
+              ) : (
+                <>📍 تحديد الموقع</>
+              )}
+            </button>
+            {confirmed && (
+              <p className="text-[10px] text-[#767676] mt-1.5 text-center font-mono" dir="ltr">
+                {values[f.field_key]}
+              </p>
+            )}
           </div>
         )
+      }
 
       case 'image':
         return (
