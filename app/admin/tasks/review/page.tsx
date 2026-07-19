@@ -20,8 +20,10 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { fetchActiveTaskDefinitions } from '@/lib/task-definitions'
 import { buildCompletionFieldLabelMap, resolveCompletionFieldLabel } from '@/lib/completion-field-labels'
 import { useAdminRole } from '@/context/admin-role'
-import { canReadAdminData, canReviewTasks } from '@/lib/permissions'
+import { canMoveToPaymentInProgress, canReadAdminData, canReviewTasks } from '@/lib/permissions'
 import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, normalizeCaseType, type CaseType } from '@/lib/case-type'
+import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
+import { appAlert } from '@/lib/app-dialog'
 
 interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number; branch_id?: string | null; case_type?: string | null }
 
@@ -117,10 +119,13 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
   task: any; taskDefs: TaskDef[]; onClose: () => void; onDone: () => void
 }) {
   const supabase = createClient()
+  const role = useAdminRole()
+  const allowPaymentInProgress = canMoveToPaymentInProgress(role)
   const [nextTaskId, setNextTaskId] = useState<string>('')
   const [updateGps, setUpdateGps] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
 
   const taskLabel = task.task_definitions?.label ?? (TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type)
   const gpsKeys = (task._gpsKeys ?? []) as string[]
@@ -171,7 +176,19 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
     setSaving(false); onDone(); onClose()
   }
 
+  async function handlePaymentSuccess() {
+    setShowPaymentModal(false)
+    await appAlert({
+      title: 'تم التحويل',
+      message: `تم نقل «${debtor?.full_name ?? 'المدين'}» إلى جاري التسديد بنجاح.`,
+      variant: 'success',
+    })
+    onDone()
+    onClose()
+  }
+
   return (
+    <>
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
       style={{ background: 'rgba(35,31,32,0.7)', backdropFilter: 'blur(3px)' }}>
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh]" dir="rtl">
@@ -180,6 +197,9 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
           <p className="text-xs text-[#767676] mt-0.5">
             المهمة المعتمدة: <span className="font-bold text-[#2C8780]">{taskLabel}</span>
             {' · '}{debtor?.full_name ?? '—'}
+          </p>
+          <p className="text-[10px] text-amber-700 font-semibold mt-1">
+            تُحتسب أتعاب هذه المهمة مرة واحدة فقط بعد تأكيد الإجراء اللاحق
           </p>
         </div>
 
@@ -229,6 +249,31 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
             <p className="text-[10px] text-[#767676] text-center">نقل المدين إلى أرشيف القضايا المحسومة (الإنجاز معتمد مسبقاً)</p>
           </div>
 
+          {allowPaymentInProgress && (
+            <>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-[rgba(118,118,118,0.15)]" />
+                <span className="text-[10px] text-[#767676] font-bold">أو</span>
+                <div className="flex-1 h-px bg-[rgba(118,118,118,0.15)]" />
+              </div>
+
+              {/* Option C: payment in progress — يفتح Modal قبل التأكيد */}
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-[#767676]">ج) التحويل إلى جاري التسديد</p>
+                <button
+                  type="button"
+                  onClick={() => { setError(''); setShowPaymentModal(true) }}
+                  disabled={saving}
+                  className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg,#0f766e,#115e59)' }}
+                >
+                  جاري التسديد
+                </button>
+                <p className="text-[10px] text-[#767676] text-center">يتطلب اختيار نوع التسديد ومكانه قبل التأكيد</p>
+              </div>
+            </>
+          )}
+
           {showGpsUpdate && (
             <label className="flex items-start gap-3 p-3 rounded-xl border border-[#2C8780]/30 bg-[#2C8780]/5 cursor-pointer">
               <input type="checkbox" checked={updateGps} onChange={e => setUpdateGps(e.target.checked)}
@@ -253,6 +298,18 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
         </div>
       </div>
     </div>
+
+    {showPaymentModal && (
+      <MoveToPaymentInProgressModal
+        open
+        debtorId={task.debtor_id}
+        debtorName={debtor?.full_name ?? '—'}
+        taskId={task.id}
+        onClose={() => setShowPaymentModal(false)}
+        onSuccess={() => void handlePaymentSuccess()}
+      />
+    )}
+    </>
   )
 }
 
@@ -266,6 +323,8 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
   const [error, setError] = useState('')
   const [showNextTask, setShowNextTask] = useState(false)
   const [approvedTask, setApprovedTask] = useState<any | null>(null)
+  // اعتماد الإنجاز تم (مرحلة أولى) — الأتعاب تُحتسب فقط بعد إنشاء المهمة التالية
+  const [awaitingNextTask, setAwaitingNextTask] = useState(false)
 
   const completionData = (task.completion_data ?? {}) as Record<string, string>
   const gpsKeys = (task._gpsKeys ?? []) as string[]
@@ -290,10 +349,11 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
 
     await logActivity({
       action: 'approve_task', entity_type: 'task', entity_id: task.id,
-      description: `اعتماد إنجاز مهمة: ${taskLabel}`,
+      description: `اعتماد إنجاز مهمة: ${taskLabel} — بانتظار إنشاء المهمة التالية`,
     }, supabase)
 
     setApprovedTask({ ...task, task_status: 'approved' })
+    setAwaitingNextTask(true)
     setSaving(false)
     setShowNextTask(true)
   }
@@ -377,7 +437,18 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
 
             <TaskExpensesReviewCard taskId={task.id} />
 
-            {stage === 'view' && canReview && (
+            {stage === 'view' && canReview && awaitingNextTask && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+                <p className="text-sm font-bold text-amber-800">تم اعتماد الإنجاز — بانتظار إنشاء المهمة التالية</p>
+                <p className="text-xs text-amber-700">لن تُحتسب الأتعاب ولن تُسجَّل أي حركة مالية قبل إنشاء المهمة التالية.</p>
+                <button onClick={() => setShowNextTask(true)}
+                  className="w-full py-2.5 rounded-xl text-sm font-bold text-white hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
+                  إنشاء المهمة التالية
+                </button>
+              </div>
+            )}
+            {stage === 'view' && canReview && !awaitingNextTask && (
               <div className="space-y-2">
                 {error && <p className="text-xs text-red-500 font-semibold">{error}</p>}
                 <div className="flex gap-3">
@@ -444,6 +515,9 @@ export default function TaskReviewPage() {
   const [taskDefs, setTaskDefs] = useState<TaskDef[]>([])
   const [loading, setLoading] = useState(true)
   const [reviewing, setReviewing] = useState<any | null>(null)
+  // مهام اعتُمد إنجازها ولم تُنشأ مهمتها التالية بعد (لا أتعاب محتسبة)
+  const [awaitingNextTasks, setAwaitingNextTasks] = useState<any[]>([])
+  const [resumeNextTask, setResumeNextTask] = useState<any | null>(null)
   const [filterLawyer, setFilterLawyer] = useState('')
   const [filterDelegate, setFilterDelegate] = useState('')
   const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>('')
@@ -557,10 +631,42 @@ export default function TaskReviewPage() {
     }
   }, [branchId, viewAllBranches, assigneeFilterId, filterCaseType])
 
+  const loadAwaitingNext = useCallback(async () => {
+    if (!branchId && !viewAllBranches) {
+      setAwaitingNextTasks([])
+      return
+    }
+    const supabase = createClient()
+    let q = supabase
+      .from('tasks')
+      .select(`
+        id, debtor_id, branch_id, task_type, task_definition_id, completion_data, reward_amount, completed_at,
+        task_definitions(label, fee_amount),
+        debtors:debtors!tasks_debtor_id_fkey(id, full_name, case_type, governorate, latitude, longitude)
+      `)
+      .eq('task_status', 'approved')
+      .eq('fee_status', 'approved_pending_next')
+      .not('debtor_id', 'is', null)
+      .order('completed_at', { ascending: false })
+      .limit(60)
+    if (branchId) q = q.eq('branch_id', branchId)
+    const { data, error } = await q
+    if (error) {
+      console.error('[tasks/review] awaiting-next load:', error.message)
+      setAwaitingNextTasks([])
+      return
+    }
+    setAwaitingNextTasks(data ?? [])
+  }, [branchId, viewAllBranches])
+
   useEffect(() => {
     setPageOffset(0)
     load(false, 0)
   }, [branchId, viewAllBranches, assigneeFilterId, filterCaseType, load])
+
+  useEffect(() => {
+    loadAwaitingNext()
+  }, [loadAwaitingNext])
 
   useEffect(() => {
     const loadDefs = async () => {
@@ -638,6 +744,39 @@ export default function TaskReviewPage() {
           {total} بانتظار الاعتماد
         </span>
       </div>
+
+      {awaitingNextTasks.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-black text-amber-800">بانتظار إنشاء المهمة التالية ({awaitingNextTasks.length})</p>
+            <span className="text-[10px] text-amber-700 font-semibold">الأتعاب لا تُحتسب قبل إنشاء المهمة التالية</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {awaitingNextTasks.map(t => {
+              const label = t.task_definitions?.label ?? (TASK_TYPE_LABELS[t.task_type as TaskType] ?? t.task_type)
+              return (
+                <div key={t.id} className="bg-white border border-amber-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-[#231F20] truncate">{t.debtors?.full_name ?? '—'}</p>
+                    <p className="text-xs text-[#767676] truncate">{label}</p>
+                  </div>
+                  {canReview ? (
+                    <button
+                      onClick={() => setResumeNextTask(t)}
+                      className="shrink-0 px-3 py-2 rounded-xl text-xs font-bold text-white hover:opacity-90"
+                      style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+                    >
+                      إنشاء المهمة التالية
+                    </button>
+                  ) : (
+                    <Badge variant="purple">بانتظار المهمة التالية</Badge>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-20 gap-3">
@@ -733,13 +872,35 @@ export default function TaskReviewPage() {
           task={reviewing}
           taskDefs={taskDefs}
           canReview={canReview}
-          onClose={() => setReviewing(null)}
+          onClose={() => {
+            setReviewing(null)
+            // قد يكون الإنجاز اعتُمد دون إنشاء المهمة التالية — حدّث قسم الانتظار
+            loadAwaitingNext()
+          }}
           onDone={() => {
             setReviewing(null)
             cacheInvalidatePrefix('tasks:review:')
             if (branchId) cacheDelete(`dashboard:${branchId}`)
             else cacheInvalidatePrefix('dashboard:')
             setPageOffset(0)
+            load(false, 0)
+            loadAwaitingNext()
+            refreshAdminNotifications()
+          }}
+        />
+      )}
+
+      {resumeNextTask && (
+        <NextTaskModal
+          task={{ ...resumeNextTask, _gpsKeys: resumeNextTask._gpsKeys ?? [] }}
+          taskDefs={taskDefs}
+          onClose={() => setResumeNextTask(null)}
+          onDone={() => {
+            setResumeNextTask(null)
+            cacheInvalidatePrefix('tasks:review:')
+            if (branchId) cacheDelete(`dashboard:${branchId}`)
+            else cacheInvalidatePrefix('dashboard:')
+            loadAwaitingNext()
             load(false, 0)
             refreshAdminNotifications()
           }}

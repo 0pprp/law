@@ -1,4 +1,4 @@
--- Official branch display names ONLY (11). Do not create parallel rows for aliases
+-- Official branch display names ONLY (12). Do not create parallel rows for aliases
 -- like «الكرخ» / «الرصافة» — use 20250628170000_consolidate_official_branches.sql
 -- to merge legacy aliases into these names.
 -- Safe to re-run.
@@ -12,6 +12,7 @@ SELECT v.name, true
 FROM (VALUES
   ('بغداد الكرخ'),
   ('بغداد الرصافة'),
+  ('بابل'),
   ('البصرة'),
   ('الديوانية'),
   ('ديالى'),

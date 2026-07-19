@@ -7,6 +7,7 @@ import { TASK_STATUS_LABELS, assigneePersonLabel } from '@/lib/types'
 import type { TaskStatus } from '@/lib/types'
 import {
   fetchCurrentBranchTaskRowsPaginated,
+  resolveDebtorIdsByLawyer,
   type CurrentBranchTaskRow,
   CURRENT_TASK_PAGE_SIZE,
 } from '@/lib/task-assignment'
@@ -86,12 +87,15 @@ export default function TasksPage() {
   const [filterDef, setFilterDef] = useState('')
   const [filterListId, setFilterListId] = useState('')
   const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>('')
+  /** فلتر المحامي — تبويب تكليف المهام (بانتظار التكليف) فقط */
+  const [filterLawyerId, setFilterLawyerId] = useState('')
   const { lists: branchLists } = useBranchLists(branchId)
 
   useEffect(() => {
     setFilterListId('')
     setFilterDef('')
     setFilterCaseType('')
+    setFilterLawyerId('')
     setSearch('')
     setDebouncedSearch('')
   }, [branchId, viewAllBranches])
@@ -134,7 +138,9 @@ export default function TasksPage() {
     }
 
     const offset = offsetOverride ?? 0
-    const cacheKey = `tasks:assign:${branchId ?? 'all'}:${taskView}:${filterDef}:${filterListId}:${filterCaseType}:${debouncedSearch}:${offset}`
+    const lawyerFilterId = taskView === 'waiting' ? filterLawyerId : ''
+    // v2: استبعاد المهام المعتمدة/النهائية من قوائم التكليف
+    const cacheKey = `tasks:assign:v2:${branchId ?? 'all'}:${taskView}:${filterDef}:${filterListId}:${filterCaseType}:${lawyerFilterId}:${debouncedSearch}:${offset}`
 
     if (!append) {
       const cached = cacheGet<TasksPageCache>(cacheKey)
@@ -162,9 +168,17 @@ export default function TasksPage() {
     scheduleBranchMaintenance(supabase, branchId)
 
     try {
-      const debtorIds = debouncedSearch.trim()
+      let debtorIds = debouncedSearch.trim()
         ? await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId)
         : null
+
+      // فلتر المحامي (تكليف المهام فقط): تقاطع مع نتائج البحث إن وجدت
+      if (lawyerFilterId) {
+        const lawyerDebtorIds = await resolveDebtorIdsByLawyer(supabase, lawyerFilterId, branchId)
+        debtorIds = debtorIds
+          ? debtorIds.filter(id => lawyerDebtorIds.includes(id))
+          : lawyerDebtorIds
+      }
 
       if (debtorIds && !debtorIds.length) {
         setTasks([])
@@ -221,7 +235,13 @@ export default function TasksPage() {
       }
 
       setTasks(prev => {
-        const nextTasks = append ? [...prev, ...page.rows] : page.rows
+        // منع تكرار المفاتيح: قد تعيد الصفحة التالية صفوفاً موجودة إذا تغيّرت البيانات بين الطلبين
+        const nextTasks = append
+          ? (() => {
+              const seen = new Set(prev.map(t => t.id))
+              return [...prev, ...page.rows.filter(r => !seen.has(r.id))]
+            })()
+          : page.rows
         const lawyerList = lawyersResult
           ? lawyersResult.lawyers
           : lawyersRef.current
@@ -263,7 +283,7 @@ export default function TasksPage() {
     }
     setLoading(false)
     setLoadingMore(false)
-  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, filterCaseType, debouncedSearch])
+  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, filterCaseType, filterLawyerId, debouncedSearch])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -274,7 +294,7 @@ export default function TasksPage() {
   useEffect(() => {
     setPageOffset(0)
     load(false, 0)
-  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, filterCaseType, debouncedSearch, load])
+  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, filterCaseType, filterLawyerId, debouncedSearch, load])
 
   function loadMore() {
     if (loadingMore || tasks.length >= total) return
@@ -332,6 +352,8 @@ export default function TasksPage() {
     setSelected(new Set())
     setSingleAssignId(null)
     setSingleLawyerId('')
+    // فلتر المحامي خاص بتبويب تكليف المهام (بانتظار التكليف) فقط
+    if (taskView !== 'waiting') setFilterLawyerId('')
   }, [taskView])
 
   function toggle(id: string) {
@@ -387,13 +409,14 @@ export default function TasksPage() {
     await load(false, 0)
   }
 
-  const hasFilters = search || filterDef || filterListId || filterCaseType
+  const hasFilters = search || filterDef || filterListId || filterCaseType || (isWaitingView && filterLawyerId)
   function clearFilters() {
     setSearch('')
     setDebouncedSearch('')
     setFilterDef('')
     setFilterListId('')
     setFilterCaseType('')
+    setFilterLawyerId('')
   }
 
   return (
@@ -460,12 +483,30 @@ export default function TasksPage() {
         </button>
       </div>
 
-      <div className={`grid grid-cols-1 gap-3 ${viewAllBranches ? 'md:grid-cols-3' : 'md:grid-cols-4'}`}>
+      <div className={`grid grid-cols-1 gap-3 ${
+        isWaitingView
+          ? (viewAllBranches ? 'md:grid-cols-4' : 'md:grid-cols-5')
+          : (viewAllBranches ? 'md:grid-cols-3' : 'md:grid-cols-4')
+      }`}>
         {!viewAllBranches && (
           <BranchListFilterSelect
             value={filterListId}
             onChange={setFilterListId}
             lists={branchLists}
+          />
+        )}
+        {isWaitingView && (
+          <PremiumSelect
+            value={filterLawyerId}
+            onChange={setFilterLawyerId}
+            options={[
+              { value: '', label: 'جميع المحامين' },
+              ...lawyers.map(l => ({ value: l.id, label: l.full_name })),
+            ]}
+            placeholder="جميع المحامين"
+            fieldLabel="المحامي"
+            headerTitle="تصفية حسب المحامي"
+            searchPlaceholder="بحث بالاسم..."
           />
         )}
         <PremiumSelect
@@ -579,7 +620,11 @@ export default function TasksPage() {
           </div>
         ) : !filtered.length ? (
           <EmptyState
-            title={hasFilters ? 'لا نتائج' : isWaitingView ? 'لا مهام بانتظار التكليف' : isOverdueView ? 'لا مهام متأخرة' : 'لا مهام مكلفة'}
+            title={
+              isWaitingView && filterLawyerId
+                ? 'لا توجد مهام لهذا المحامي'
+                : hasFilters ? 'لا نتائج' : isWaitingView ? 'لا مهام بانتظار التكليف' : isOverdueView ? 'لا مهام متأخرة' : 'لا مهام مكلفة'
+            }
             description={hasFilters ? 'جرّب تغيير البحث أو التصفية' : 'ستظهر المهام هنا عند توفرها'}
             action={hasFilters ? (
               <button type="button" onClick={clearFilters} className="text-sm font-bold text-[#2C8780] hover:underline">

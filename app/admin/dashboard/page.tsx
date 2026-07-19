@@ -14,6 +14,7 @@ import { StatCard } from '@/components/ui/stat-card'
 import { stageAccent, stageIconBg } from '@/lib/stage-config'
 import { scheduleBranchMaintenance } from '@/lib/branch-maintenance'
 import { cacheGet, cacheSet, CACHE_TTL } from '@/lib/query-cache'
+import PaymentOpsCards from '@/components/PaymentOpsCards'
 import {
   fetchDashboardData,
   fetchPendingReviewCount,
@@ -270,6 +271,11 @@ export default function DashboardPage() {
           sub="لك نسبة 5% من أتعاب كل إنجاز معتمد (الدعاوى المدنية فقط)"
         />
       )}
+
+      <PaymentOpsCards
+        branchId={branchId}
+        viewAllBranches={viewAllBranches}
+      />
 
       <div>
         <div className="flex items-center justify-between mb-3">

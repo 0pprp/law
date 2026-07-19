@@ -11,6 +11,8 @@ interface Props {
   currentLabel?: string | null
   /** compact link style for table actions */
   compact?: boolean
+  /** نص زر مخصص — مثل «إسناد المهمة» لكارد الأسماء تحت إسناد */
+  buttonLabel?: string
   onChanged?: (label: string) => void
 }
 
@@ -19,6 +21,7 @@ export default function ChangeDebtorTaskButton({
   branchId,
   currentLabel,
   compact,
+  buttonLabel,
   onChanged,
 }: Props) {
   const [open, setOpen] = useState(false)
@@ -125,9 +128,12 @@ export default function ChangeDebtorTaskButton({
             ? 'text-xs text-[#231F20] hover:text-[#2C8780] border border-[rgba(118,118,118,0.2)] hover:border-[#2C8780]/40 px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap'
             : 'text-sm font-semibold text-[#2C8780] hover:underline'
         }
-        title={activeLabel ? `المهمة الحالية: ${activeLabel}` : 'تعديل المهمة المطلوبة'}
+        title={activeLabel ? `المهمة الحالية: ${activeLabel}` : 'تعيين المهمة المطلوبة'}
       >
-        {compact ? 'تعديل المهمة' : (activeLabel ? `تعديل المهمة (${activeLabel})` : 'تعيين المهمة المطلوبة')}
+        {buttonLabel
+          ?? (compact
+            ? 'تعديل المهمة'
+            : (activeLabel ? `تعديل المهمة (${activeLabel})` : 'تعيين المهمة المطلوبة'))}
       </button>
 
       {open && (
@@ -135,7 +141,9 @@ export default function ChangeDebtorTaskButton({
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-base font-bold text-[#231F20]">تعديل المهمة المطلوبة</h3>
+                <h3 className="text-base font-bold text-[#231F20]">
+                  {activeLabel ? 'تعديل المهمة المطلوبة' : 'إسناد المهمة المطلوبة'}
+                </h3>
                 <p className="text-xs text-[#767676] mt-1">
                   يُسمح بالتغيير فقط قبل تكليف المهمة أو إنجازها.
                 </p>

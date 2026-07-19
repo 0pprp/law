@@ -17,7 +17,7 @@ export const LEGAL_MANAGER_PERCENTAGE_FEE_TYPE = 'legal_manager_percentage_fee' 
 export const LEGAL_MANAGER_BONUS_TYPE = 'legal_manager_task_bonus' as const
 
 export const LEGAL_MANAGER_PERCENTAGE_FEE_NOTES =
-  'نسبة 5% لمسؤول القانونية عند اعتماد إنجاز محامي'
+  'نسبة 5% لمسؤول القانونية عند اعتماد إنجاز مهمة'
 
 export const LEGAL_MANAGER_MANUAL_DEPOSIT_LABEL =
   'إيداع يدوي من الإدارة إلى محفظة مسؤول القانونية'
@@ -90,7 +90,7 @@ export function buildPercentageFeeLedgerNote(lawyerName: string | null | undefin
   const suffix = extractFeeAmountSuffix(notes ?? null)
   const name = lawyerName?.trim()
   if (name) {
-    return `نسبة 5% لمسؤول القانونية عند اعتماد إنجاز المحامي (${name})${suffix}`
+    return `نسبة 5% لمسؤول القانونية عند اعتماد إنجاز المهمة بواسطة (${name})${suffix}`
   }
   if (notes?.trim()) return notes.trim()
   return LEGAL_MANAGER_PERCENTAGE_FEE_NOTES
@@ -615,21 +615,6 @@ export async function creditLegalManagerBonusOnApproval(
     }
   }
 
-  // الدعاوى الجزائية: لا تُحتسب نسبة مسؤول القانونية
-  const { data: debtorCase } = await supabase
-    .from('debtors')
-    .select('case_type')
-    .eq('id', debtorId)
-    .maybeSingle()
-  if ((debtorCase as { case_type?: string } | null)?.case_type === 'criminal') {
-    return {
-      ok: true,
-      amount: 0,
-      skipped: true,
-      reason: 'دعوى جزائية — لا نسبة لمسؤول القانونية',
-    }
-  }
-
   const recipientId = await resolveLegalManagerRecipient(
     supabase,
     reviewerId,
@@ -665,7 +650,7 @@ export async function creditLegalManagerBonusOnApproval(
     .select('full_name')
     .eq('id', assignedLawyerId)
     .maybeSingle()
-  const lawyerName = (lawyerProfile?.full_name as string | undefined)?.trim() || 'محامٍ'
+  const lawyerName = (lawyerProfile?.full_name as string | undefined)?.trim() || 'المكلّف بالمهمة'
 
   const feeNotes = buildPercentageFeeLedgerNote(
     lawyerName,

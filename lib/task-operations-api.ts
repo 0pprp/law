@@ -1,5 +1,5 @@
 import { rejectTaskExpenses } from '@/lib/expense-wallet'
-import { extractGpsFromCompletion } from '@/lib/task-approval'
+import { extractGpsFromCompletion, finalizeTaskApproval, FEE_STATUS_AWAITING_NEXT_TASK } from '@/lib/task-approval'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 export async function rejectTaskCompletion(
@@ -10,6 +10,22 @@ export async function rejectTaskCompletion(
   const trimmed = reason.trim()
   if (!trimmed) return { ok: false, error: 'يجب إدخال سبب الرفض' }
 
+  const { data: task } = await supabase
+    .from('tasks')
+    .select('id, task_status, fee_status')
+    .eq('id', taskId)
+    .maybeSingle()
+
+  if (!task) return { ok: false, error: 'المهمة غير موجودة' }
+
+  if (task.task_status !== 'submitted' && task.task_status !== 'pending_review') {
+    return { ok: false, error: 'لا يمكن رفض مهمة خارج طابور المراجعة' }
+  }
+
+  if ((task as { fee_status?: string | null }).fee_status === FEE_STATUS_AWAITING_NEXT_TASK) {
+    return { ok: false, error: 'المهمة معتمدة الإنجاز — أنشئ المهمة التالية أو ألغِ الاعتماد من المسار الصحيح' }
+  }
+
   // مصدر الحقيقة: needs_revision (يظهر في تبويب مرفوضة والعدادات)
   // rejected احتياطي فقط إن لم يدعم الـ enum القيمة needs_revision
   const payloads = [
@@ -19,8 +35,16 @@ export async function rejectTaskCompletion(
 
   let lastErr: { message?: string } | null = null
   for (const payload of payloads) {
-    const { error: err } = await supabase.from('tasks').update(payload as any).eq('id', taskId)
+    const { data: updated, error: err } = await supabase
+      .from('tasks')
+      .update(payload as any)
+      .eq('id', taskId)
+      .in('task_status', ['submitted', 'pending_review'])
+      .select('id')
     if (!err) {
+      if (!updated?.length) {
+        return { ok: false, error: 'تغيّرت حالة المهمة — أعد التحميل' }
+      }
       await rejectTaskExpenses(supabase, taskId)
       return { ok: true }
     }
@@ -47,7 +71,7 @@ export async function applyTaskTransition(
   const { data: task, error: taskErr } = await supabase
     .from('tasks')
     .select(`
-      id, debtor_id, branch_id, task_type, task_definition_id, completion_data,
+      id, debtor_id, branch_id, task_type, task_definition_id, completion_data, task_status, fee_status,
       task_definitions ( label, fee_amount )
     `)
     .eq('id', taskId)
@@ -57,18 +81,27 @@ export async function applyTaskTransition(
     return { ok: false, error: taskErr?.message ?? 'المهمة غير موجودة' }
   }
 
+  if (!['approved', 'completed'].includes((task as any).task_status as string)) {
+    return { ok: false, error: 'يجب اعتماد إنجاز المهمة أولاً قبل إنشاء المهمة التالية' }
+  }
+
+  const awaitingFinalization = (task as any).fee_status === FEE_STATUS_AWAITING_NEXT_TASK
+
   let debtor: {
     id: string
     full_name: string
     branch_id: string | null
     latitude: number | null
     longitude: number | null
+    current_task_id: string | null
+    last_task_id: string | null
+    case_status: string | null
   } | null = null
 
   if (task.debtor_id) {
     const { data: debtorRow, error: debtorErr } = await supabase
       .from('debtors')
-      .select('id, full_name, branch_id, latitude, longitude')
+      .select('id, full_name, branch_id, latitude, longitude, current_task_id, last_task_id, case_status')
       .eq('id', task.debtor_id)
       .maybeSingle()
 
@@ -76,6 +109,18 @@ export async function applyTaskTransition(
       return { ok: false, error: debtorErr.message }
     }
     debtor = debtorRow
+  }
+
+  // منع التكرار: إن لم تعد هذه المهمة الحالية للمدين فقد نُفِّذ الإجراء اللاحق مسبقاً
+  if (debtor) {
+    const alreadyMoved =
+      (debtor.current_task_id != null && debtor.current_task_id !== task.id)
+      || debtor.last_task_id === task.id
+      || debtor.case_status === 'closed'
+      || debtor.case_status === 'payment_in_progress'
+    if (alreadyMoved) {
+      return { ok: false, error: 'تم تنفيذ الإجراء اللاحق لهذه المهمة مسبقاً' }
+    }
   }
 
   const branchId = task.branch_id ?? debtor?.branch_id ?? null
@@ -121,6 +166,22 @@ export async function applyTaskTransition(
     if (closeErr) {
       return { ok: false, error: closeErr.message ?? 'خطأ في إغلاق القضية' }
     }
+
+    // الإغلاق مهمة ختامية: الاعتماد النهائي واحتساب الأتعاب هنا (مرة واحدة)
+    if (awaitingFinalization) {
+      const finalizeResult = await finalizeTaskApproval(supabase, task.id, userId)
+      if (!finalizeResult.ok) {
+        // تراجع عن الإغلاق — تبقى المهمة بانتظار الإجراء اللاحق بلا آثار مالية
+        await supabase.from('debtors').update({
+          case_status: debtor?.case_status ?? 'active',
+          closed_at: null,
+          current_task_id: debtor?.current_task_id ?? task.id,
+          last_task_id: debtor?.last_task_id ?? null,
+        } as any).eq('id', task.debtor_id)
+        return { ok: false, error: finalizeResult.error ?? 'فشل الاعتماد النهائي واحتساب الأتعاب' }
+      }
+    }
+
     // GPS فقط بعد نجاح الإغلاق — لا يُحفظ جزئياً عند الفشل
     const gpsResult = await saveGpsIfNeeded()
     if (!gpsResult.ok) {
@@ -176,7 +237,26 @@ export async function applyTaskTransition(
     .eq('id', task.debtor_id)
 
   if (linkErr) {
+    await supabase.from('tasks').delete().eq('id', newTask.id)
     return { ok: false, error: linkErr.message }
+  }
+
+  // الاعتماد النهائي واحتساب الأتعاب — فقط بعد نجاح إنشاء المهمة التالية وربطها
+  if (awaitingFinalization) {
+    const finalizeResult = await finalizeTaskApproval(supabase, task.id, userId)
+    if (!finalizeResult.ok) {
+      // تراجع كامل: حذف المهمة الجديدة وإرجاع مؤشرات المدين — لا آثار مالية
+      await supabase
+        .from('debtors')
+        .update({
+          current_task_id: debtor?.current_task_id ?? task.id,
+          last_task_id: debtor?.last_task_id ?? null,
+          case_status: debtor?.case_status ?? 'active',
+        } as any)
+        .eq('id', task.debtor_id)
+      await supabase.from('tasks').delete().eq('id', newTask.id)
+      return { ok: false, error: finalizeResult.error ?? 'فشل الاعتماد النهائي — لم تُنشأ المهمة التالية' }
+    }
   }
 
   return { ok: true }

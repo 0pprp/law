@@ -57,6 +57,7 @@ export default async function proxy(request: NextRequest) {
     const dest =
       role === 'lawyer' ? '/lawyer'
       : role === 'delegate' ? '/delegate'
+      : role === 'payment_follow_up' ? '/admin/payment-follow-up'
       : '/admin/dashboard'
     return NextResponse.redirect(new URL(dest, request.url))
   }
@@ -79,11 +80,17 @@ export default async function proxy(request: NextRequest) {
     const role = profile?.role as UserRole
 
     if (isLawyerRoute && role !== 'lawyer') {
-      const dest = role === 'delegate' ? '/delegate' : '/admin/dashboard'
+      const dest =
+        role === 'delegate' ? '/delegate'
+        : role === 'payment_follow_up' ? '/admin/payment-follow-up'
+        : '/admin/dashboard'
       return NextResponse.redirect(new URL(dest, request.url))
     }
     if (isDelegateRoute && role !== 'delegate') {
-      const dest = role === 'lawyer' ? '/lawyer' : '/admin/dashboard'
+      const dest =
+        role === 'lawyer' ? '/lawyer'
+        : role === 'payment_follow_up' ? '/admin/payment-follow-up'
+        : '/admin/dashboard'
       return NextResponse.redirect(new URL(dest, request.url))
     }
     if (isAdminRoute && role === 'lawyer') {
@@ -91,6 +98,9 @@ export default async function proxy(request: NextRequest) {
     }
     if (isAdminRoute && role === 'delegate') {
       return NextResponse.redirect(new URL('/delegate/tasks', request.url))
+    }
+    if (isAdminRoute && role === 'payment_follow_up' && pathname === '/admin/dashboard') {
+      return NextResponse.redirect(new URL('/admin/payment-follow-up', request.url))
     }
   }
 

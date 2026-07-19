@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireMutationStaff } from '@/lib/api-auth'
-import { canStaffWriteBranch } from '@/lib/staff-branch-access'
+import { requireStaffProfile } from '@/lib/api-auth'
+import { canStaffReadBranch, canStaffWriteBranch } from '@/lib/staff-branch-access'
 import {
   apiForbiddenResponse,
   canAddDebtor,
@@ -18,7 +18,8 @@ const EDITABLE_STATUSES = new Set([
 ])
 
 export async function POST(request: NextRequest) {
-  const auth = await requireMutationStaff()
+  // مسؤول القانونية مسموح هنا (canAssignTasks) — تعيين المهمة المطلوبة جزء من صلاحيات التكليف
+  const auth = await requireStaffProfile()
   if (auth.error) return auth.error
 
   const role = auth.profile?.role
@@ -52,7 +53,12 @@ export async function POST(request: NextRequest) {
   if (debtor.case_status === 'closed') {
     return NextResponse.json({ error: 'لا يمكن تعديل مهمة قضية مغلقة' }, { status: 400 })
   }
-  if (!canStaffWriteBranch(auth.profile, debtor.branch_id)) {
+  // من يملك صلاحية التكليف (مدير/موظف/مسؤول قانونية) يكفيه وصول قراءة للفرع،
+  // والمحاسب (إضافة مدين) يبقى مقيداً بكتابة فرعه الحالي
+  const branchAllowed = canAssignTasks(role)
+    ? canStaffReadBranch(auth.profile, debtor.branch_id)
+    : canStaffWriteBranch(auth.profile, debtor.branch_id)
+  if (!branchAllowed) {
     return apiForbiddenResponse()
   }
 

@@ -22,7 +22,6 @@ export const TASK_FEE_MAP: Record<TaskType, number> = {
   find_missing_address: 15000,
   settlement: 5000,
   negotiations: 25000,
-  last_payment: 25000,
   criminal_lawsuit_request: 25000,
   police_station_statement: 25000,
   court_statement: 25000,

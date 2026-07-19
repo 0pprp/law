@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import AdminShell from '@/components/AdminShell'
 import { BRANCH_COOKIE, BRANCH_COOKIE_ALL } from '@/lib/branch-context'
 import { isMainBranchName } from '@/lib/branch-constants'
-import { canReadAllBranches, canUseViewAllBranchesFilter, isGeneralAccountant } from '@/lib/permissions'
+import { canReadAllBranches, canUseViewAllBranchesFilter, isGeneralAccountant, isPaymentFollowUp } from '@/lib/permissions'
 import { fetchStaffProfile } from '@/lib/staff-profile'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -23,7 +23,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const canPickBranch = canReadAllBranches(role, profile?.accountant_type)
   const allowViewAll = canUseViewAllBranchesFilter(role, profile?.accountant_type)
-  const defaultToAll = isGeneralAccountant(role, profile?.accountant_type)
+  // مسؤول متابعة التسديد يرى كل المحافظات افتراضياً (مثل المحاسب العام)
+  const defaultToAll = isGeneralAccountant(role, profile?.accountant_type) || isPaymentFollowUp(role)
 
   let initialBranchId: string | null = null
   let initialBranchName: string | null = null

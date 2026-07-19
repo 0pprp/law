@@ -22,6 +22,7 @@ interface Props {
   receiptNumber: string | null
   remainingAmount: number
   branchId?: string | null
+  onSaved?: () => void
 }
 
 export default function DebtorPaymentModal({
@@ -32,6 +33,7 @@ export default function DebtorPaymentModal({
   receiptNumber,
   remainingAmount,
   branchId,
+  onSaved,
 }: Props) {
   const router = useRouter()
   const [amount, setAmount] = useState('')
@@ -120,6 +122,7 @@ export default function DebtorPaymentModal({
 
     setSaving(false)
     setSuccess(true)
+    onSaved?.()
     router.refresh()
     setTimeout(() => handleClose(), 900)
   }

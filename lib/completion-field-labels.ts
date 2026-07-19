@@ -8,6 +8,7 @@ export const COMPLETION_KEY_LABELS: Record<string, string> = {
   court_decision: 'قرار المحكمة',
   team: 'الفريق',
   decision_number: 'رقم القرار',
+  mukhtar_name: 'اسم المختار',
   legal_result: 'النتيجة القانونية',
   note: 'ملاحظة',
   date: 'التاريخ',

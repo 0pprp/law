@@ -62,11 +62,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'المستمسكات تُرفع للمحامين فقط' }, { status: 400 })
   }
 
-  const ext = file.name.split('.').pop() ?? 'bin'
-  const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+  const buffer = Buffer.from(await file.arrayBuffer())
+  const rawExt = (file.name.split('.').pop() ?? 'bin').toLowerCase().replace(/[^\w]/g, '')
+  const mimeExt =
+    file.type === 'application/pdf' ? 'pdf'
+      : file.type === 'image/png' ? 'png'
+        : file.type === 'image/webp' ? 'webp'
+          : file.type === 'image/gif' ? 'gif'
+            : (file.type === 'image/jpeg' || file.type === 'image/jpg') ? 'jpg'
+              : rawExt || 'bin'
+  const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${mimeExt}`
   const filePath = `${lawyerId}/${safeName}`
 
-  const buffer = Buffer.from(await file.arrayBuffer())
   const { error: uploadErr } = await admin.storage
     .from('lawyer-files')
     .upload(filePath, buffer, { contentType: file.type, upsert: false })

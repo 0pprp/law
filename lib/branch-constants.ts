@@ -8,6 +8,7 @@ export const LEGACY_BRANCH_ALIASES = ['الكرخ', 'الرصافة'] as const
 export const APPROVED_BRANCH_NAMES = [
   'بغداد الكرخ',
   'بغداد الرصافة',
+  'بابل',
   'البصرة',
   'الديوانية',
   'ديالى',

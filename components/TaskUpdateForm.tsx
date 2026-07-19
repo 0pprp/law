@@ -16,6 +16,7 @@ import { resolveTaskLabel } from '@/lib/task-display-label'
 import { normalizeTaskLabelKey } from '@/lib/task-label-normalize'
 import type { PendingTaskExpense } from '@/lib/persist-task-expenses'
 import { persistTaskExpenses } from '@/lib/persist-task-expenses'
+import { validateTaskCompletionFields } from '@/lib/task-completion-validation'
 
 interface Attachment {
   id: string
@@ -54,7 +55,13 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
   expenseStepDone?: boolean
 }) {
   const router = useRouter()
-  const [values, setValues] = useState<Record<string, string>>({})
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const existing = task.completion_data
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) return {}
+    return Object.fromEntries(
+      Object.entries(existing).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    )
+  })
   const [files, setFiles] = useState<Record<string, File>>({})
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -84,18 +91,7 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
   }
 
   function validate(): string | null {
-    for (const f of reqFields) {
-      if (!f.is_required) continue
-      const label = f.field_label ?? REQUIRED_FIELD_LABELS[f.field_type as RequiredField] ?? f.field_type
-      if (['image', 'pdf', 'receipt'].includes(f.field_type)) {
-        if (!files[f.field_key]) return `يجب رفع: ${label}`
-      } else if (f.field_type === 'gps') {
-        if (!values[f.field_key]) return `يجب تحديد موقع GPS`
-      } else {
-        if (!values[f.field_key]?.trim()) return `يجب إدخال: ${label}`
-      }
-    }
-    return null
+    return validateTaskCompletionFields(reqFields, values, new Set(Object.keys(files)))
   }
 
   async function uploadFile(file: File, key: string): Promise<void> {
@@ -732,6 +728,13 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
       {isRejected && !task.admin_notes && (
         <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3.5 text-sm text-red-800 font-bold text-center">
           ✗ تم رفض المهمة — يرجى المراجعة وإعادة الإرسال
+        </div>
+      )}
+
+      {typeof task.completion_data?.mukhtar_name === 'string' && task.completion_data.mukhtar_name.trim() && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3">
+          <p className="text-xs text-slate-400 font-semibold mb-1">اسم المختار</p>
+          <p className="text-sm text-slate-800 font-bold">{task.completion_data.mukhtar_name}</p>
         </div>
       )}
 

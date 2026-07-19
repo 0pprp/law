@@ -44,10 +44,15 @@ export async function POST(request: NextRequest) {
   const userRole =
     bodyRole === 'accountant' ? 'accountant'
     : bodyRole === 'viewer' ? 'viewer'
+    : bodyRole === 'payment_follow_up' ? 'payment_follow_up'
     : 'lawyer'
 
   if (callerRole === 'viewer' && userRole !== 'lawyer') {
     return NextResponse.json({ error: 'مسؤول القانونية يمكنه إضافة محامين فقط' }, { status: 403 })
+  }
+
+  if (userRole === 'payment_follow_up' && callerRole !== 'admin') {
+    return NextResponse.json({ error: 'إضافة مسؤول متابعة التسديد للمدير فقط' }, { status: 403 })
   }
 
   if (userRole === 'lawyer') {

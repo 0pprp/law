@@ -11,6 +11,10 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   approve_task_transition: 'اعتماد إنجاز',
   approve_task: 'اعتماد إنجاز',
   reject_task: 'رفض إنجاز',
+  move_to_payment_in_progress: 'تحويل إلى جاري التسديد',
+  submit_payment_noncompliance_request: 'طلب عدم التزام',
+  approve_payment_noncompliance_request: 'موافقة طلب عدم التزام',
+  reject_payment_noncompliance_request: 'رفض طلب عدم التزام',
   delete_task: 'حذف مهمة',
   upload_task_file: 'رفع ملف مهمة',
   delete_task_file: 'حذف ملف مهمة',
@@ -111,6 +115,10 @@ export const ACTIVITY_ACTION_BADGE: Record<string, 'success' | 'info' | 'warning
   deactivate_delegate: 'danger',
   activate_delegate: 'success',
   close_case: 'navy',
+  move_to_payment_in_progress: 'info',
+  submit_payment_noncompliance_request: 'warning',
+  approve_payment_noncompliance_request: 'success',
+  reject_payment_noncompliance_request: 'danger',
 }
 
 export function activityActionLabel(action: string | null | undefined): string {

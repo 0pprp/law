@@ -18,11 +18,12 @@ import DebtorAccountPaymentButton from '@/components/DebtorAccountPaymentButton'
 import DebtorPaymentsPanel from '@/components/DebtorPaymentsPanel'
 import DebtorExpensesList from '@/components/DebtorExpensesList'
 import DebtorAttachmentsList from '@/components/DebtorAttachmentsList'
-import { canAddDebtor, canAssignTasks, canEditRecords, canAddPayments } from '@/lib/permissions'
+import { canAddDebtor, canAssignTasks, canEditDebtor, canAddPayments } from '@/lib/permissions'
 import { fetchStaffRoleFields } from '@/lib/staff-profile'
 import { canStaffReadBranch } from '@/lib/staff-branch-access'
 import type { UserRole } from '@/lib/types'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
+import { BackButton } from '@/components/ui/back-button'
 
 function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
@@ -41,7 +42,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const profile = user ? await fetchStaffRoleFields(supabase, user.id) : null
 
   const userRole = (profile?.role ?? 'employee') as UserRole
-  const allowEdit = canEditRecords(userRole)
+  const allowEdit = canEditDebtor(userRole)
   const allowPayments = canAddPayments(userRole)
   const allowChangeTask = canAddDebtor(userRole) || canAssignTasks(userRole)
 
@@ -174,6 +175,9 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
 
   return (
     <div className="space-y-5 max-w-4xl">
+      <div>
+        <BackButton fallback="/admin/debtors" />
+      </div>
       <div className="rounded-2xl p-6 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #231F20 0%, #1a1617 100%)' }}>
         <div className="absolute top-0 left-0 w-40 h-40 bg-white/[0.03] rounded-full -translate-x-1/2 -translate-y-1/2" />
         <div className="absolute bottom-0 right-8 w-32 h-32 bg-[#2C8780]/10 rounded-full translate-y-1/2" />

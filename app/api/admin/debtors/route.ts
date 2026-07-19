@@ -100,8 +100,9 @@ export async function POST(request: NextRequest) {
   }
   const caseType = caseTypeRaw
 
-  if (!branchId || !taskDefinitionId || !fullName) {
-    return NextResponse.json({ error: 'الفرع والمهمة والاسم مطلوبة' }, { status: 400 })
+  // المهمة اختيارية — بدونها يظهر المدين في «الأسماء التي تحت إسناد مهمة»
+  if (!branchId || !fullName) {
+    return NextResponse.json({ error: 'الفرع والاسم مطلوبان' }, { status: 400 })
   }
   if (!canStaffWriteBranch(auth.profile, branchId)) return apiForbiddenResponse()
 
@@ -118,24 +119,34 @@ export async function POST(request: NextRequest) {
   if (dup.error) return NextResponse.json({ error: dup.error }, { status: 500 })
   if (dup.duplicate) return NextResponse.json({ error: RECEIPT_NUMBER_DUP_BRANCH_ERROR }, { status: 400 })
 
-  const { data: taskDef, error: tdErr } = await admin
-    .from('task_definitions')
-    .select('id, fee_amount, task_type, case_type')
-    .eq('id', taskDefinitionId)
-    .eq('branch_id', branchId)
-    .maybeSingle()
-  if (tdErr || !taskDef?.task_type) {
-    return NextResponse.json({ error: 'تعريف المهمة غير صالح لهذا الفرع' }, { status: 400 })
-  }
-  const defCase = (taskDef as { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil'
-  if (defCase !== caseType) {
-    return NextResponse.json({ error: 'تعريف المهمة لا يطابق نوع الدعوى المختار' }, { status: 400 })
+  type TaskDefRow = { id: string; fee_amount: number | null; task_type: string; case_type?: string }
+  let taskDef: TaskDefRow | null = null
+  if (taskDefinitionId) {
+    const { data: td, error: tdErr } = await admin
+      .from('task_definitions')
+      .select('id, fee_amount, task_type, case_type')
+      .eq('id', taskDefinitionId)
+      .eq('branch_id', branchId)
+      .maybeSingle()
+    if (tdErr || !td?.task_type) {
+      return NextResponse.json({ error: 'تعريف المهمة غير صالح لهذا الفرع' }, { status: 400 })
+    }
+    const defCase = (td as { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil'
+    if (defCase !== caseType) {
+      return NextResponse.json({ error: 'تعريف المهمة لا يطابق نوع الدعوى المختار' }, { status: 400 })
+    }
+    taskDef = {
+      id: String(td.id),
+      fee_amount: td.fee_amount == null ? null : Number(td.fee_amount),
+      task_type: String(td.task_type),
+      case_type: (td as { case_type?: string }).case_type,
+    }
   }
 
   const remaining = Number(body.remaining_amount ?? 0) || 0
   const receiptAmount = Number(body.receipt_amount ?? 0) || 0
   const penalty = body.has_contract ? Number(body.penalty_amount ?? 0) || 0 : 0
-  const required = computeDebtorRequiredAmount(remaining, penalty, receiptAmount)
+  const required = computeDebtorRequiredAmount(remaining, 0, penalty, receiptAmount)
   const balanceRemaining = computeRemainingFromRequired(required, 0)
   const today = new Date().toISOString().split('T')[0]
 
@@ -176,6 +187,17 @@ export async function POST(request: NextRequest) {
       user_id: auth.user!.id,
       message: notes,
     })
+  }
+
+  // بدون مهمة مختارة: يبقى current_task_id فارغاً ويظهر المدين في «الأسماء التي تحت إسناد مهمة»
+  if (!taskDef) {
+    await logActivity({
+      action: 'create_debtor',
+      entity_type: 'debtor',
+      entity_id: newDebtor.id,
+      description: `إضافة مدين بدون مهمة مطلوبة: ${fullName}`,
+    }, auth.supabase)
+    return NextResponse.json({ ok: true, id: newDebtor.id, taskId: null })
   }
 
   const { data: newTask, error: taskErr } = await admin

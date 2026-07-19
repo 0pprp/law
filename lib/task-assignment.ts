@@ -471,6 +471,9 @@ async function attachBranchNames(
 
 const OVERDUE_STATUS_FILTER = `(${OVERDUE_TERMINAL_STATUSES.join(',')})`
 
+/** حالات نهائية لا تُعرض في قوائم التكليف (بانتظار / مكلفة / متأخرة) */
+const CURRENT_TASK_TERMINAL_FILTER = OVERDUE_STATUS_FILTER
+
 function applyCurrentTaskListFilters(
   q: ReturnType<SupabaseClient['from']> extends infer _ ? any : never,
   options?: FetchCurrentBranchTasksOptions,
@@ -484,12 +487,15 @@ function applyCurrentTaskListFilters(
   } else if (options?.taskDefinitionId) {
     query = query.eq('current_task.task_definition_id', options.taskDefinitionId)
   }
+
+  // المعتمدة / المكتملة / المغلقة… لا تُحسب ضمن المهام المكلفة أو بانتظار التكليف
+  query = query.not('current_task.task_status', 'in', CURRENT_TASK_TERMINAL_FILTER)
+
   if (options?.overdue) {
     query = query
       .not('current_task.assigned_to', 'is', null)
       .not('current_task.due_date', 'is', null)
       .lt('current_task.due_date', localTodayYmd())
-      .not('current_task.task_status', 'in', OVERDUE_STATUS_FILTER)
   } else {
     if (options?.assigned === false) query = query.is('current_task.assigned_to', null)
     if (options?.assigned === true) query = query.not('current_task.assigned_to', 'is', null)
@@ -531,8 +537,9 @@ async function scanCurrentTaskMeta(
     if (taskIds.length) {
       let tasksQ = supabase
         .from('tasks')
-        .select('id, assigned_to, task_definition_id')
+        .select('id, assigned_to, task_definition_id, task_status')
         .in('id', taskIds)
+        .not('task_status', 'in', CURRENT_TASK_TERMINAL_FILTER)
       if (branchId) tasksQ = tasksQ.eq('branch_id', branchId)
 
       const { data: tasks, error: tErr } = await tasksQ
@@ -612,6 +619,30 @@ async function countOverdueTasks(
 
 export function isUnassignedCurrentTask(row: { lawyerId: string | null }): boolean {
   return !row.lawyerId
+}
+
+/**
+ * فلتر «المحامي» في تبويب تكليف المهام: مدينون سبق تكليف هذا المحامي بمهامهم
+ * (الحقل الحقيقي: tasks.assigned_to) — تُعرض مهامهم الحالية بانتظار التكليف.
+ */
+export async function resolveDebtorIdsByLawyer(
+  supabase: SupabaseClient,
+  lawyerId: string,
+  branchId: string | null,
+): Promise<string[]> {
+  let q = supabase
+    .from('tasks')
+    .select('debtor_id')
+    .eq('assigned_to', lawyerId)
+    .limit(2000)
+  if (branchId) q = q.eq('branch_id', branchId)
+
+  const { data, error } = await q
+  if (error) {
+    console.error('[resolveDebtorIdsByLawyer]', error.message ?? error)
+    return []
+  }
+  return [...new Set((data ?? []).map(t => t.debtor_id).filter(Boolean))] as string[]
 }
 
 /** Stage boxes: unassigned current tasks grouped by task_definition_id. */

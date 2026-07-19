@@ -82,6 +82,7 @@ export async function POST(request: Request) {
       const redirectTo =
         role === 'lawyer' ? '/lawyer'
         : role === 'delegate' ? '/delegate'
+        : role === 'payment_follow_up' ? '/admin/payment-follow-up'
         : '/admin/dashboard'
       return NextResponse.json({ redirectTo })
     }
@@ -130,6 +131,7 @@ export async function POST(request: Request) {
     const redirectTo =
       role === 'lawyer' ? '/lawyer'
       : role === 'delegate' ? '/delegate'
+      : role === 'payment_follow_up' ? '/admin/payment-follow-up'
       : '/admin/dashboard'
     return NextResponse.json({ redirectTo })
 

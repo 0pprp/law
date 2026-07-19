@@ -30,7 +30,7 @@ export const BRANCH_LISTS_SEED: { branchKeys: string[]; lists: string[] }[] = [
     ],
   },
   {
-    branchKeys: ['الحلة'],
+    branchKeys: ['بابل', 'الحلة'],
     lists: [
       'الحمزة', 'السوق', 'القاسم', 'المحاويل', 'المسيب',
       'الاسكندرية', 'الثورة', 'الشهرية', 'السوق 2',

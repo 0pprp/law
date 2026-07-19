@@ -6,14 +6,12 @@ import { createClient } from '@/lib/supabase/client'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import type { ReceiptType } from '@/lib/types'
 import Link from 'next/link'
-import { logActivity } from '@/lib/activity-log'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { fmtDate } from '@/lib/utils'
 import { parseMoneyInput } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
-import { computeDebtorRequiredAmount, computeRemainingFromRequired } from '@/lib/debtor-balances'
 import { RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
@@ -22,14 +20,12 @@ import { useAdminRole } from '@/context/admin-role'
 import BranchListSelect from '@/components/BranchListSelect'
 import { fetchBranchLists } from '@/lib/branch-lists'
 import type { BranchList } from '@/lib/branch-lists'
-import { canAddDebtor, canAssignTasks, canEditRecords } from '@/lib/permissions'
+import { canAssignTasks, canDelete, canEditDebtor } from '@/lib/permissions'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import { appConfirm } from '@/lib/app-dialog'
 import {
-  findDuplicateReceiptInBranch,
   isReceiptNumberMissing,
   normalizeReceiptNumberInput,
-  RECEIPT_NUMBER_DUP_BRANCH_ERROR,
   RECEIPT_NUMBER_EMPTY_ERROR,
 } from '@/lib/receipt-number'
 
@@ -52,7 +48,6 @@ export default function EditDebtorPage() {
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null)
   const [debtorBranchId, setDebtorBranchId] = useState<string | null>(null)
   const [branchLists, setBranchLists] = useState<BranchList[]>([])
-  const [totalPayments, setTotalPayments] = useState(0)
 
   const [form, setForm] = useState({
     full_name: '', phone: '', address: '', id_number: '',
@@ -64,15 +59,18 @@ export default function EditDebtorPage() {
 
   useEffect(() => {
     async function load() {
-      const supabase = createClient()
-      const [{ data }, { data: files }] = await Promise.all([
-        supabase.from('debtors').select('*').eq('id', id).single(),
-        supabase.from('debtor_attachments').select('id, file_name, file_path, file_size').eq('debtor_id', id),
-      ])
+      const response = await fetch(`/api/admin/debtors/${id}`)
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setError(typeof payload.error === 'string' ? payload.error : 'فشل تحميل بيانات المدين')
+        setLoading(false)
+        return
+      }
+      const data = payload.debtor
+      const files = payload.attachments
       if (data) {
         setCreatedAt(data.created_at ?? null)
         setDebtorBranchId(data.branch_id ?? null)
-        setTotalPayments(Number(data.total_payments ?? 0))
         const hasPenalty = parseMoneyInput(data.penalty_amount) > 0
         setForm({
           full_name: data.full_name ?? '',
@@ -85,12 +83,13 @@ export default function EditDebtorPage() {
           remaining_amount: data.remaining_amount?.toString() ?? '',
           lawyer_fees: data.lawyer_fees?.toString() ?? '',
           penalty_amount: data.penalty_amount?.toString() ?? '',
-          has_contract: hasPenalty,
+          has_contract: Boolean(data.has_contract) || hasPenalty,
           receipt_signed_legal_costs: Boolean(data.receipt_signed_legal_costs),
           notes: data.notes ?? '',
           branch_list_id: data.branch_list_id ?? '',
         })
         if (data.branch_id) {
+          const supabase = createClient()
           fetchBranchLists(supabase, data.branch_id).then(setBranchLists)
         }
       }
@@ -135,50 +134,31 @@ export default function EditDebtorPage() {
       setSaving(false)
       return
     }
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { router.push('/login'); return }
-
-    if (debtorBranchId) {
-      const dup = await findDuplicateReceiptInBranch(supabase, debtorBranchId, receiptNumber, id)
-      if (dup.error) {
-        setError(dup.error)
-        setSaving(false)
-        return
-      }
-      if (dup.duplicate) {
-        setError(RECEIPT_NUMBER_DUP_BRANCH_ERROR)
-        setSaving(false)
-        return
-      }
-    }
-
-    const receiptRemaining = parseMoneyInput(form.remaining_amount)
-    const receiptAmount = parseMoneyInput(form.receipt_amount)
-    const penalty = form.has_contract ? parseMoneyInput(form.penalty_amount) : 0
-
-    const updatePayload: Record<string, unknown> = {
+    const updatePayload = {
       full_name: form.full_name, phone: form.phone || null, address: form.address || null,
       id_number: form.id_number || null,
       receipt_type: form.receipt_type, receipt_number: receiptNumber,
-      receipt_amount: receiptAmount,
+      receipt_amount: parseMoneyInput(form.receipt_amount),
+      remaining_amount: parseMoneyInput(form.remaining_amount),
       lawyer_fees: parseMoneyInput(form.lawyer_fees),
-      penalty_amount: penalty,
+      has_contract: form.has_contract,
+      penalty_amount: form.has_contract ? parseMoneyInput(form.penalty_amount) : 0,
       receipt_signed_legal_costs: form.receipt_signed_legal_costs,
       notes: form.notes || null,
       branch_list_id: form.branch_list_id || null,
     }
 
-    // إعادة حساب المطلوب فقط إذا لا توجد تسديدات (المتبقي في النموذج = متبقي الوصل)
-    if (totalPayments === 0) {
-      const required = computeDebtorRequiredAmount(receiptRemaining, penalty, receiptAmount)
-      updatePayload.required_amount = required
-      updatePayload.remaining_amount = computeRemainingFromRequired(required, 0)
+    const response = await fetch(`/api/admin/debtors/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatePayload),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      setError(typeof result.error === 'string' ? result.error : 'فشل حفظ بيانات المدين')
+      setSaving(false)
+      return
     }
-
-    const { error: dbError } = await supabase.from('debtors').update(updatePayload).eq('id', id)
-    if (dbError) { setError(dbError.message); setSaving(false); return }
-    await logActivity({ action: 'update_debtor', entity_type: 'debtor', entity_id: id, description: `تعديل بيانات المدين: ${form.full_name}` }, supabase)
     if (pdfFile) {
       try {
         await uploadDebtorPdfFile(id, pdfFile)
@@ -198,8 +178,9 @@ export default function EditDebtorPage() {
     </div>
   )
 
-  const readOnly = !canEditRecords(role)
-  const allowChangeTask = canAddDebtor(role) || canAssignTasks(role)
+  const readOnly = !canEditDebtor(role)
+  const allowChangeTask = canAssignTasks(role)
+  const allowDeleteFile = canDelete(role)
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -313,10 +294,12 @@ export default function EditDebtorPage() {
                       </div>
                       <span className="text-sm text-[#231F20] font-semibold flex-1 min-w-0 truncate">{a.file_name}</span>
                       {a.file_size && <span className="text-xs text-[#767676] shrink-0">{(a.file_size / 1024).toFixed(0)} KB</span>}
-                      <button type="button" onClick={() => deleteFile(a)} disabled={deletingFileId === a.id}
-                        className="text-xs text-red-600 hover:text-red-800 font-semibold shrink-0 disabled:opacity-50">
-                        {deletingFileId === a.id ? '...' : 'حذف'}
-                      </button>
+                      {allowDeleteFile && (
+                        <button type="button" onClick={() => deleteFile(a)} disabled={deletingFileId === a.id}
+                          className="text-xs text-red-600 hover:text-red-800 font-semibold shrink-0 disabled:opacity-50">
+                          {deletingFileId === a.id ? '...' : 'حذف'}
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>

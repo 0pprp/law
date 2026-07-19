@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { reviewLawyerPayoutRequest } from '@/lib/lawyer-payout-requests'
-import { canManageFinance, apiForbiddenResponse } from '@/lib/permissions'
+import {
+  canManageFinance,
+  apiForbiddenResponse,
+  isAccountant,
+  isGeneralAccountant,
+} from '@/lib/permissions'
+import { fetchStaffRoleFields } from '@/lib/staff-profile'
 import { logActivity } from '@/lib/activity-log'
 
 export async function POST(request: NextRequest) {
@@ -11,11 +17,7 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'غير مصرح' }, { status: 401 })
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, full_name')
-      .eq('id', user.id)
-      .single()
+    const profile = await fetchStaffRoleFields(supabase, user.id)
 
     if (!profile || !canManageFinance(profile.role)) {
       return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
@@ -32,7 +34,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'بيانات الطلب غير مكتملة' }, { status: 400 })
     }
 
-    const result = await reviewLawyerPayoutRequest(createAdminClient(), {
+    const admin = createAdminClient()
+
+    // محاسب فرعي / موظف: لا يعتمد طلبات خارج فرعه
+    const branchScoped = (isAccountant(profile.role) && !isGeneralAccountant(profile.role, profile.accountant_type))
+      || profile.role === 'employee'
+    if (branchScoped) {
+      if (!profile.branch_id) return apiForbiddenResponse()
+      const { data: reqRow } = await admin
+        .from('lawyer_payout_requests')
+        .select('id, branch_id, lawyer_id')
+        .eq('id', requestId)
+        .maybeSingle()
+      if (!reqRow) {
+        return NextResponse.json({ error: 'الطلب غير موجود' }, { status: 404 })
+      }
+      let reqBranch = reqRow.branch_id as string | null
+      if (!reqBranch && reqRow.lawyer_id) {
+        const { data: lawyer } = await admin
+          .from('profiles')
+          .select('branch_id')
+          .eq('id', reqRow.lawyer_id)
+          .maybeSingle()
+        reqBranch = lawyer?.branch_id ?? null
+      }
+      if (!reqBranch || reqBranch !== profile.branch_id) {
+        return apiForbiddenResponse()
+      }
+    }
+
+    const result = await reviewLawyerPayoutRequest(admin, {
       requestId,
       action,
       reviewerId: user.id,
@@ -43,7 +74,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 400 })
     }
 
-    const admin = createAdminClient()
     const { data: reqRow } = await admin
       .from('lawyer_payout_requests')
       .select('wallet_kind')

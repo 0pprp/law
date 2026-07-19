@@ -18,12 +18,14 @@ import DebtorImportModal from '@/components/DebtorImportModal'
 import { BranchListFilterSelect } from '@/components/BranchListSelect'
 import { useBranchLists } from '@/hooks/use-branch-lists'
 import { useAdminRole } from '@/context/admin-role'
-import { canAddDebtor, canAssignTasks, canDelete, canEditRecords, canImportDebtors, isLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
-import { appConfirm } from '@/lib/app-dialog'
+import { canAddDebtor, canAssignTasks, canDelete, canEditDebtor, canImportDebtors, canMoveToPaymentInProgress, isLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { appConfirm, appAlert } from '@/lib/app-dialog'
 import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
+import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, normalizeCaseType, type CaseType } from '@/lib/case-type'
+import { CASE_STATUS_PAYMENT_IN_PROGRESS } from '@/lib/types'
 
 const PAGE_SIZE = 50
 
@@ -35,9 +37,10 @@ function SearchIcon() {
   return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
 }
 
-function SkeletonRow() {
+function SkeletonRow({ withCheckbox }: { withCheckbox?: boolean }) {
   return (
     <TR>
+      {withCheckbox && <TD><div className="h-4 w-4 bg-[rgba(118,118,118,0.1)] rounded animate-pulse" /></TD>}
       {[1,2,3,4,5,6,7,8,9].map(i => (
         <TD key={i}><div className="h-4 bg-[rgba(118,118,118,0.1)] rounded animate-pulse" style={{ width: `${50 + (i * 13) % 40}%` }} /></TD>
       ))}
@@ -52,10 +55,11 @@ export default function DebtorsPage() {
   const { viewAllBranches } = useBranch()
   const role = useAdminRole()
   const allowDelete = canDelete(role)
-  const allowEdit = canEditRecords(role)
+  const allowEdit = canEditDebtor(role)
   const allowAdd = canAddDebtor(role)
   const allowImport = canImportDebtors(role)
   const allowChangeTask = canAddDebtor(role) || canAssignTasks(role)
+  const allowPaymentInProgress = canMoveToPaymentInProgress(role)
   const showEditLink = allowEdit || isLegalManager(role)
   const showDeleteBtn = allowDelete
   const showAddBtn = allowAdd
@@ -70,6 +74,8 @@ export default function DebtorsPage() {
   const [filterListId, setFilterListId] = useState('')
   const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>('')
   const [importOpen, setImportOpen] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [moveModalOpen, setMoveModalOpen] = useState(false)
   const { lists: branchLists } = useBranchLists(branchId)
 
   useEffect(() => {
@@ -89,7 +95,10 @@ export default function DebtorsPage() {
       setLoadingMore(false)
       return
     }
-    if (offset === 0 && !append) setLoading(true)
+    if (offset === 0 && !append) {
+      setLoading(true)
+      setSelectedIds(new Set())
+    }
     else setLoadingMore(true)
 
     try {
@@ -111,9 +120,14 @@ export default function DebtorsPage() {
         setTotal(0)
       } else {
         setError('')
-        const rows = json.debtors ?? []
-        if (append) setDebtors(prev => [...prev, ...rows])
-        else setDebtors(rows)
+        const rows: any[] = json.debtors ?? []
+        if (append) {
+          // إزالة التكرار حسب المعرّف — قد يصل نفس المدين مرتين إذا تغيّر ترتيب البيانات بين الصفحات
+          setDebtors(prev => {
+            const seen = new Set(prev.map((d: any) => d.id))
+            return [...prev, ...rows.filter(r => !seen.has(r.id))]
+          })
+        } else setDebtors(rows)
         setTotal(json.total ?? 0)
       }
     } catch {
@@ -165,6 +179,47 @@ export default function DebtorsPage() {
   const hasMore = debtors.length < total
   const visibleDebtors = showAllDebtors ? debtors : debtors.slice(0, DEBTOR_LIST_PREVIEW_LIMIT)
   const canShowAllDebtors = debtors.length > DEBTOR_LIST_PREVIEW_LIMIT
+
+  const isSelectable = (d: any) =>
+    d.case_status !== 'closed' && d.case_status !== CASE_STATUS_PAYMENT_IN_PROGRESS
+  const selectableVisible = visibleDebtors.filter(isSelectable)
+  const allVisibleSelected = selectableVisible.length > 0 && selectableVisible.every(d => selectedIds.has(d.id))
+  const selectedCount = selectedIds.size
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allVisibleSelected) selectableVisible.forEach(d => next.delete(d.id))
+      else selectableVisible.forEach(d => next.add(d.id))
+      return next
+    })
+  }
+
+  function openMoveModal() {
+    if (!allowPaymentInProgress) { setError(PERMISSION_DENIED_MSG); return }
+    if (selectedCount === 0) return
+    setMoveModalOpen(true)
+  }
+
+  async function handleMoveSuccess(summary?: { moved: number; failed: number }) {
+    setMoveModalOpen(false)
+    setSelectedIds(new Set())
+    if (summary) {
+      const parts = [`تم تحويل ${summary.moved} مدين إلى جاري التسديد`]
+      if (summary.failed > 0) parts.push(`تعذّر تحويل ${summary.failed}`)
+      await appAlert({ title: 'تم', message: parts.join(' · '), variant: summary.failed > 0 ? 'warning' : 'success' })
+    }
+    fetchDebtors(search, filterListId, filterCaseType)
+  }
 
   return (
     <div className="space-y-5">
@@ -251,6 +306,29 @@ export default function DebtorsPage() {
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>
       )}
 
+      {allowPaymentInProgress && selectedCount > 0 && (
+        <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 bg-[#2C8780]/8 border border-[#2C8780]/25 rounded-xl px-4 py-3">
+          <p className="text-sm font-semibold text-[#1D6365]">
+            تم تحديد {selectedCount} مدين
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs font-semibold text-[#767676] border border-[rgba(118,118,118,0.25)] hover:bg-white px-3 py-2 rounded-lg transition-colors"
+            >
+              إلغاء التحديد
+            </button>
+            <button
+              onClick={openMoveModal}
+              className="text-xs font-bold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
+              style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+            >
+              جاري التسديد ({selectedCount})
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
         {loading ? (
           <>
@@ -259,6 +337,7 @@ export default function DebtorsPage() {
               <Table>
                 <THead>
                   <tr>
+                    {allowPaymentInProgress && <TH className="w-10"></TH>}
                     <TH>الاسم</TH>
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
@@ -266,7 +345,7 @@ export default function DebtorsPage() {
                     <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
                   </tr>
                 </THead>
-                <TBody>{[...Array(8)].map((_, i) => <SkeletonRow key={i} />)}</TBody>
+                <TBody>{[...Array(8)].map((_, i) => <SkeletonRow key={i} withCheckbox={allowPaymentInProgress} />)}</TBody>
               </Table>
             </div>
             {/* Mobile skeleton */}
@@ -294,6 +373,18 @@ export default function DebtorsPage() {
               <Table>
                 <THead>
                   <tr>
+                    {allowPaymentInProgress && (
+                      <TH className="w-10">
+                        <input
+                          type="checkbox"
+                          aria-label="تحديد الكل"
+                          checked={allVisibleSelected}
+                          onChange={toggleSelectAll}
+                          disabled={selectableVisible.length === 0}
+                          className="h-4 w-4 accent-[#2C8780] cursor-pointer disabled:cursor-not-allowed"
+                        />
+                      </TH>
+                    )}
                     <TH>الاسم</TH>
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
@@ -310,6 +401,21 @@ export default function DebtorsPage() {
                 <TBody>
                   {visibleDebtors.map(debtor => (
                     <TR key={debtor.id}>
+                      {allowPaymentInProgress && (
+                        <TD>
+                          {isSelectable(debtor) ? (
+                            <input
+                              type="checkbox"
+                              aria-label={`تحديد ${debtor.full_name}`}
+                              checked={selectedIds.has(debtor.id)}
+                              onChange={() => toggleSelect(debtor.id)}
+                              className="h-4 w-4 accent-[#2C8780] cursor-pointer"
+                            />
+                          ) : (
+                            <span className="inline-block h-4 w-4" title="غير متاح" />
+                          )}
+                        </TD>
+                      )}
                       <TD>
                         <div>
                           <Link href={`/admin/debtors/${debtor.id}/account`} className="font-semibold text-[#231F20] hover:text-[#2C8780] transition-colors">
@@ -377,7 +483,18 @@ export default function DebtorsPage() {
               {visibleDebtors.map(debtor => (
                 <div key={debtor.id} className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <Link href={`/admin/debtors/${debtor.id}/account`} className="font-semibold text-[#231F20]">{debtor.full_name}</Link>
+                    <div className="flex items-start gap-2 min-w-0">
+                      {allowPaymentInProgress && isSelectable(debtor) && (
+                        <input
+                          type="checkbox"
+                          aria-label={`تحديد ${debtor.full_name}`}
+                          checked={selectedIds.has(debtor.id)}
+                          onChange={() => toggleSelect(debtor.id)}
+                          className="h-4 w-4 mt-1 shrink-0 accent-[#2C8780] cursor-pointer"
+                        />
+                      )}
+                      <Link href={`/admin/debtors/${debtor.id}/account`} className="font-semibold text-[#231F20] truncate">{debtor.full_name}</Link>
+                    </div>
                     <Badge variant="default" className="shrink-0">{RECEIPT_TYPE_LABELS[debtor.receipt_type as keyof typeof RECEIPT_TYPE_LABELS]}</Badge>
                   </div>
                   {viewAllBranches && debtor.branch_name && (
@@ -452,6 +569,12 @@ export default function DebtorsPage() {
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onComplete={() => fetchDebtors(search, filterListId, filterCaseType)}
+      />
+      <MoveToPaymentInProgressModal
+        open={moveModalOpen}
+        debtorIds={Array.from(selectedIds)}
+        onClose={() => setMoveModalOpen(false)}
+        onSuccess={handleMoveSuccess}
       />
     </div>
   )

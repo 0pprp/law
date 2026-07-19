@@ -29,6 +29,7 @@ const ALL_ROLE_OPTIONS = [
   { value: 'lawyer', label: USER_ROLE_LABELS.lawyer },
   { value: 'accountant', label: USER_ROLE_LABELS.accountant },
   { value: 'viewer', label: USER_ROLE_LABELS.viewer },
+  { value: 'payment_follow_up', label: USER_ROLE_LABELS.payment_follow_up },
 ]
 
 function Field({ label, required: req, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
@@ -71,7 +72,7 @@ export default function NewLawyerPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
-  const [userRole, setUserRole] = useState<'lawyer' | 'accountant' | 'viewer'>('lawyer')
+  const [userRole, setUserRole] = useState<'lawyer' | 'accountant' | 'viewer' | 'payment_follow_up'>('lawyer')
 
   const [form, setForm] = useState({
     full_name: '', username: '', temporary_password: '',
@@ -217,7 +218,7 @@ export default function NewLawyerPage() {
             <Field label="الدور" required>
               <PremiumSelect
                 value={userRole}
-                onChange={v => setUserRole(v as 'lawyer' | 'accountant' | 'viewer')}
+                onChange={v => setUserRole(v as 'lawyer' | 'accountant' | 'viewer' | 'payment_follow_up')}
                 options={roleOptions}
                 disabled={legalOfficerMode}
               />

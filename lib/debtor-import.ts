@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ReceiptType } from '@/lib/types'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import { findOrCreateBranchList } from '@/lib/branch-lists'
+import { normalizeBranchListName } from '@/lib/branch-list-normalize'
 import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
 import { computeDebtorRequiredAmount } from '@/lib/debtor-balances'
 import {
@@ -11,7 +12,6 @@ import {
   requiresUniqueReceiptNumber,
   RECEIPT_NUMBER_DUP_BRANCH_ERROR,
   RECEIPT_NUMBER_DUP_FILE_ERROR,
-  RECEIPT_NUMBER_EMPTY_ERROR,
 } from '@/lib/receipt-number'
 
 export const IMPORT_EXCEL_HEADERS = [
@@ -64,11 +64,11 @@ export interface ImportPreviewRow extends ParsedImportRow {
   receipt_amount: number | null
   /** المتبقي من الوصل (من Excel — بعد تسديدات سابقة على السند) */
   receipt_remaining: number | null
-  expenses_total: number
-  /** المبلغ المطلوب = min(المتبقي + الجزائي، مبلغ الوصل) — بدون الصرفيات */
+  expenses_total: number | null
+  /** المبلغ المطلوب = min(المتبقي + الصرفيات + الشرط الجزائي، مبلغ الوصل) */
   required_amount: number | null
-  has_contract: boolean
-  penalty_amount: number
+  has_contract: boolean | null
+  penalty_amount: number | null
   task_definition_id: string | null
   pdfBlob: Blob | null
   list_name: string | null
@@ -136,13 +136,14 @@ export function normalizeReceiptTypeInput(raw: string): string {
   return raw.trim()
 }
 
-/** المبلغ المطلوب عند الاستيراد = المتبقي + الشرط الجزائي، بحد أقصى مبلغ الوصل (بدون الصرفيات) */
+/** المبلغ المطلوب عند الاستيراد = المتبقي + الصرفيات + الشرط الجزائي، بحد أقصى مبلغ الوصل */
 export function computeImportRequiredAmount(
   receiptRemaining: number,
+  totalExpenses = 0,
   penaltyAmount = 0,
   receiptAmount = 0,
 ): number {
-  return computeDebtorRequiredAmount(receiptRemaining, penaltyAmount, receiptAmount)
+  return computeDebtorRequiredAmount(receiptRemaining, totalExpenses, penaltyAmount, receiptAmount)
 }
 
 function readExpensesTotalCell(row: Record<string, unknown>): string {
@@ -160,9 +161,9 @@ function parseBool(val: string): boolean {
   return s === 'نعم' || s === 'yes' || s === 'true' || s === '1' || s === 'y'
 }
 
-function parseAmount(raw: string, label: string): { ok: true; value: number } | { ok: false; error: string } {
+function parseAmount(raw: string, label: string): { ok: true; value: number | null } | { ok: false; error: string } {
   const s = raw.trim()
-  if (!s) return { ok: true, value: 0 }
+  if (!s) return { ok: true, value: null }
   const normalized = s.replace(/,/g, '')
   if (!/^\d+$/.test(normalized)) {
     return { ok: false, error: `${label} — يجب أن يكون رقماً` }
@@ -312,10 +313,7 @@ export function validateImportRows(
     const PDF_WARNING = 'لا يحتوي PDF — يمكن إضافته لاحقاً من بروفايل المدين'
 
     if (!row.full_name) errors.push('الاسم فارغ')
-    if (!row.phone) errors.push('الهاتف فارغ')
-    if (isReceiptNumberMissing(row.receipt_number)) {
-      errors.push(RECEIPT_NUMBER_EMPTY_ERROR)
-    } else {
+    if (!isReceiptNumberMissing(row.receipt_number)) {
       const rn = normalizeReceiptNumberInput(row.receipt_number)
       if (isZeroReceiptNumber(rn)) {
         // الصفر مسموح بالتكرار داخل الملف والفرع
@@ -343,27 +341,31 @@ export function validateImportRows(
     const expensesTotal = parseAmount(row.expenses_total_raw, 'مجموع الصرفيات')
     if (!expensesTotal.ok) errors.push(expensesTotal.error)
 
-    const has_contract = parseBool(row.has_contract_raw)
+    const has_contract = row.has_contract_raw.trim() ? parseBool(row.has_contract_raw) : null
     const penaltyParsed = parseAmount(row.penalty_amount_raw, 'الشرط الجزائي')
     if (!penaltyParsed.ok) errors.push(penaltyParsed.error)
-    const penalty_amount = has_contract && penaltyParsed.ok ? penaltyParsed.value : 0
+    const penalty_amount =
+      has_contract === true && penaltyParsed.ok
+        ? penaltyParsed.value
+        : has_contract === false
+          ? 0
+          : null
 
     const receipt_remaining = remainAmt.ok ? remainAmt.value : null
-    const expenses_total = expensesTotal.ok ? expensesTotal.value : 0
-    const receipt_amount_val = receiptAmt.ok ? receiptAmt.value : 0
+    const expenses_total = expensesTotal.ok ? expensesTotal.value : null
+    const receipt_amount_val = receiptAmt.ok ? receiptAmt.value : null
     const required_amount =
       receipt_remaining != null
         ? computeImportRequiredAmount(
             receipt_remaining,
-            penalty_amount,
-            receipt_amount_val,
+            expenses_total ?? 0,
+            penalty_amount ?? 0,
+            receipt_amount_val ?? 0,
           )
         : null
 
     let task_definition_id: string | null = null
-    if (!row.task_label.trim()) {
-      errors.push('المهمة غير موجودة في هذا الفرع')
-    } else {
+    if (row.task_label.trim()) {
       const def = defByLabel.get(row.task_label.trim())
       if (!def) errors.push('المهمة غير موجودة في هذا الفرع — يجب أن تطابق اسم المهمة في النظام تماماً')
       else task_definition_id = def.id
@@ -393,7 +395,7 @@ export function validateImportRows(
       errors,
       warnings,
       pdfStatus,
-      receipt_type: receipt_type ?? 'check',
+      receipt_type,
       receipt_amount: receiptAmt.ok ? receiptAmt.value : null,
       receipt_remaining,
       expenses_total,
@@ -437,6 +439,14 @@ export async function downloadErrorReport(
 const BATCH_SIZE = 25
 const UPLOAD_CONCURRENCY = 5
 
+/** رسالة واضحة عندما تكون قاعدة البيانات لم تُحدَّث بعد للسماح بالأعمدة الفارغة */
+function mapImportDbError(msg: string): string {
+  if (msg.includes('violates not-null constraint')) {
+    return 'قاعدة البيانات لا تسمح بالأعمدة الفارغة بعد — يجب تشغيل سكربت supabase/scripts/apply-nullable-excel-import-fields.sql من Supabase SQL Editor أولاً'
+  }
+  return msg
+}
+
 async function yieldUi(): Promise<void> {
   await new Promise<void>(r => setTimeout(r, 0))
 }
@@ -460,7 +470,7 @@ async function importImportExpenseRecord(
   row: ImportPreviewRow,
   ctx: { branchId: string; userId: string; today: string },
 ): Promise<string | null> {
-  if (row.expenses_total <= 0) return null
+  if (row.expenses_total == null || row.expenses_total <= 0) return null
 
   const { error } = await supabase.from('expenses').insert({
     debtor_id: debtorId,
@@ -482,7 +492,7 @@ async function finalizeImportedDebtorBalances(
   debtorId: string,
   row: ImportPreviewRow,
 ): Promise<string | null> {
-  const balance = row.required_amount ?? row.receipt_remaining ?? 0
+  const balance = row.required_amount ?? row.receipt_remaining
 
   const { error } = await supabase
     .from('debtors')
@@ -510,29 +520,41 @@ export async function executeDebtorImport(
   const failures: ImportExecuteResult['failures'] = []
   const created: NonNullable<ImportExecuteResult['created']> = []
 
+  // تخزين مؤقت للقوائم: كل قائمة مميزة تُحل مرة واحدة فقط لكل الاستيراد
+  // (يمنع تكرار الاستعلام لكل صف وتزاحم إنشاء نفس القائمة).
+  const listCache = new Map<string, Promise<{ id: string; name: string } | null>>()
+  const resolveList = (rawName: string | null): Promise<{ id: string; name: string } | null> => {
+    if (!rawName) return Promise.resolve(null)
+    const key = normalizeBranchListName(rawName) || rawName.trim()
+    let ref = listCache.get(key)
+    if (!ref) {
+      ref = findOrCreateBranchList(supabase, ctx.branchId, rawName)
+      listCache.set(key, ref)
+    }
+    return ref
+  }
+
   onProgress({ phase: 'creating_debtors', current: 0, total: validRows.length, message: 'إنشاء المدينين...' })
 
   for (let offset = 0; offset < validRows.length; offset += BATCH_SIZE) {
     const batch = validRows.slice(offset, offset + BATCH_SIZE)
-    const listRefs = await Promise.all(
-      batch.map(row =>
-        row.list_name ? findOrCreateBranchList(supabase, ctx.branchId, row.list_name) : Promise.resolve(null),
-      ),
-    )
+    const listRefs = await Promise.all(batch.map(row => resolveList(row.list_name)))
     const debtorPayloads = batch.map((row, i) => ({
       full_name: row.full_name,
-      phone: row.phone,
+      phone: row.phone.trim() || null,
       id_number: row.id_number.trim() || null,
       governorate: ctx.governorate,
       address: row.address || null,
       export_date: ctx.today,
-      receipt_type: row.receipt_type ?? 'check',
-      receipt_number: row.receipt_number.trim(),
-      receipt_amount: row.receipt_amount ?? 0,
-      remaining_amount: row.required_amount ?? row.receipt_remaining ?? 0,
-      required_amount: row.required_amount ?? row.receipt_remaining ?? 0,
+      receipt_type: row.receipt_type,
+      receipt_number: row.receipt_number.trim() || null,
+      receipt_amount: row.receipt_amount,
+      remaining_amount: row.required_amount ?? row.receipt_remaining,
+      required_amount: row.required_amount ?? row.receipt_remaining,
+      total_expenses: row.expenses_total,
       lawyer_fees: 0,
       penalty_amount: row.penalty_amount,
+      has_contract: row.has_contract,
       notes: row.notes || null,
       created_by: ctx.userId,
       branch_id: ctx.branchId,
@@ -551,7 +573,7 @@ export async function executeDebtorImport(
           rowNum: row.rowNum,
           full_name: row.full_name,
           receipt_number: row.receipt_number,
-          errors: [dErr?.message ?? 'فشل إنشاء المدين'],
+          errors: [dErr?.message ? mapImportDbError(dErr.message) : 'فشل إنشاء المدين'],
         })
       }
       onProgress({
@@ -564,17 +586,18 @@ export async function executeDebtorImport(
       continue
     }
 
-    const taskPayloads = debtors.map((d, i) => {
+    const taskPayloads = debtors.flatMap((d, i) => {
       const row = batch[i]
+      if (!row.task_definition_id) return []
       const def = row.task_definition_id ? defMap.get(row.task_definition_id) : null
-      return {
+      return [{
         debtor_id: d.id,
-        task_definition_id: row.task_definition_id!,
+        task_definition_id: row.task_definition_id,
         task_status: 'waiting_assignment' as const,
         reward_amount: def?.fee_amount ?? 0,
         created_by: ctx.userId,
         branch_id: ctx.branchId,
-      }
+      }]
     })
 
     onProgress({
@@ -584,12 +607,14 @@ export async function executeDebtorImport(
       message: 'إنشاء المهام...',
     })
 
-    const { data: tasks, error: tErr } = await supabase
-      .from('tasks')
-      .insert(taskPayloads)
-      .select('id, debtor_id')
+    const { data: tasks, error: tErr } = taskPayloads.length
+      ? await supabase
+          .from('tasks')
+          .insert(taskPayloads)
+          .select('id, debtor_id')
+      : { data: [] as { id: string; debtor_id: string }[], error: null }
 
-    if (tErr || !tasks?.length) {
+    if (tErr || (taskPayloads.length > 0 && !tasks?.length)) {
       for (let i = 0; i < debtors.length; i++) {
         await supabase.from('debtors').delete().eq('id', debtors[i].id)
         failures.push({
@@ -605,14 +630,17 @@ export async function executeDebtorImport(
 
     const taskByDebtor = new Map(tasks.map(t => [t.debtor_id, t.id]))
     const linkResults = await Promise.all(
-      debtors.map(d =>
-        supabase.from('debtors').update({ current_task_id: taskByDebtor.get(d.id)! }).eq('id', d.id),
-      ),
+      debtors
+        .filter(d => taskByDebtor.has(d.id))
+        .map(d =>
+          supabase.from('debtors').update({ current_task_id: taskByDebtor.get(d.id)! }).eq('id', d.id),
+        ),
     )
     const linkFailed = linkResults.some(r => r.error)
     if (linkFailed) {
       for (let i = 0; i < debtors.length; i++) {
-        await supabase.from('tasks').delete().eq('id', taskByDebtor.get(debtors[i].id)!)
+        const taskId = taskByDebtor.get(debtors[i].id)
+        if (taskId) await supabase.from('tasks').delete().eq('id', taskId)
         await supabase.from('debtors').delete().eq('id', debtors[i].id)
         failures.push({
           rowNum: batch[i].rowNum,
@@ -640,36 +668,40 @@ export async function executeDebtorImport(
       }
     }
 
-    const uploadItems: { row: ImportPreviewRow; debtorId: string; taskId: string }[] = []
+    const uploadItems: { row: ImportPreviewRow; debtorId: string; taskId: string | null }[] = []
 
-    for (let i = 0; i < debtors.length; i++) {
-      const aggErr = await importImportExpenseRecord(supabase, debtors[i].id, batch[i], ctx)
-      if (aggErr) {
-        await cleanupDebtor(supabase, debtors[i].id, taskByDebtor.get(debtors[i].id)!, null)
+    // معالجة الصرفيات والأرصدة بالتوازي بدل التسلسل (يقلّل ذهاب/إياب القاعدة كثيراً)
+    const balanceResults = await Promise.all(
+      debtors.map(async (d, i) => {
+        const aggErr = await importImportExpenseRecord(supabase, d.id, batch[i], ctx)
+        if (aggErr) return { i, error: `فشل حفظ مجموع الصرفيات: ${aggErr}` }
+
+        // تحديث الأرصدة مطلوب فقط عندما تُدرَج صرفيات تُشغّل إعادة الحساب في القاعدة؛
+        // بدون صرفيات تكون القيم المُدرَجة عند الإنشاء نهائية.
+        if (batch[i].expenses_total != null && batch[i].expenses_total > 0) {
+          const balanceErr = await finalizeImportedDebtorBalances(supabase, d.id, batch[i])
+          if (balanceErr) return { i, error: `فشل ضبط أرصدة المدين: ${balanceErr}` }
+        }
+        return { i, error: null as string | null }
+      }),
+    )
+
+    for (const res of balanceResults) {
+      const i = res.i
+      if (res.error) {
+        await cleanupDebtor(supabase, debtors[i].id, taskByDebtor.get(debtors[i].id) ?? null, null)
         failures.push({
           rowNum: batch[i].rowNum,
           full_name: batch[i].full_name,
           receipt_number: batch[i].receipt_number,
-          errors: [`فشل حفظ مجموع الصرفيات: ${aggErr}`],
-        })
-        continue
-      }
-
-      const balanceErr = await finalizeImportedDebtorBalances(supabase, debtors[i].id, batch[i])
-      if (balanceErr) {
-        await cleanupDebtor(supabase, debtors[i].id, taskByDebtor.get(debtors[i].id)!, null)
-        failures.push({
-          rowNum: batch[i].rowNum,
-          full_name: batch[i].full_name,
-          receipt_number: batch[i].receipt_number,
-          errors: [`فشل ضبط أرصدة المدين: ${balanceErr}`],
+          errors: [res.error],
         })
         continue
       }
       uploadItems.push({
         row: batch[i],
         debtorId: debtors[i].id,
-        taskId: taskByDebtor.get(debtors[i].id)!,
+        taskId: taskByDebtor.get(debtors[i].id) ?? null,
       })
     }
 

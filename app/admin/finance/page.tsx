@@ -102,16 +102,18 @@ export default function FinancePage() {
   const supabase = createClient()
 
   const loadLawyers = useCallback(async () => {
-    let q = supabase.from('profiles').select('id, full_name, username, phone').eq('role', 'lawyer').eq('is_active', true)
-    if (branchId) q = (q as any).eq('branch_id', branchId)
-    const { data } = await q.order('full_name')
-    const list = data ?? []
-    setLawyers(list)
-
     try {
       const res = await fetch('/api/admin/lawyer-wallet', { cache: 'no-store' })
       const payload = await res.json()
-      if (res.ok && payload.balances) {
+      if (!res.ok) {
+        setError(payload.error ?? 'فشل تحميل المحامين')
+        setLawyers([])
+        return []
+      }
+
+      const list = (payload.lawyers ?? []) as Lawyer[]
+      setLawyers(list)
+      if (payload.balances) {
         const fees = new Map<string, number>()
         const savings = new Map<string, number>()
         for (const [id, bal] of Object.entries(payload.balances as Record<string, { fees: number; savings: number }>)) {
@@ -121,13 +123,14 @@ export default function FinancePage() {
         setBalanceMap(fees)
         setSavingsMap(savings)
       }
+      setSelectedId(prev => (prev && list.some(l => l.id === prev) ? prev : list[0]?.id ?? ''))
+      return list
     } catch {
-      /* keep previous balances */
+      setError('فشل تحميل المحامين')
+      setLawyers([])
+      return []
     }
-
-    setSelectedId(prev => (prev && list.some(l => l.id === prev) ? prev : list[0]?.id ?? ''))
-    return list
-  }, [branchId, supabase])
+  }, [branchId])
 
   const loadBranchRequests = useCallback(async (lawyerList: Lawyer[]) => {
     try {

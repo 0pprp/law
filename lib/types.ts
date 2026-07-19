@@ -1,4 +1,56 @@
-export type UserRole = 'admin' | 'employee' | 'accountant' | 'lawyer' | 'viewer' | 'delegate'
+export type UserRole = 'admin' | 'employee' | 'accountant' | 'lawyer' | 'viewer' | 'delegate' | 'payment_follow_up'
+
+/** حالة جاري التسديد على debtors.case_status */
+export const CASE_STATUS_PAYMENT_IN_PROGRESS = 'payment_in_progress' as const
+
+export type PaymentScheduleType = 'daily' | 'weekly' | 'monthly'
+export type PaymentLocation = 'company' | 'execution'
+
+export const PAYMENT_TYPE_LABELS: Record<PaymentScheduleType, string> = {
+  daily: 'يومي',
+  weekly: 'أسبوعي',
+  monthly: 'شهري',
+}
+
+export const PAYMENT_LOCATION_LABELS: Record<PaymentLocation, string> = {
+  company: 'في الشركة',
+  execution: 'في التنفيذ',
+}
+
+export const PAYMENT_TYPE_OPTIONS: { value: PaymentScheduleType; label: string }[] = [
+  { value: 'daily', label: PAYMENT_TYPE_LABELS.daily },
+  { value: 'weekly', label: PAYMENT_TYPE_LABELS.weekly },
+  { value: 'monthly', label: PAYMENT_TYPE_LABELS.monthly },
+]
+
+export const PAYMENT_LOCATION_OPTIONS: { value: PaymentLocation; label: string }[] = [
+  { value: 'company', label: PAYMENT_LOCATION_LABELS.company },
+  { value: 'execution', label: PAYMENT_LOCATION_LABELS.execution },
+]
+
+export type PaymentNoncomplianceStatus = 'pending' | 'approved' | 'rejected'
+
+export const PAYMENT_NONCOMPLIANCE_STATUS_LABELS: Record<PaymentNoncomplianceStatus, string> = {
+  pending: 'قيد المراجعة',
+  approved: 'موافق عليه',
+  rejected: 'مرفوض',
+}
+
+export interface PaymentNoncomplianceRequest {
+  id: string
+  debtor_id: string
+  branch_id: string | null
+  source_task_id: string | null
+  requested_by: string
+  note: string | null
+  status: PaymentNoncomplianceStatus
+  reviewed_by: string | null
+  reviewed_at: string | null
+  rejection_reason: string | null
+  created_task_id: string | null
+  created_at: string
+  updated_at: string
+}
 export type LawyerType = 'normal' | 'general'
 export type AccountantType = 'branch' | 'general'
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent'
@@ -63,7 +115,7 @@ export type TaskType =
   | 'arrest_warrant' | 'arrest_warrant_broadcast' | 'imprisonment_in_absentia'
   | 'imprisonment_broadcast' | 'department_correspondence' | 'newspaper_publication'
   | 'salary_seizure' | 'first_registration' | 'file_closure'
-  | 'find_address' | 'find_missing_address' | 'settlement' | 'negotiations' | 'last_payment'
+  | 'find_address' | 'find_missing_address' | 'settlement' | 'negotiations'
   | 'criminal_lawsuit_request' | 'police_station_statement' | 'court_statement' | 'witness_statement'
 export type ReceiptType = 'check' | 'bill_of_exchange' | 'trust' | 'contract' | 'other'
 
@@ -110,6 +162,12 @@ export interface Debtor {
   total_payments: number
   required_amount: number
   notes: string | null
+  /** ملاحظة كارد «الأسماء التي تحت إسناد مهمة» — تعديلها للمدير ومسؤول القانونية فقط */
+  assignment_note?: string | null
+  /** نوع التسديد عند جاري التسديد */
+  payment_type?: PaymentScheduleType | null
+  /** مكان التسديد عند جاري التسديد */
+  payment_location?: PaymentLocation | null
   created_by: string
   created_at: string
   updated_at: string
@@ -302,7 +360,6 @@ export const TASK_TYPE_LABELS: Record<TaskType, string> = {
   find_missing_address: 'إيجاد عنوان المفقود والإنذار',
   settlement: 'التسوية',
   negotiations: 'المفاوضات',
-  last_payment: 'اخر تسديد',
   criminal_lawsuit_request: 'تقديم طلب دعوى جزائية',
   police_station_statement: 'تدوين أقوال في مركز الشرطة',
   court_statement: 'تدوين أقوال في المحكمة',
@@ -324,6 +381,7 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   lawyer: 'محامي',
   viewer: 'مسؤول القانونية',
   delegate: 'مندوب',
+  payment_follow_up: 'مسؤول متابعة التسديد',
 }
 
 export const LAWYER_TYPE_LABELS: Record<LawyerType, string> = {

@@ -1,4 +1,4 @@
--- Official branch names ONLY (11). Merge legacy aliases, disable extras.
+-- Official branch names ONLY (12). Merge legacy aliases, disable extras.
 -- Safe to re-run.
 
 -- Legacy short names → official names (same physical branch, one row each).
@@ -80,6 +80,7 @@ SELECT v.name, true
 FROM (VALUES
   ('بغداد الكرخ'),
   ('بغداد الرصافة'),
+  ('بابل'),
   ('البصرة'),
   ('الديوانية'),
   ('ديالى'),
@@ -96,13 +97,13 @@ WHERE NOT EXISTS (
 
 UPDATE branches SET is_active = true
 WHERE name IN (
-  'بغداد الكرخ', 'بغداد الرصافة', 'البصرة', 'الديوانية', 'ديالى',
+  'بغداد الكرخ', 'بغداد الرصافة', 'بابل', 'البصرة', 'الديوانية', 'ديالى',
   'كربلاء', 'كركوك', 'الموصل', 'النجف الأشرف', 'الناصرية', 'السماوة'
 );
 
 UPDATE branches SET is_active = false
 WHERE name NOT IN (
-  'بغداد الكرخ', 'بغداد الرصافة', 'البصرة', 'الديوانية', 'ديالى',
+  'بغداد الكرخ', 'بغداد الرصافة', 'بابل', 'البصرة', 'الديوانية', 'ديالى',
   'كربلاء', 'كركوك', 'الموصل', 'النجف الأشرف', 'الناصرية', 'السماوة',
   'الفرع الرئيسي'
 );

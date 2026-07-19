@@ -131,14 +131,11 @@ export default function NewDebtorPage() {
     )
   }
 
-  /** نوع الدعوى والمهمة مطلوبان + رقم الوصل غير فارغ */
+  /** نوع الدعوى مطلوب + رقم الوصل غير فارغ — المهمة اختيارية */
   function validateForm(): FieldErrors {
     const errors: FieldErrors = {}
     if (!caseType) {
       errors.caseType = 'يجب اختيار نوع الدعوى قبل إضافة المدين.'
-    }
-    if (!selectedTaskDefId) {
-      errors.selectedTaskDefId = 'يجب اختيار المهمة المطلوبة قبل إضافة المدين.'
     }
     if (isReceiptNumberMissing(form.receipt_number)) {
       errors.receipt_number = RECEIPT_NUMBER_EMPTY_ERROR
@@ -267,7 +264,7 @@ export default function NewDebtorPage() {
     <div className="max-w-3xl space-y-5">
       <PageHeader
         title="إضافة مدين جديد"
-        subtitle="سجّل بيانات المدين واربطه بمهمته الأولية في فرعك الحالي"
+        subtitle="سجّل بيانات المدين — يمكنك اختيار المهمة الآن أو إسنادها لاحقاً من لوحة التحكم"
         breadcrumb={[{ label: 'المدينون', href: '/admin/debtors' }, { label: 'إضافة جديد' }]}
       />
 
@@ -299,7 +296,7 @@ export default function NewDebtorPage() {
           <FormFlowStep
             step={1}
             title="نوع الدعوى والمهمة"
-            subtitle="حدد نوع الدعوى أولاً ثم اختر المهمة المطابقة — كلاهما إلزامي"
+            subtitle="حدد نوع الدعوى (إلزامي) ثم اختر المهمة المطابقة — يمكن ترك المهمة لاحقاً"
             icon={
               <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -319,7 +316,7 @@ export default function NewDebtorPage() {
                   disabled={!branchOk}
                 />
               </FormField>
-              <FormField label="المهمة المطلوبة" required error={fieldErrors.selectedTaskDefId}>
+              <FormField label="المهمة المطلوبة" hint="اختياري — بدونها يظهر المدين في «الأسماء التي تحت إسناد مهمة»" error={fieldErrors.selectedTaskDefId}>
                 <PremiumSelect
                   value={selectedTaskDefId}
                   onChange={v => { setSelectedTaskDefId(v); clearFieldError('selectedTaskDefId') }}
@@ -332,6 +329,18 @@ export default function NewDebtorPage() {
                 />
               </FormField>
             </div>
+            {caseType && !selectedDef && (
+              <div className="mt-3 flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                  <svg className="w-4 h-4 text-amber-700" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-sm text-amber-900 leading-relaxed">
+                  لم تُختر مهمة — سيُحفظ المدين ويظهر في كارد <span className="font-black">«الأسماء التي تحت إسناد مهمة»</span> بلوحة التحكم حتى تُسند له مهمة.
+                </p>
+              </div>
+            )}
             {selectedDef && (
               <div className="mt-3 flex items-start gap-2.5 bg-[#2C8780]/6 border border-[#2C8780]/20 rounded-xl px-4 py-3">
                 <div className="w-8 h-8 rounded-lg bg-[#2C8780]/12 flex items-center justify-center shrink-0">
@@ -514,7 +523,7 @@ export default function NewDebtorPage() {
 
         <div className="flex gap-3 pb-6">
           <Button type="submit" variant="primary" loading={saving} disabled={!branchOk || readOnly}>
-            حفظ المدين وإنشاء المهمة
+            {selectedTaskDefId ? 'حفظ المدين وإنشاء المهمة' : 'حفظ المدين'}
           </Button>
           <Link href="/admin/debtors">
             <Button type="button" variant="outline">إلغاء</Button>

@@ -1,16 +1,19 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
- * المبلغ المطلوب = المتبقي من الوصل + الشرط الجزائي.
+ * المبلغ المطلوب = المتبقي من الوصل + إجمالي المصروفات + الشرط الجزائي.
  * إن وُجد مبلغ وصل > 0: لا يتجاوز مبلغ الوصل.
- * لا يشمل الصرفيات — تُسجَّل في total_expenses فقط.
  */
 export function computeDebtorRequiredAmount(
   receiptRemaining: number,
+  totalExpenses: number,
   penaltyAmount: number,
   receiptAmount: number,
 ): number {
-  const sum = Math.max(0, receiptRemaining) + Math.max(0, penaltyAmount)
+  const sum =
+    Math.max(0, receiptRemaining)
+    + Math.max(0, totalExpenses || 0)
+    + Math.max(0, penaltyAmount || 0)
   if (receiptAmount > 0) return Math.min(sum, receiptAmount)
   return sum
 }
@@ -50,7 +53,7 @@ export async function syncDebtorRemainingAfterPayments(
   return { ok: true }
 }
 
-/** @deprecated الصرفيات لا تزيد المطلوب — يُزامَن total_expenses عبر trigger DB فقط */
+/** @deprecated تُزامَن الصرفيات والمبلغ المطلوب عبر trigger قاعدة البيانات */
 export async function applyDebtorApprovedExpenseDelta(
   _supabase: SupabaseClient,
   _debtorId: string,

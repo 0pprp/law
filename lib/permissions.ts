@@ -3,7 +3,12 @@ import { isGeneralAccountantType } from '@/lib/accountant-type'
 
 export const PERMISSION_DENIED_MSG = 'ليس لديك صلاحية لتنفيذ هذا الإجراء.'
 
-export const STAFF_ROLES: UserRole[] = ['admin', 'accountant', 'employee', 'viewer']
+export const STAFF_ROLES: UserRole[] = ['admin', 'accountant', 'employee', 'viewer', 'payment_follow_up']
+
+/** مسؤول متابعة التسديد */
+export function isPaymentFollowUp(role: string | null | undefined): boolean {
+  return role === 'payment_follow_up'
+}
 
 export function isAdmin(role: string | null | undefined): boolean {
   return role === 'admin'
@@ -70,7 +75,12 @@ export function canReadAllBranches(
   role: string | null | undefined,
   accountantType?: string | null,
 ): boolean {
-  return isAdmin(role) || isLegalManager(role) || isGeneralAccountant(role, accountantType)
+  return (
+    isAdmin(role)
+    || isLegalManager(role)
+    || isGeneralAccountant(role, accountantType)
+    || isPaymentFollowUp(role)
+  )
 }
 
 export function canWriteAdminData(role: string | null | undefined): boolean {
@@ -113,14 +123,13 @@ export function canPickAnyBranch(
 
 /**
  * فلتر واجهة «الكل» (كل الفروع) — ليس فرعاً في قاعدة البيانات.
- * المدير + المحاسب العام فقط (المحاسب العام يملكه مسبقاً).
- * لا يُمنح لمسؤول القانونية / المحاسب الفرعي / المحامي / المندوب.
+ * المدير + المحاسب العام + مسؤول متابعة التسديد.
  */
 export function canUseViewAllBranchesFilter(
   role: string | null | undefined,
   accountantType?: string | null,
 ): boolean {
-  return isAdmin(role) || isGeneralAccountant(role, accountantType)
+  return isAdmin(role) || isGeneralAccountant(role, accountantType) || isPaymentFollowUp(role)
 }
 
 export function canViewAllUsersAcrossBranches(
@@ -146,6 +155,11 @@ export function canDeleteUsers(role: string | null | undefined): boolean {
 
 export function canEditRecords(role: string | null | undefined): boolean {
   return isAdmin(role)
+}
+
+/** تعديل بيانات المدين — المدير والمحاسب، مع تقييد الفرع في الخادم */
+export function canEditDebtor(role: string | null | undefined): boolean {
+  return isAdmin(role) || isAccountant(role)
 }
 
 /** إدارة حسابات (تفعيل/تعطيل) — المدير فقط؛ التعديل عبر canEditLawyerProfile */
@@ -244,10 +258,30 @@ export function canCreateTaskDefinition(role: string | null | undefined): boolea
   return isAdmin(role)
 }
 
-/** تسجيل التسديدات — مدير / محاسب / موظف (ليس مسؤول القانونية) */
+/** تسجيل التسديدات — مدير / محاسب / موظف / مسؤول متابعة التسديد (ليس مسؤول القانونية) */
 export function canAddPayments(role: string | null | undefined): boolean {
   if (isLegalManager(role)) return false
-  return isAdmin(role) || isAccountant(role) || role === 'employee'
+  return isAdmin(role) || isAccountant(role) || role === 'employee' || isPaymentFollowUp(role)
+}
+
+/** كارد جاري التسديد في لوحة التحكم — مدير ومسؤول القانونية فقط */
+export function canViewPaymentInProgressCard(role: string | null | undefined): boolean {
+  return isAdmin(role) || isLegalManager(role)
+}
+
+/** تحويل المدين إلى جاري التسديد — مدير ومسؤول القانونية فقط */
+export function canMoveToPaymentInProgress(role: string | null | undefined): boolean {
+  return isAdmin(role) || isLegalManager(role)
+}
+
+/** إرسال طلب عدم التزام — مسؤول متابعة التسديد فقط */
+export function canSubmitPaymentNoncomplianceRequest(role: string | null | undefined): boolean {
+  return isPaymentFollowUp(role)
+}
+
+/** مراجعة طلبات عدم الالتزام — مدير ومسؤول القانونية فقط */
+export function canReviewPaymentNoncomplianceRequest(role: string | null | undefined): boolean {
+  return isAdmin(role) || isLegalManager(role)
 }
 
 /**
@@ -266,11 +300,18 @@ const ACCOUNTANT_HREFS = new Set([
   '/admin/settings',
 ])
 
+/** مسؤول متابعة التسديد: لوحته + التسديدات + كشف حساب المدين فقط */
+const PAYMENT_FOLLOW_UP_HREFS = new Set([
+  '/admin/payment-follow-up',
+  '/admin/payments',
+])
+
 /**
  * القائمة:
  * - المدير: الكل
  * - مسؤول القانونية: نفس واجهة المدير للعرض (ما عدا محفظته الإدارية)
  * - المحاسب: روابطه فقط
+ * - مسؤول متابعة التسديد: لوحته والتسديدات فقط
  */
 export function isNavVisibleForRole(href: string, role: string | null | undefined): boolean {
   if (href === '/admin/legal-manager-wallet') {
@@ -279,8 +320,15 @@ export function isNavVisibleForRole(href: string, role: string | null | undefine
   if (href === '/admin/delegates' || href.startsWith('/admin/delegates/')) {
     return canManageDelegates(role)
   }
+  if (isPaymentFollowUp(role)) {
+    return PAYMENT_FOLLOW_UP_HREFS.has(href)
+  }
   if (isAccountant(role)) {
     return ACCOUNTANT_HREFS.has(href)
+  }
+  // إخفاء لوحة متابعة التسديد عن غير أصحاب الدور (المدير/القانونية يرون الكارد في الداشبورد)
+  if (href === '/admin/payment-follow-up') {
+    return isPaymentFollowUp(role)
   }
   // admin / legal manager / employee — كل الروابط الظاهرة في الواجهة
   return true
@@ -292,8 +340,8 @@ export function isAccountantPathAllowed(pathname: string): boolean {
   if (pathname === '/admin/debtors' || pathname === '/admin/debtors/new') return true
   if (/^\/admin\/debtors\/[^/]+\/account\/?$/.test(pathname)) return true
   if (/^\/admin\/debtors\/[^/]+\/profile\/?$/.test(pathname)) return true
+  if (/^\/admin\/debtors\/[^/]+\/edit\/?$/.test(pathname)) return true
   if (/^\/admin\/debtors\/[^/]+$/.test(pathname) && !pathname.endsWith('/edit')) return true
-  if (pathname.startsWith('/admin/debtors/') && pathname.includes('/edit')) return false
   if (pathname.startsWith('/admin/payments')) return true
   if (pathname.startsWith('/admin/finance')) return true
   if (pathname.startsWith('/admin/expenses')) return true
@@ -301,6 +349,14 @@ export function isAccountantPathAllowed(pathname: string): boolean {
   if (pathname.startsWith('/admin/accounts')) return true
   if (pathname.startsWith('/admin/activity')) return true
   if (pathname.startsWith('/admin/settings')) return true
+  return false
+}
+
+/** مسارات مسؤول متابعة التسديد */
+export function isPaymentFollowUpPathAllowed(pathname: string): boolean {
+  if (pathname === '/admin/payment-follow-up' || pathname.startsWith('/admin/payment-follow-up/')) return true
+  if (pathname.startsWith('/admin/payments')) return true
+  if (/^\/admin\/debtors\/[^/]+\/account\/?$/.test(pathname)) return true
   return false
 }
 
