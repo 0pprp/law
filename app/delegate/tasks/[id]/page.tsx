@@ -67,7 +67,16 @@ export default async function DelegateTaskDetailPage({ params }: { params: Promi
   }
 
   const access = await checkLawyerTaskAccess(supabase, user.id, id)
-  if (!access.ok) return <LawyerAccessDenied />
+  if (!access.ok) {
+    if (access.reason === 'section') {
+      return (
+        <LawyerAccessDenied
+          message="لا صلاحية على هذا القسم (مدني/جزائي) — المهمة تتبع قسماً مختلفاً عن قسمك."
+        />
+      )
+    }
+    return <LawyerAccessDenied />
+  }
   if (access.task.assigned_to !== user.id) return <LawyerAccessDenied />
 
   const task = access.task as {

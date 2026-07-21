@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireStaffProfile } from '@/lib/api-auth'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import {
   apiForbiddenResponse,
   canReviewPaymentNoncomplianceRequest,
@@ -9,6 +9,8 @@ import {
 import { CASE_STATUS_PAYMENT_IN_PROGRESS } from '@/lib/types'
 import { logActivity } from '@/lib/activity-log'
 import { fetchPendingNoncomplianceRequests } from '@/lib/payment-noncompliance'
+import { filterBySection } from '@/lib/case-scope'
+import { requireDebtorInScope } from '@/lib/section-guard'
 
 /** قائمة الطلبات المعلقة — مدير / مسؤول القانونية */
 export async function GET(request: NextRequest) {
@@ -21,14 +23,22 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const branchId = searchParams.get('branchId')?.trim() || null
   const viewAll = searchParams.get('viewAll') === '1'
+  const listId = searchParams.get('listId')?.trim() || null
   const offset = Number(searchParams.get('offset') ?? 0) || 0
   const limit = Number(searchParams.get('limit') ?? 50) || 50
+
+  const scope = sessionCaseScope(auth.profile)
+  const lockedCaseType = filterBySection(scope)
+  const caseTypeParam = searchParams.get('caseType')?.trim() || ''
+  const caseType =
+    lockedCaseType
+    ?? (caseTypeParam === 'civil' || caseTypeParam === 'criminal' ? caseTypeParam : null)
 
   const admin = createAdminClient()
   const res = await fetchPendingNoncomplianceRequests(
     admin,
     viewAll ? null : branchId,
-    { offset, limit },
+    { offset, limit, branchListId: viewAll ? null : listId, caseType },
   )
   if (res.error) {
     return NextResponse.json({ error: res.error }, { status: 500 })
@@ -58,15 +68,23 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = createAdminClient()
-  const { data: debtor, error: debtorErr } = await admin
-    .from('debtors')
-    .select('id, full_name, case_status, branch_id, last_task_id')
-    .eq('id', debtorId)
-    .maybeSingle()
+  const scope = sessionCaseScope(auth.profile)
+  const gate = await requireDebtorInScope(
+    admin,
+    scope,
+    debtorId,
+    'id, full_name, case_status, branch_id, last_task_id, case_type',
+  )
+  if (!gate.ok) return gate.error
 
-  if (debtorErr || !debtor) {
-    return NextResponse.json({ error: 'المدين غير موجود' }, { status: 404 })
+  const debtor = gate.data as {
+    id: string
+    full_name: string | null
+    case_status: string | null
+    branch_id: string | null
+    last_task_id: string | null
   }
+
   if (debtor.case_status !== CASE_STATUS_PAYMENT_IN_PROGRESS) {
     return NextResponse.json({ error: 'المدين ليس في جاري التسديد' }, { status: 400 })
   }
@@ -113,6 +131,7 @@ export async function POST(request: NextRequest) {
     entity_type: 'debtor',
     entity_id: debtor.id,
     description: `طلب عدم التزام: ${debtor.full_name ?? ''}${note ? ` — ${note}` : ''}`,
+    case_type: gate.caseType,
   }, auth.supabase)
 
   return NextResponse.json({ ok: true, id: created.id })

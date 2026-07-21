@@ -249,13 +249,38 @@ async function main() {
     return { error: error?.message, detail: String(count ?? 0) }
   })
 
-  // 4) Activity logs — all current logs are from QA cycle (18); clear all
-  await run('delete activity_logs', async () => {
-    const { error, count } = await sb
+  // 4) Activity logs — فقط ما يخص مستخدمي/مديني QA (لا تمسح السجل الحقيقي)
+  await run('delete activity_logs (QA only)', async () => {
+    let n = 0
+    if (qaIds.length) {
+      const r = await deleteIn('activity_logs', 'user_id', qaIds)
+      if (r.error) return { error: r.error }
+      n += r.deleted ?? 0
+    }
+    if (qaDebtorIds.length) {
+      const r = await deleteIn('activity_logs', 'entity_id', qaDebtorIds)
+      if (r.error) return { error: r.error }
+      n += r.deleted ?? 0
+    }
+    if (qaTaskIds.length) {
+      const r = await deleteIn('activity_logs', 'entity_id', qaTaskIds)
+      if (r.error) return { error: r.error }
+      n += r.deleted ?? 0
+    }
+    const { data: leftovers, error: le } = await sb
       .from('activity_logs')
-      .delete({ count: 'exact' })
-      .neq('id', '00000000-0000-0000-0000-000000000000')
-    return { error: error?.message, detail: String(count ?? 0) }
+      .select('id, description, action')
+      .limit(5000)
+    if (le) return { error: le.message }
+    const kill = (leftovers ?? [])
+      .filter(r => /QA|مدين QA|محامي عادي QA|مدير اختبار QA|qa_/i.test(String(r.description ?? '')))
+      .map(r => r.id)
+    if (kill.length) {
+      const r = await deleteIn('activity_logs', 'id', kill)
+      if (r.error) return { error: r.error }
+      n += r.deleted ?? 0
+    }
+    return { detail: String(n) }
   })
 
   // 5) Delete QA tasks

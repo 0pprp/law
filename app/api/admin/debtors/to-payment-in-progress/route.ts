@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireStaffProfile } from '@/lib/api-auth'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { apiForbiddenResponse, canMoveToPaymentInProgress } from '@/lib/permissions'
 import { CASE_STATUS_PAYMENT_IN_PROGRESS } from '@/lib/types'
 import { logActivity } from '@/lib/activity-log'
 import { finalizeTaskApproval, FEE_STATUS_AWAITING_NEXT_TASK } from '@/lib/task-approval'
+import { requireDebtorInScope } from '@/lib/section-guard'
 
 const VALID_TYPES = new Set(['daily', 'weekly', 'monthly'])
 const VALID_LOCATIONS = new Set(['company', 'execution'])
@@ -60,25 +61,32 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = createAdminClient()
+  const scope = sessionCaseScope(auth.profile)
   const results: MoveResult[] = []
 
   for (const debtorId of ids) {
-    const { data: debtor, error: debtorErr } = await admin
-      .from('debtors')
-      .select('id, full_name, case_status, current_task_id, last_task_id')
-      .eq('id', debtorId)
-      .maybeSingle()
+    const gate = await requireDebtorInScope(
+      admin,
+      scope,
+      debtorId,
+      'id, full_name, case_status, current_task_id, last_task_id, case_type',
+    )
+    if (!gate.ok) return gate.error
 
-    if (debtorErr || !debtor) {
-      results.push({ id: debtorId, ok: false, error: 'المدين غير موجود' })
-      continue
+    const debtor = gate.data as {
+      id: string
+      full_name: string | null
+      case_status: string | null
+      current_task_id: string | null
+      last_task_id?: string | null
     }
+
     if (debtor.case_status === 'closed') {
-      results.push({ id: debtorId, ok: false, name: debtor.full_name, error: 'قضية مغلقة' })
+      results.push({ id: debtorId, ok: false, name: debtor.full_name ?? undefined, error: 'قضية مغلقة' })
       continue
     }
     if (debtor.case_status === CASE_STATUS_PAYMENT_IN_PROGRESS) {
-      results.push({ id: debtorId, ok: false, name: debtor.full_name, error: 'في جاري التسديد مسبقاً' })
+      results.push({ id: debtorId, ok: false, name: debtor.full_name ?? undefined, error: 'في جاري التسديد مسبقاً' })
       continue
     }
 
@@ -101,7 +109,7 @@ export async function POST(request: NextRequest) {
         }, { status: 500 })
       }
       console.error('[to-payment-in-progress]', updErr.message)
-      results.push({ id: debtorId, ok: false, name: debtor.full_name, error: 'فشل التحويل' })
+      results.push({ id: debtorId, ok: false, name: debtor.full_name ?? undefined, error: 'فشل التحويل' })
       continue
     }
 
@@ -125,9 +133,9 @@ export async function POST(request: NextRequest) {
             payment_type: null,
             payment_location: null,
             current_task_id: debtor.current_task_id ?? null,
-            last_task_id: (debtor as { last_task_id?: string | null }).last_task_id ?? null,
+            last_task_id: debtor.last_task_id ?? null,
           } as any).eq('id', debtorId)
-          results.push({ id: debtorId, ok: false, name: debtor.full_name, error: finalizeResult.error ?? 'فشل الاعتماد النهائي للمهمة السابقة' })
+          results.push({ id: debtorId, ok: false, name: debtor.full_name ?? undefined, error: finalizeResult.error ?? 'فشل الاعتماد النهائي للمهمة السابقة' })
           continue
         }
       }
@@ -138,9 +146,10 @@ export async function POST(request: NextRequest) {
       entity_type: 'debtor',
       entity_id: debtor.id,
       description: `تحويل المدين إلى جاري التسديد: ${debtor.full_name ?? ''} — نوع: ${paymentType} · مكان: ${paymentLocation}`,
+      case_type: gate.caseType,
     }, auth.supabase)
 
-    results.push({ id: debtorId, ok: true, name: debtor.full_name })
+    results.push({ id: debtorId, ok: true, name: debtor.full_name ?? undefined })
   }
 
   const moved = results.filter(r => r.ok)

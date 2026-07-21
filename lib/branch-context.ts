@@ -6,6 +6,8 @@ import { fetchStaffRoleFields } from '@/lib/staff-profile'
 export const BRANCH_COOKIE = 'qalat_branch'
 /** قيمة خاصة في الكوكي تعني فلتر واجهة «كل الفروع» — ليست فرعاً في قاعدة البيانات */
 export const BRANCH_COOKIE_ALL = '__all__'
+/** فلتر القائمة العلوي — فارغ أو غائب = الكل؛ القيمة = branch_lists.id */
+export const BRANCH_LIST_COOKIE = 'qalat_branch_list'
 
 export interface BranchContext {
   branchId: string | null

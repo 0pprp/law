@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server'
 import { logActivity } from '@/lib/activity-log'
 import { isAccountant, isViewer, apiForbiddenResponse } from '@/lib/permissions'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getSessionProfile } from '@/lib/api-auth'
+import { getSessionProfile, sessionCaseScope } from '@/lib/api-auth'
 import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
+import { requireTaskInScope } from '@/lib/section-guard'
 
 export async function DELETE(request: Request) {
   const auth = await getSessionProfile()
@@ -22,12 +23,16 @@ export async function DELETE(request: Request) {
   const admin = createAdminClient()
   const { data: row, error } = await admin
     .from('task_attachments')
-    .select('id, file_path, task:tasks!task_attachments_task_id_fkey(branch_id)')
+    .select('id, file_path, task_id, task:tasks!task_attachments_task_id_fkey(branch_id)')
     .eq('id', fileId)
     .maybeSingle()
 
   if (error) return apiServerError('delete-task-file', error)
   if (!row || row.file_path !== filePath) return safeClientError('الملف غير موجود', 404)
+
+  const scope = sessionCaseScope(auth.profile)
+  const gate = await requireTaskInScope(admin, scope, row.task_id)
+  if (!gate.ok) return gate.error
 
   const task = Array.isArray(row.task) ? row.task[0] : row.task
   const branchId = (task as { branch_id?: string | null } | null)?.branch_id ?? null
@@ -44,6 +49,7 @@ export async function DELETE(request: Request) {
     entity_type: 'file',
     entity_id: fileId,
     description: `حذف ملف مهمة: ${fileName ?? filePath}`,
+    case_type: gate.caseType,
   }, auth.supabase)
 
   return NextResponse.json({ ok: true })

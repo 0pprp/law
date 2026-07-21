@@ -13,14 +13,17 @@ import { Card, CardHeader } from '@/components/ui/card'
 import { fmtDate } from '@/lib/utils'
 import { useBranchId, useBranch } from '@/context/branch'
 import { useAdminRole } from '@/context/admin-role'
-import { canEditLawyerProfile, canDeleteUsers, isLegalManager } from '@/lib/permissions'
+import { canEditLawyerProfile, canDeleteUsers, isAnyLegalManager } from '@/lib/permissions'
+import { assertLawyerSection, resolveCaseScope, sectionForbiddenMessage } from '@/lib/case-scope'
+import PermissionDenied from '@/components/PermissionDenied'
+import { CASE_TYPE_LABELS } from '@/lib/case-type'
 import { LAWYER_TYPE_OPTIONS } from '@/lib/lawyer-type'
 import { ACCOUNTANT_TYPE_OPTIONS } from '@/lib/accountant-type'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { uploadLawyerAttachment } from '@/lib/lawyer-attachments'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
 
-const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer', 'viewer', 'payment_follow_up']
+const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer', 'viewer', 'criminal_legal_manager', 'payment_follow_up']
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
 function Field({ label, required: req, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
@@ -50,7 +53,7 @@ export default function EditLawyerPage() {
   const branchId = useBranchId()
   const { branchName } = useBranch()
   const adminRole = useAdminRole()
-  const legalOfficerMode = isLegalManager(adminRole)
+  const legalOfficerMode = isAnyLegalManager(adminRole)
   const [targetRole, setTargetRole] = useState<UserRole>('lawyer')
   const [targetLoaded, setTargetLoaded] = useState(false)
   const canDelete = canDeleteUsers(adminRole)
@@ -61,6 +64,7 @@ export default function EditLawyerPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [sectionDenied, setSectionDenied] = useState(false)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [uploading, setUploading] = useState(false)
   const [openingId, setOpeningId] = useState<string | null>(null)
@@ -73,6 +77,7 @@ export default function EditLawyerPage() {
     role: 'lawyer' as UserRole, is_active: true,
     lawyer_type: 'normal' as 'normal' | 'general',
     accountant_type: 'branch' as 'branch' | 'general',
+    case_type: 'civil' as 'civil' | 'criminal',
   })
   const [profileBranchId, setProfileBranchId] = useState<string | null>(null)
 
@@ -84,6 +89,15 @@ export default function EditLawyerPage() {
         supabase.from('lawyer_attachments').select('*').eq('lawyer_id', id).order('created_at', { ascending: false }),
       ])
       if (data) {
+        if (
+          data.role === 'lawyer'
+          && !assertLawyerSection(resolveCaseScope(adminRole), data.case_type)
+        ) {
+          setSectionDenied(true)
+          setTargetLoaded(true)
+          setLoading(false)
+          return
+        }
         setProfileBranchId(data.branch_id ?? null)
         setForm({
           username: data.username ?? '', full_name: data.full_name ?? '', phone: data.phone ?? '',
@@ -92,6 +106,7 @@ export default function EditLawyerPage() {
           role: data.role ?? 'lawyer', is_active: data.is_active ?? true,
           lawyer_type: data.lawyer_type === 'general' ? 'general' : 'normal',
           accountant_type: data.accountant_type === 'general' ? 'general' : 'branch',
+          case_type: data.case_type === 'criminal' ? 'criminal' : 'civil',
         })
         setTargetRole((data.role ?? 'lawyer') as UserRole)
       }
@@ -100,7 +115,7 @@ export default function EditLawyerPage() {
       setLoading(false)
     }
     load()
-  }, [id])
+  }, [id, adminRole])
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
 
@@ -207,6 +222,10 @@ export default function EditLawyerPage() {
     </div>
   )
 
+  if (sectionDenied) {
+    return <PermissionDenied message={sectionForbiddenMessage()} backHref="/admin/lawyers" />
+  }
+
   return (
     <div className="max-w-2xl space-y-5">
       <PageHeader
@@ -280,13 +299,23 @@ export default function EditLawyerPage() {
               <input type="text" value={form.identity_category} onChange={e => set('identity_category', e.target.value)} className={INP} placeholder="محامي مرافع / مستشار..." />
             </Field>
             {form.role === 'lawyer' && (
-              <Field label="نوع المحامي" required>
-                <PremiumSelect
-                  value={form.lawyer_type}
-                  onChange={v => set('lawyer_type', v)}
-                  options={LAWYER_TYPE_OPTIONS}
-                />
-              </Field>
+              <>
+                <Field label="نوع المحامي" required>
+                  <PremiumSelect
+                    value={form.lawyer_type}
+                    onChange={v => set('lawyer_type', v)}
+                    options={LAWYER_TYPE_OPTIONS}
+                  />
+                </Field>
+                <Field label="قسم المحامي" hint="لا يمكن تغييره من الواجهة بعد الإنشاء">
+                  <input
+                    type="text"
+                    value={CASE_TYPE_LABELS[form.case_type]}
+                    readOnly
+                    className={`${INP} bg-slate-50 text-slate-600`}
+                  />
+                </Field>
+              </>
             )}
             {form.role === 'accountant' && (
               <Field label="نوع المحاسب" required>

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireStaffProfile } from '@/lib/api-auth'
-import { apiForbiddenResponse, isAdmin, isLegalManager } from '@/lib/permissions'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
+import { apiForbiddenResponse, isAdmin, isAnyLegalManager } from '@/lib/permissions'
 import { logActivity } from '@/lib/activity-log'
+import { requireDebtorInScope } from '@/lib/section-guard'
 
 const NOTE_MAX_LENGTH = 2000
 
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error
 
   const role = auth.profile?.role
-  if (!isAdmin(role) && !isLegalManager(role)) {
+  if (!isAdmin(role) && !isAnyLegalManager(role)) {
     return apiForbiddenResponse()
   }
 
@@ -33,15 +34,16 @@ export async function POST(request: NextRequest) {
   const note = String(body.note ?? '').trim().slice(0, NOTE_MAX_LENGTH)
 
   const admin = createAdminClient()
-  const { data: debtor, error: debtorErr } = await admin
-    .from('debtors')
-    .select('id, full_name, current_task_id')
-    .eq('id', debtorId)
-    .maybeSingle()
+  const scope = sessionCaseScope(auth.profile)
+  const gate = await requireDebtorInScope(
+    admin,
+    scope,
+    debtorId,
+    'id, full_name, current_task_id, case_type',
+  )
+  if (!gate.ok) return gate.error
 
-  if (debtorErr || !debtor) {
-    return NextResponse.json({ error: 'المدين غير موجود' }, { status: 404 })
-  }
+  const debtor = gate.data as { id: string; full_name: string | null }
 
   const { error: updErr } = await admin
     .from('debtors')
@@ -65,6 +67,7 @@ export async function POST(request: NextRequest) {
     description: note
       ? `تعديل ملاحظة إسناد المهمة للمدين: ${debtor.full_name ?? ''}`
       : `مسح ملاحظة إسناد المهمة للمدين: ${debtor.full_name ?? ''}`,
+    case_type: gate.caseType,
   }, auth.supabase)
 
   return NextResponse.json({ ok: true, note: note || null })

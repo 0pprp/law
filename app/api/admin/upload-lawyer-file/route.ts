@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { logActivity } from '@/lib/activity-log'
+import { requireLawyerInScope } from '@/lib/section-guard'
 
 const MAX_BYTES = 15 * 1024 * 1024
 const ALLOWED_TYPES = new Set([
@@ -14,17 +15,10 @@ const ALLOWED_TYPES = new Set([
 ])
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'غير مصرح' }, { status: 401 })
+  const auth = await requireStaffProfile()
+  if (auth.error) return auth.error
 
-  const { data: callerProfile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
-
-  const callerRole = callerProfile?.role
+  const callerRole = auth.profile?.role
   if (callerRole !== 'admin' && callerRole !== 'viewer') {
     return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
   }
@@ -48,16 +42,11 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = createAdminClient()
+  const scope = sessionCaseScope(auth.profile)
+  const gate = await requireLawyerInScope(admin, scope, lawyerId, 'id, role, case_type, branch_id')
+  if (!gate.ok) return gate.error
 
-  const { data: lawyerProfile, error: lawyerErr } = await admin
-    .from('profiles')
-    .select('id, role')
-    .eq('id', lawyerId)
-    .single()
-
-  if (lawyerErr || !lawyerProfile) {
-    return NextResponse.json({ error: 'المحامي غير موجود' }, { status: 404 })
-  }
+  const lawyerProfile = gate.data as { id: string; role: string }
   if (lawyerProfile.role !== 'lawyer') {
     return NextResponse.json({ error: 'المستمسكات تُرفع للمحامين فقط' }, { status: 400 })
   }
@@ -91,7 +80,7 @@ export async function POST(request: NextRequest) {
       file_size: file.size,
       mime_type: file.type,
       description,
-      uploaded_by: user.id,
+      uploaded_by: auth.user!.id,
     })
     .select('id, file_name, file_path, file_size, mime_type, description, created_at')
     .single()
@@ -106,7 +95,8 @@ export async function POST(request: NextRequest) {
     entity_type: 'lawyer',
     entity_id: lawyerId,
     description: `رفع مستمسك محامي: ${file.name}`,
-  }, supabase)
+    case_type: gate.caseType,
+  }, auth.supabase)
 
   return NextResponse.json({ ok: true, attachment: row })
 }

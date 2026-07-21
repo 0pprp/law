@@ -9,11 +9,16 @@ import { fmtDate } from '@/lib/utils'
 import { logActivity } from '@/lib/activity-log'
 import { useBranchId } from '@/context/branch'
 import { assignTasksViaApi } from '@/lib/task-operations-api'
+import { executeTaskUnassign } from '@/lib/client-task-assign'
 import { fetchAssignmentLawyers } from '@/lib/branch-profiles'
 import { ACTIVE_CASE_BLOCK_MSG, hasActiveCurrentTask } from '@/lib/debtor-current-task'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DatePicker } from '@/components/ui/date-picker'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useAdminRole } from '@/context/admin-role'
+import { canAssignTasks } from '@/lib/permissions'
+import { UNASSIGNABLE_TASK_STATUSES } from '@/lib/task-assignment'
+import { appAlert, appConfirm } from '@/lib/app-dialog'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   draft: 'gray',
@@ -224,9 +229,10 @@ function CreateTaskModal({ debtorId, defs, courts, execDepts, onClose, onCreated
 }
 
 // ─── Assign Lawyer Modal ───────────────────────────────────────────────────────
-function AssignModal({ taskId, taskLabel, onClose, onAssigned }: {
+function AssignModal({ taskId, taskLabel, caseType, onClose, onAssigned }: {
   taskId: string
   taskLabel: string
+  caseType?: 'civil' | 'criminal' | null
   onClose: () => void
   onAssigned: () => void
 }) {
@@ -238,8 +244,10 @@ function AssignModal({ taskId, taskLabel, onClose, onAssigned }: {
 
   useEffect(() => {
     if (!branchId) { setLawyers([]); return }
-    fetchAssignmentLawyers(createClient(), branchId).then(({ lawyers: list }) => setLawyers(list))
-  }, [branchId])
+    fetchAssignmentLawyers(createClient(), branchId, {
+      caseType: caseType === 'criminal' || caseType === 'civil' ? caseType : null,
+    }).then(({ lawyers: list }) => setLawyers(list))
+  }, [branchId, caseType])
 
   async function assign() {
     if (!lawyerId) { setError('اختر محامياً'); return }
@@ -252,6 +260,7 @@ function AssignModal({ taskId, taskLabel, onClose, onAssigned }: {
       entity_type: 'task',
       entity_id: taskId,
       description: `تكليف مهمة: ${taskLabel}`,
+      case_type: caseType === 'criminal' ? 'criminal' : 'civil',
     }, createClient())
     onAssigned()
     onClose()
@@ -314,14 +323,21 @@ function AssignModal({ taskId, taskLabel, onClose, onAssigned }: {
 export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
   const branchId = useBranchId()
   const canWrite = useCanWrite()
+  const role = useAdminRole()
+  const canAssign = canAssignTasks(role)
   const [tasks, setTasks] = useState<any[]>([])
-  const [debtorMeta, setDebtorMeta] = useState<{ current_task_id: string | null; case_status: string | null } | null>(null)
+  const [debtorMeta, setDebtorMeta] = useState<{
+    current_task_id: string | null
+    case_status: string | null
+    case_type?: string | null
+  } | null>(null)
   const [defs, setDefs] = useState<TaskDef[]>([])
   const [courts, setCourts] = useState<Court[]>([])
   const [execDepts, setExecDepts] = useState<ExecutionDepartment[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [assigning, setAssigning] = useState<{ id: string; label: string } | null>(null)
+  const [unassigningId, setUnassigningId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const supabase = createClient()
@@ -357,6 +373,30 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
   }, [debtorId, branchId])
 
   useEffect(() => { load() }, [load])
+
+  async function handleUnassign(taskId: string) {
+    if (!canAssign) return
+    const ok = await appConfirm({
+      title: 'إلغاء التكليف',
+      message: 'ستُعاد المهمة إلى «بانتظار التكليف» وتُزال من قائمة المكلَّف. هل تريد المتابعة؟',
+      confirmLabel: 'إلغاء التكليف',
+      danger: true,
+    })
+    if (!ok) return
+    setUnassigningId(taskId)
+    const result = await executeTaskUnassign({
+      taskIds: [taskId],
+      branchId,
+      canAssign,
+      caseType: debtorMeta?.case_type === 'criminal' ? 'criminal' : 'civil',
+    })
+    setUnassigningId(null)
+    if (!result.ok) {
+      await appAlert({ message: result.error ?? 'فشل إلغاء التكليف', variant: 'error' })
+      return
+    }
+    await load()
+  }
 
   const canAddTask = canWrite && !hasActiveCurrentTask(debtorMeta ?? {})
   const currentTaskId = debtorMeta?.current_task_id ?? null
@@ -448,6 +488,16 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
                         تكليف
                       </button>
                     )}
+                    {canAssign && t.assigned_to && (UNASSIGNABLE_TASK_STATUSES as readonly string[]).includes(t.task_status) && (
+                      <button
+                        type="button"
+                        onClick={() => void handleUnassign(t.id)}
+                        disabled={unassigningId === t.id}
+                        className="text-xs font-bold text-orange-700 bg-orange-50 border border-orange-200 px-2.5 py-1 rounded-lg hover:bg-orange-100 disabled:opacity-50"
+                      >
+                        {unassigningId === t.id ? '...' : 'إلغاء التكليف'}
+                      </button>
+                    )}
                   </div>
                 </div>
               )
@@ -471,6 +521,7 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
         <AssignModal
           taskId={assigning.id}
           taskLabel={assigning.label}
+          caseType={debtorMeta?.case_type === 'criminal' ? 'criminal' : 'civil'}
           onClose={() => setAssigning(null)}
           onAssigned={load}
         />

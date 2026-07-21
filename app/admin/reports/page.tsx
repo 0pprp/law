@@ -18,19 +18,17 @@ import {
   buildAchievementByLawyer,
   type ReportSnapshot,
 } from '@/lib/reports-data'
-import { BranchListFilterSelect } from '@/components/BranchListSelect'
-import { useBranchLists } from '@/hooks/use-branch-lists'
 import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
+import { useCaseScope } from '@/hooks/use-case-scope'
 
 interface Filters {
   dateFrom: string
   dateTo: string
   debtorId: string
   lawyerId: string
-  branchListId: string
   caseType: '' | 'civil' | 'criminal'
 }
-const EMPTY: Filters = { dateFrom: '', dateTo: '', debtorId: '', lawyerId: '', branchListId: '', caseType: '' }
+const EMPTY: Filters = { dateFrom: '', dateTo: '', debtorId: '', lawyerId: '', caseType: '' }
 
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
@@ -41,13 +39,25 @@ function IconTask() { return <svg className="w-6 h-6 text-white" fill="none" str
 
 export default function ReportsPage() {
   const branchId = useBranchId()
-  const { viewAllBranches } = useBranch()
-  const { lists: branchLists } = useBranchLists(branchId)
+  const { viewAllBranches, listId } = useBranch()
+  const { caseTypeFilter: lockedCaseType } = useCaseScope()
   const [snapshot, setSnapshot] = useState<ReportSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const [draft, setDraft] = useState<Filters>(EMPTY)
-  const [applied, setApplied] = useState<Filters>(EMPTY)
+  const [draft, setDraft] = useState<Filters>({
+    ...EMPTY,
+    caseType: lockedCaseType ?? '',
+  })
+  const [applied, setApplied] = useState<Filters>({
+    ...EMPTY,
+    caseType: lockedCaseType ?? '',
+  })
+
+  useEffect(() => {
+    if (!lockedCaseType) return
+    setDraft(prev => ({ ...prev, caseType: lockedCaseType }))
+    setApplied(prev => ({ ...prev, caseType: lockedCaseType }))
+  }, [lockedCaseType])
 
   useEffect(() => {
     // branchId=null مع viewAll = كل الفروع؛ بدون viewAll وبدون فرع = لا تحميل
@@ -62,7 +72,13 @@ export default function ReportsPage() {
     setLoading(true)
     setLoadError('')
 
-    fetchReportSnapshot(createClient(), branchId, applied)
+    const filters = {
+      ...applied,
+      caseType: lockedCaseType ?? applied.caseType,
+      branchListId: (!viewAllBranches && listId) ? listId : undefined,
+    }
+
+    fetchReportSnapshot(createClient(), branchId, filters)
       .then(data => {
         if (!cancelled) {
           setSnapshot(data)
@@ -80,7 +96,7 @@ export default function ReportsPage() {
       })
 
     return () => { cancelled = true }
-  }, [branchId, viewAllBranches, applied])
+  }, [branchId, viewAllBranches, applied, listId, lockedCaseType])
 
   const achievements = snapshot?.achievements ?? []
   const lawyers = snapshot?.lawyers ?? []
@@ -138,6 +154,7 @@ export default function ReportsPage() {
 
   function d(k: keyof Filters, v: string) {
     if (k === 'caseType') {
+      if (lockedCaseType) return
       setDraft(prev => ({
         ...prev,
         caseType: v === 'civil' || v === 'criminal' ? v : '',
@@ -147,6 +164,21 @@ export default function ReportsPage() {
     setDraft(prev => ({ ...prev, [k]: v }))
   }
   const hasApplied = Object.values(applied).some(Boolean)
+
+  function applyFilters() {
+    const next = { ...draft }
+    if (lockedCaseType) next.caseType = lockedCaseType
+    setApplied(next)
+  }
+
+  function clearFilters() {
+    const next: Filters = {
+      ...EMPTY,
+      caseType: lockedCaseType === 'civil' || lockedCaseType === 'criminal' ? lockedCaseType : '',
+    }
+    setDraft(next)
+    setApplied(next)
+  }
 
   return (
     <div className="space-y-6">
@@ -181,13 +213,18 @@ export default function ReportsPage() {
           </div>
           <div>
             <PremiumSelect
-              value={draft.caseType}
+              value={lockedCaseType ?? draft.caseType}
               onChange={v => d('caseType', v)}
-              options={CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+              options={
+                lockedCaseType
+                  ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
+                  : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+              }
               fieldLabel="نوع الدعوى"
               placeholder="كل أنواع الدعاوى"
               headerTitle="تصفية حسب نوع الدعوى"
               searchable={false}
+              disabled={Boolean(lockedCaseType)}
             />
           </div>
           <div>
@@ -196,6 +233,7 @@ export default function ReportsPage() {
               value={draft.debtorId}
               onChange={(id) => d('debtorId', id)}
               branchId={branchId}
+              caseType={lockedCaseType}
               allowClear
               clearLabel="كل المدينين"
             />
@@ -215,19 +253,10 @@ export default function ReportsPage() {
               searchable
             />
           </div>
-          <div>
-            {!viewAllBranches && (
-              <BranchListFilterSelect
-                value={draft.branchListId}
-                onChange={v => d('branchListId', v)}
-                lists={branchLists}
-              />
-            )}
-          </div>
         </div>
         <div className="flex gap-3">
-          <Button variant="primary" size="sm" onClick={() => setApplied({ ...draft })}>تطبيق الفلترة</Button>
-          {hasApplied && <Button variant="outline" size="sm" onClick={() => { setDraft(EMPTY); setApplied(EMPTY) }}>تصفير</Button>}
+          <Button variant="primary" size="sm" onClick={applyFilters}>تطبيق الفلترة</Button>
+          {hasApplied && <Button variant="outline" size="sm" onClick={clearFilters}>تصفير</Button>}
         </div>
       </div>
 

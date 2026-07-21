@@ -1,22 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { assignTasksToLawyer, validateLawyerTaskAssignment } from '@/lib/task-assignment'
-import { STAFF_ROLES, canAssignTasks, apiForbiddenResponse } from '@/lib/permissions'
+import { canAssignTasks, apiForbiddenResponse } from '@/lib/permissions'
+import { requireTaskInScope } from '@/lib/section-guard'
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'غير مصرح' }, { status: 401 })
+    const auth = await requireStaffProfile()
+    if (auth.error) return auth.error
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, branch_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile || !STAFF_ROLES.includes(profile.role) || !canAssignTasks(profile.role)) {
+    if (!canAssignTasks(auth.profile?.role)) {
       return apiForbiddenResponse()
     }
 
@@ -30,13 +24,19 @@ export async function POST(request: NextRequest) {
     }
 
     const admin = createAdminClient()
+    const scope = sessionCaseScope(auth.profile)
+
+    for (const taskId of taskIds) {
+      const gate = await requireTaskInScope(admin, scope, String(taskId))
+      if (!gate.ok) return gate.error
+    }
 
     const validation = await validateLawyerTaskAssignment(admin, lawyerId, taskIds)
     if (!validation.ok) {
       return NextResponse.json({ error: validation.error ?? 'تعذر التحقق من التكليف' }, { status: 400 })
     }
 
-    const result = await assignTasksToLawyer(admin, taskIds, lawyerId, dueDate, user.id)
+    const result = await assignTasksToLawyer(admin, taskIds, lawyerId, dueDate, auth.user!.id)
 
     if (!result.ok) {
       return NextResponse.json({ error: result.error ?? 'فشل تكليف المهمة' }, { status: 400 })

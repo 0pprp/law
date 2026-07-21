@@ -8,7 +8,6 @@ import {
   OPERATION_BRANCH_REQUIRED_MSG,
   useOperationBranch,
 } from '@/components/OperationBranchSelect'
-import { logActivity } from '@/lib/activity-log'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -19,6 +18,7 @@ import { fmtMoney, fmtDate, cn } from '@/lib/utils'
 import { parseMoneyInput, formatMoney } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 import { RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { newClientRequestId } from '@/lib/client-request-id'
 import {
   DEBTOR_SEARCH_PLACEHOLDER,
   resolveDebtorIdsBySearch,
@@ -27,15 +27,17 @@ import {
 import { DateRangePicker } from '@/components/ui/date-range-picker'
 import { useAdminRole } from '@/context/admin-role'
 import { canAddPayments, canEditRecords, canDelete, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { useCaseScope } from '@/hooks/use-case-scope'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
-import { syncDebtorRemainingAfterPayments } from '@/lib/debtor-balances'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS } from '@/lib/case-type'
 
 const EMPTY_FORM = { debtor_id: '', amount: '', notes: '' }
 const INP = formInputClass
 
 export default function PaymentsPage() {
   const branchId = useBranchId()
-  const { viewAllBranches } = useBranch()
+  const { viewAllBranches, listId } = useBranch()
   const {
     needsPick,
     effectiveBranchId,
@@ -44,6 +46,9 @@ export default function PaymentsPage() {
     validateOperationBranch,
   } = useOperationBranch()
   const role = useAdminRole()
+  const { caseTypeFilter: lockedCaseType } = useCaseScope()
+  const [filterCaseType, setFilterCaseType] = useState<'' | 'civil' | 'criminal'>(lockedCaseType ?? '')
+  const effectiveCaseType = lockedCaseType ?? (filterCaseType || null)
   const allowAdd = canAddPayments(role)
   const allowEdit = canEditRecords(role)
   const allowDelete = canDelete(role)
@@ -63,6 +68,8 @@ export default function PaymentsPage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const submitLock = useRef(false)
+  const paymentRequestIdRef = useRef<string | null>(null)
 
   function set(field: string, value: string) { setForm(prev => ({ ...prev, [field]: value })) }
 
@@ -83,20 +90,68 @@ export default function PaymentsPage() {
 
     if (branchId) pq = (pq as any).eq('branch_id', branchId)
 
-    if (debouncedSearch.trim()) {
-      const ids = await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId)
-      if (!ids?.length) {
+    const scopeListId = (!viewAllBranches && listId) ? listId : null
+    let debtorIds: string[] | null = null
+
+    if (scopeListId && branchId) {
+      const { resolveDebtorIdsByBranchList } = await import('@/lib/branch-lists')
+      debtorIds = await resolveDebtorIdsByBranchList(supabase, branchId, scopeListId)
+      if (!debtorIds.length) {
         setPayments([])
         setLoading(false)
         return
       }
-      pq = (pq as any).in('debtor_id', ids)
     }
+
+    if (effectiveCaseType && !debouncedSearch.trim()) {
+      let dq = supabase.from('debtors').select('id').eq('case_type', effectiveCaseType)
+      if (branchId) dq = dq.eq('branch_id', branchId)
+      if (scopeListId) dq = dq.eq('branch_list_id', scopeListId)
+      const { data: scopedDebtors } = await dq.limit(5000)
+      const ctIds = (scopedDebtors ?? []).map(d => d.id)
+      if (!ctIds.length) {
+        setPayments([])
+        setLoading(false)
+        return
+      }
+      debtorIds = debtorIds ? debtorIds.filter(id => ctIds.includes(id)) : ctIds
+      if (!debtorIds.length) {
+        setPayments([])
+        setLoading(false)
+        return
+      }
+    }
+
+    if (debouncedSearch.trim()) {
+      const searchIds = await resolveDebtorIdsBySearch(
+        supabase,
+        debouncedSearch,
+        branchId,
+        200,
+        scopeListId,
+        effectiveCaseType,
+      )
+      if (!searchIds?.length) {
+        setPayments([])
+        setLoading(false)
+        return
+      }
+      debtorIds = debtorIds
+        ? debtorIds.filter(id => searchIds.includes(id))
+        : searchIds
+      if (!debtorIds.length) {
+        setPayments([])
+        setLoading(false)
+        return
+      }
+    }
+
+    if (debtorIds) pq = (pq as any).in('debtor_id', debtorIds)
 
     const { data: p } = await pq
     setPayments(p ?? [])
     setLoading(false)
-  }, [branchId, debouncedSearch])
+  }, [branchId, viewAllBranches, listId, debouncedSearch, effectiveCaseType])
 
   useEffect(() => { load() }, [load])
 
@@ -117,31 +172,30 @@ export default function PaymentsPage() {
 
   async function saveEdit(e: { preventDefault(): void }) {
     e.preventDefault()
-    if (!allowEdit) { setEditError(PERMISSION_DENIED_MSG); return }
+    if (!allowEdit || saving) { setEditError(PERMISSION_DENIED_MSG); return }
     const amt = parseMoneyInput(editForm.amount)
     if (!amt || amt <= 0) { setEditError('يرجى إدخال مبلغ صحيح'); return }
     setSaving(true)
     setEditError('')
-    const supabase = createClient()
-    const { error: dbErr } = await supabase.from('debtor_payments').update({
-      amount: amt,
-      notes: editForm.notes || null,
-    }).eq('id', editingPayment.id)
-    if (dbErr) { setEditError(dbErr.message); setSaving(false); return }
-    const debtorId = editingPayment.debtor_id ?? editingPayment.debtors?.id
-    if (debtorId) {
-      const syncResult = await syncDebtorRemainingAfterPayments(supabase, debtorId)
-      if (!syncResult.ok) { setEditError(syncResult.error ?? 'فشل تحديث المتبقي'); setSaving(false); return }
+    try {
+      const res = await fetch(`/api/admin/payments/${editingPayment.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: amt, notes: editForm.notes || null }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) {
+        setEditError(typeof data.error === 'string' ? data.error : 'فشل التعديل')
+        setSaving(false)
+        return
+      }
+      setSaving(false)
+      setEditingPayment(null)
+      load()
+    } catch {
+      setEditError('فشل التعديل')
+      setSaving(false)
     }
-    await logActivity({
-      action: 'update_payment',
-      entity_type: 'payment',
-      entity_id: editingPayment.id,
-      description: `تعديل تسديد: ${formatMoney(amt)} — ${editingPayment.debtors?.full_name ?? ''}`,
-    }, supabase)
-    setSaving(false)
-    setEditingPayment(null)
-    load()
   }
 
   async function deletePayment(id: string, debtorId: string, debtorName: string, amount: number) {
@@ -154,58 +208,67 @@ export default function PaymentsPage() {
     })
     if (!ok) return
     setDeletingId(id)
-    const supabase = createClient()
-    const { error } = await supabase.from('debtor_payments').delete().eq('id', id)
-    if (error) { await appAlert({ message: `فشل الحذف: ${error.message}`, variant: 'error' }); setDeletingId(null); return }
-    const syncResult = await syncDebtorRemainingAfterPayments(supabase, debtorId)
-    if (!syncResult.ok) { await appAlert({ message: syncResult.error ?? 'فشل تحديث المتبقي', variant: 'error' }); setDeletingId(null); return }
-    await logActivity({
-      action: 'delete_payment',
-      entity_type: 'payment',
-      entity_id: id,
-      description: `حذف تسديد: ${formatMoney(amount)} — ${debtorName}`,
-    }, supabase)
-    setDeletingId(null)
-    load()
+    try {
+      const res = await fetch(`/api/admin/payments/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) {
+        await appAlert({ message: typeof data.error === 'string' ? data.error : 'فشل الحذف', variant: 'error' })
+        setDeletingId(null)
+        return
+      }
+      setDeletingId(null)
+      load()
+    } catch {
+      await appAlert({ message: 'فشل الحذف', variant: 'error' })
+      setDeletingId(null)
+    }
   }
 
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (!allowAdd) { setError(PERMISSION_DENIED_MSG); return }
+    if (saving || submitLock.current) return
     const branchErr = validateOperationBranch()
     if (branchErr) { setError(branchErr); return }
     if (!form.debtor_id || !form.amount || parseMoneyInput(form.amount) <= 0) {
       setError('يرجى اختيار المدين وإدخال مبلغ صحيح')
       return
     }
+    submitLock.current = true
     setSaving(true)
     setError('')
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setError('يجب تسجيل الدخول'); setSaving(false); return }
-    const paymentDate = new Date().toISOString().split('T')[0]
-    const { error: dbErr } = await supabase.from('debtor_payments').insert({
-      debtor_id: form.debtor_id,
-      amount: parseMoneyInput(form.amount),
-      payment_date: paymentDate,
-      notes: form.notes || null,
-      created_by: user.id,
-      branch_id: effectiveBranchId,
-    })
-    if (dbErr) { setError(dbErr.message); setSaving(false); return }
-    const syncResult = await syncDebtorRemainingAfterPayments(supabase, form.debtor_id)
-    if (!syncResult.ok) { setError(syncResult.error ?? 'فشل تحديث المتبقي'); setSaving(false); return }
-    await logActivity({
-      action: 'add_payment',
-      entity_type: 'payment',
-      entity_id: form.debtor_id,
-      description: `تسجيل تسديد: ${formatMoney(parseMoneyInput(form.amount))}`,
-    }, supabase)
-    setForm(EMPTY_FORM)
-    setSelectedDebtor(null)
-    setSaving(false)
-    setShowForm(false)
-    load()
+    if (!paymentRequestIdRef.current) paymentRequestIdRef.current = newClientRequestId()
+    const clientRequestId = paymentRequestIdRef.current
+    try {
+      const res = await fetch('/api/admin/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          debtorId: form.debtor_id,
+          amount: parseMoneyInput(form.amount),
+          notes: form.notes || null,
+          clientRequestId,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) {
+        setError(typeof data.error === 'string' ? data.error : 'فشل تسجيل التسديد')
+        setSaving(false)
+        submitLock.current = false
+        return
+      }
+      setForm(EMPTY_FORM)
+      setSelectedDebtor(null)
+      paymentRequestIdRef.current = null
+      setSaving(false)
+      submitLock.current = false
+      setShowForm(false)
+      load()
+    } catch {
+      setError('فشل تسجيل التسديد')
+      setSaving(false)
+      submitLock.current = false
+    }
   }
 
   function handleDebtorPick(debtorId: string, debtor: DebtorSearchRow | null) {
@@ -269,6 +332,7 @@ export default function PaymentsPage() {
                   value={form.debtor_id}
                   onChange={handleDebtorPick}
                   branchId={effectiveBranchId}
+                  caseType={effectiveCaseType}
                   disabled={!effectiveBranchId}
                 />
               </FormField>
@@ -322,14 +386,34 @@ export default function PaymentsPage() {
             onChange={e => setSearch(e.target.value)}
             className={cn(SEL, 'md:col-span-1')}
           />
+          <PremiumSelect
+            value={lockedCaseType ?? filterCaseType}
+            onChange={v => {
+              if (lockedCaseType) return
+              setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')
+            }}
+            options={
+              lockedCaseType
+                ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
+                : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+            }
+            placeholder="كل أنواع الدعاوى"
+            fieldLabel="نوع الدعوى"
+            headerTitle="تصفية حسب نوع الدعوى"
+            searchable={false}
+            disabled={Boolean(lockedCaseType)}
+          />
           <DateRangePicker
             dateFrom={dateFrom}
             dateTo={dateTo}
             onChange={({ dateFrom: f, dateTo: t }) => { setDateFrom(f); setDateTo(t) }}
           />
         </div>
-        {debouncedSearch.trim() && !loading && (
-          <p className="text-xs text-[#767676] mt-2">نتائج البحث عن: «{debouncedSearch}»</p>
+        {(debouncedSearch.trim() || filterCaseType) && !loading && (
+          <p className="text-xs text-[#767676] mt-2">
+            {debouncedSearch.trim() ? `نتائج البحث عن: «${debouncedSearch}»` : ''}
+            {filterCaseType ? ` · ${CASE_TYPE_LABELS[filterCaseType]}` : ''}
+          </p>
         )}
       </div>
 

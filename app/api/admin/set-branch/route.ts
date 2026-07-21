@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
-import { BRANCH_COOKIE, BRANCH_COOKIE_ALL } from '@/lib/branch-context'
+import { BRANCH_COOKIE, BRANCH_COOKIE_ALL, BRANCH_LIST_COOKIE } from '@/lib/branch-context'
 import { isMainBranchName } from '@/lib/branch-constants'
 import { canReadAllBranches, canUseViewAllBranchesFilter } from '@/lib/permissions'
 import { fetchStaffRoleFields } from '@/lib/staff-profile'
@@ -36,6 +36,14 @@ export async function POST(req: Request) {
         path: '/',
         maxAge: 60 * 60 * 24 * 30,
       })
+      // القوائم مرتبطة بفرع واحد — مسح فلتر القائمة عند «الكل»
+      cookieStore.set(BRANCH_LIST_COOKIE, '', {
+        httpOnly: false,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 0,
+      })
       return NextResponse.json({ ok: true, branchId: null, branchName: null, viewAll: true })
     }
 
@@ -64,6 +72,14 @@ export async function POST(req: Request) {
       sameSite: 'lax',
       path: '/',
       maxAge: 60 * 60 * 24 * 30,
+    })
+    // تغيير الفرع يبطل القائمة السابقة
+    cookieStore.set(BRANCH_LIST_COOKIE, '', {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 0,
     })
 
     return NextResponse.json({ ok: true, branchId, branchName: branch.name, viewAll: false })

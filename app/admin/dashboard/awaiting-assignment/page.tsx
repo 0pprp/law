@@ -11,7 +11,7 @@ import { cacheInvalidatePrefix } from '@/lib/query-cache'
 /** لوحة التحكم ← الأسماء التي تحت إسناد مهمة */
 export default function DashboardAwaitingAssignmentPage() {
   const branchId = useBranchId()
-  const { viewAllBranches } = useBranch()
+  const { viewAllBranches, listId } = useBranch()
   const role = useAdminRole()
 
   if (!isAdmin(role) && !isLegalManager(role) && !canAssignTasks(role)) {
@@ -26,7 +26,7 @@ export default function DashboardAwaitingAssignmentPage() {
     <div className="space-y-5">
       <PageHeader
         title="الأسماء التي تحت إسناد مهمة"
-        subtitle="مدينون بلا مهمة مطلوبة — الأقدم أولاً"
+        subtitle="مدينون بانتظار إسناد مهمة — الأقدم أولاً"
         actions={<BackButton fallback="/admin/dashboard" />}
       />
       {!branchId && !viewAllBranches ? (
@@ -37,8 +37,9 @@ export default function DashboardAwaitingAssignmentPage() {
         <AwaitingAssignmentCard
           branchId={branchId}
           viewAllBranches={viewAllBranches}
+          listId={listId}
           hideHeader
-          onAssigned={() => cacheInvalidatePrefix('dashboard:v2:')}
+          onAssigned={() => cacheInvalidatePrefix('dashboard:v8:')}
         />
       )}
     </div>

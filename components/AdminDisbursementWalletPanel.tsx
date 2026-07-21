@@ -15,13 +15,19 @@ import {
 import LawyerWalletHistory from '@/components/LawyerWalletHistory'
 import { logActivity } from '@/lib/activity-log'
 import { PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { useCaseScope } from '@/hooks/use-case-scope'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { CASE_TYPE_FILTER_OPTIONS, normalizeCaseType } from '@/lib/case-type'
 
 const INP = 'w-full border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2.5 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
-interface Lawyer { id: string; full_name: string }
+interface Lawyer { id: string; full_name: string; case_type?: string | null }
 
 export default function AdminDisbursementWalletPanel({ readOnly = false }: { readOnly?: boolean }) {
   const branchId = useBranchId()
+  const { caseTypeFilter: lockedCaseType } = useCaseScope()
+  const [filterCaseType, setFilterCaseType] = useState<'' | 'civil' | 'criminal'>(lockedCaseType ?? '')
+  const effectiveCaseType = lockedCaseType ?? (filterCaseType || null)
   const [lawyers, setLawyers] = useState<Lawyer[]>([])
   const [balanceMap, setBalanceMap] = useState<Map<string, number>>(new Map())
   const [selectedId, setSelectedId] = useState('')
@@ -35,15 +41,21 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    let q = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
+    let q = supabase
+      .from('profiles')
+      .select('id, full_name, case_type')
+      .eq('role', 'lawyer')
+      .eq('is_active', true)
+      .order('full_name')
     if (branchId) q = (q as any).eq('branch_id', branchId)
+    if (effectiveCaseType) q = (q as any).eq('case_type', effectiveCaseType)
     const { data } = await q
-    const list = data ?? []
+    const list = (data ?? []) as Lawyer[]
     setLawyers(list)
     const balances = await fetchLawyerSavingsBalancesMap(supabase, list.map(l => l.id))
     setBalanceMap(balances)
     setSelectedId(prev => (prev && list.some(l => l.id === prev) ? prev : list[0]?.id ?? ''))
-  }, [branchId])
+  }, [branchId, effectiveCaseType])
 
   useEffect(() => { void load() }, [load])
 
@@ -55,20 +67,26 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
 
   const selected = lawyers.find(l => l.id === selectedId)
   const balance = balanceMap.get(selectedId) ?? 0
+  const selectedCaseType = normalizeCaseType(selected?.case_type)
 
   async function handleDeposit() {
     if (readOnly) { setError(PERMISSION_DENIED_MSG); return }
+    if (saving) return
     const amt = parseMoneyInput(depositAmount)
     if (!amt || amt <= 0 || !selectedId) return
     setSaving(true); setError('')
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setSaving(false); return }
+    const referenceId = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? `dep-${selectedId}-${crypto.randomUUID()}`
+      : `dep-${selectedId}-${Date.now()}`
     const result = await creditLawyerSavingsWallet(supabase, {
       lawyerId: selectedId,
       amount: amt,
       notes: depositNotes.trim() || 'إيداع يدوي — محفظة الصرفيات',
       createdBy: user.id,
+      referenceId,
     })
     if (!result.ok) { setError(result.error ?? 'فشل الإيداع'); setSaving(false); return }
     await logActivity({
@@ -76,6 +94,7 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
       entity_type: 'lawyer',
       entity_id: selectedId,
       description: `إيداع صرفيات ${formatMoney(amt)} — ${selected?.full_name ?? ''}`,
+      case_type: selectedCaseType,
     }, supabase)
     setDepositAmount(''); setDepositNotes('')
     await load(); setSaving(false)
@@ -83,17 +102,22 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
 
   async function handleWithdraw() {
     if (readOnly) { setError(PERMISSION_DENIED_MSG); return }
+    if (saving) return
     const amt = parseMoneyInput(withdrawAmount)
     if (!amt || amt <= 0 || !selectedId) return
     setSaving(true); setError('')
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setSaving(false); return }
+    const referenceId = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? `wd-${selectedId}-${crypto.randomUUID()}`
+      : `wd-${selectedId}-${Date.now()}`
     const result = await withdrawLawyerSavings(supabase, {
       lawyerId: selectedId,
       amount: amt,
       notes: withdrawNotes.trim() || 'سحب يدوي — محفظة الصرفيات',
       createdBy: user.id,
+      referenceId,
     })
     if (!result.ok) { setError(result.error ?? 'فشل السحب'); setSaving(false); return }
     await logActivity({
@@ -101,6 +125,7 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
       entity_type: 'lawyer',
       entity_id: selectedId,
       description: `سحب صرفيات ${formatMoney(amt)} — ${selected?.full_name ?? ''}`,
+      case_type: selectedCaseType,
     }, supabase)
     setWithdrawAmount(''); setWithdrawNotes('')
     await load(); setSaving(false)
@@ -113,51 +138,65 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
         <p className="text-xs text-[#767676] mt-0.5">إيداع وسحب يدوي — تُخصم الصرفيات عند اعتماد الإنجاز</p>
       </div>
 
+      <PremiumSelect
+        value={lockedCaseType ?? filterCaseType}
+        onChange={v => {
+          if (lockedCaseType) return
+          setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')
+        }}
+        options={
+          lockedCaseType
+            ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
+            : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+        }
+        placeholder="كل أنواع الدعاوى"
+        fieldLabel="نوع الدعوى"
+        headerTitle="تصفية المحامين حسب القسم"
+        searchable={false}
+        disabled={Boolean(lockedCaseType)}
+      />
+
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
         {lawyers.map(l => (
           <button key={l.id} type="button" onClick={() => setSelectedId(l.id)}
             className={`text-right rounded-xl p-3 border transition-all ${selectedId === l.id ? 'border-sky-500 bg-sky-50 ring-2 ring-sky-200' : 'border-slate-200 hover:border-sky-300'}`}>
             <p className="text-xs font-bold text-[#231F20] truncate">{l.full_name}</p>
-            <p className="text-sm font-black text-sky-600 tabular-nums mt-1" dir="ltr">{fmtMoney(balanceMap.get(l.id) ?? 0)}</p>
+            <p className="text-[10px] text-sky-700 mt-1 tabular-nums" dir="ltr">{fmtMoney(balanceMap.get(l.id) ?? 0)}</p>
           </button>
         ))}
-        {!lawyers.length && <p className="text-sm text-[#767676] col-span-full">لا يوجد محامون</p>}
+        {!lawyers.length && (
+          <p className="text-xs text-[#767676] col-span-full">لا محامين في هذا النطاق</p>
+        )}
       </div>
 
-      {selectedId && selected && (
-        <>
-          <div className="bg-sky-50 border border-sky-100 rounded-xl px-4 py-3 flex justify-between items-center">
-            <span className="text-sm font-bold text-sky-900">{selected.full_name}</span>
-            <span className="text-lg font-black text-sky-700 tabular-nums" dir="ltr">{fmtMoney(balance)}</span>
-          </div>
-
-          {error && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
-
+      {selectedId && (
+        <div className="space-y-3 border-t border-sky-100 pt-4">
+          <p className="text-sm font-bold text-[#231F20]">
+            {selected?.full_name} — الرصيد: <span className="text-sky-700 tabular-nums" dir="ltr">{fmtMoney(balance)}</span>
+          </p>
           {!readOnly && (
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <p className="text-xs font-bold text-emerald-800">إيداع يدوي</p>
-              <MoneyInput value={depositAmount} onChange={v => setDepositAmount(v)} placeholder="المبلغ" className={INP} />
-              <input type="text" value={depositNotes} onChange={e => setDepositNotes(e.target.value)} placeholder="ملاحظة" className={INP} />
-              <button onClick={handleDeposit} disabled={saving || !depositAmount}
-                className="w-full py-2 rounded-lg text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50">
-                {saving ? '...' : 'حفظ الإيداع'}
-              </button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <MoneyInput value={depositAmount} onChange={setDepositAmount} className={INP} placeholder="مبلغ الإيداع" />
+                <input value={depositNotes} onChange={e => setDepositNotes(e.target.value)} className={INP} placeholder="ملاحظة" />
+                <button type="button" onClick={() => void handleDeposit()} disabled={saving}
+                  className="w-full py-2 rounded-xl text-sm font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50">
+                  إيداع صرفيات
+                </button>
+              </div>
+              <div className="space-y-2">
+                <MoneyInput value={withdrawAmount} onChange={setWithdrawAmount} className={INP} placeholder="مبلغ السحب" />
+                <input value={withdrawNotes} onChange={e => setWithdrawNotes(e.target.value)} className={INP} placeholder="ملاحظة" />
+                <button type="button" onClick={() => void handleWithdraw()} disabled={saving}
+                  className="w-full py-2 rounded-xl text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50">
+                  سحب صرفيات
+                </button>
+              </div>
             </div>
-            <div className="space-y-2">
-              <p className="text-xs font-bold text-orange-800">سحب يدوي</p>
-              <MoneyInput value={withdrawAmount} onChange={v => setWithdrawAmount(v)} placeholder="المبلغ" className={INP} />
-              <input type="text" value={withdrawNotes} onChange={e => setWithdrawNotes(e.target.value)} placeholder="ملاحظة" className={INP} />
-              <button onClick={handleWithdraw} disabled={saving || !withdrawAmount || balance <= 0}
-                className="w-full py-2 rounded-lg text-sm font-bold text-white bg-orange-600 hover:bg-orange-700 disabled:opacity-50">
-                {saving ? '...' : 'حفظ السحب'}
-              </button>
-            </div>
-          </div>
           )}
-
-          <LawyerWalletHistory title="سجل حركات محفظة الصرفيات" transactions={txs} />
-        </>
+          {error && <p className="text-xs text-red-600">{error}</p>}
+          <LawyerWalletHistory title="سجل محفظة الصرفيات" transactions={txs} />
+        </div>
       )}
     </div>
   )

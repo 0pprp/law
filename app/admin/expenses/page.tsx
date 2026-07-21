@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
+import { useBranch, useBranchId } from '@/context/branch'
 import { TASK_TYPE_LABELS } from '@/lib/types'
 import type { TaskType } from '@/lib/types'
 import { logActivity } from '@/lib/activity-log'
@@ -20,9 +20,11 @@ import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debto
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DateRangePicker } from '@/components/ui/date-range-picker'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useCaseScope } from '@/hooks/use-case-scope'
 import { PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { DatePicker } from '@/components/ui/date-picker'
+import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
 
 const INP = 'w-full border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2.5 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
@@ -51,7 +53,11 @@ function normalizeStatus(s: string | null | undefined): string {
 
 export default function ExpensesPage() {
   const branchId = useBranchId()
+  const { viewAllBranches, listId } = useBranch()
   const canWrite = useCanWrite()
+  const { caseTypeFilter: lockedCaseType } = useCaseScope()
+  const [filterCaseType, setFilterCaseType] = useState<'' | 'civil' | 'criminal'>(lockedCaseType ?? '')
+  const effectiveCaseType = lockedCaseType ?? (filterCaseType || null)
   const searchParams = useSearchParams()
   const initialStatus = searchParams.get('status') as StatusFilter | null
   const initialType = searchParams.get('type')
@@ -73,7 +79,7 @@ export default function ExpensesPage() {
   const [filterLawyer, setFilterLawyer] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [rejectModal, setRejectModal] = useState<{ id: string; debtorName: string } | null>(null)
+  const [rejectModal, setRejectModal] = useState<{ id: string; debtorName: string; caseType?: string | null } | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [rejectSaving, setRejectSaving] = useState(false)
   const [actionId, setActionId] = useState<string | null>(null)
@@ -87,27 +93,85 @@ export default function ExpensesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     const supabase = createClient()
-    let eq = supabase.from('expenses').select(`*, debtors(full_name, governorate, phone, receipt_number), profiles!expenses_created_by_fkey(full_name), tasks!expenses_task_id_fkey(task_type)`).order('expense_date', { ascending: false }).limit(500)
+    let eq = supabase.from('expenses').select(`*, debtors(full_name, governorate, phone, receipt_number, case_type), profiles!expenses_created_by_fkey(full_name), tasks!expenses_task_id_fkey(task_type)`).order('expense_date', { ascending: false }).limit(500)
     let lq = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
     if (branchId) {
       eq = (eq as any).eq('branch_id', branchId)
       lq = (lq as any).eq('branch_id', branchId)
     }
-    if (debouncedSearch.trim()) {
-      const ids = await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId)
-      if (!ids?.length) {
+
+    const scopeListId = (!viewAllBranches && listId) ? listId : null
+    let debtorIds: string[] | null = null
+
+    if (scopeListId && branchId) {
+      const { resolveDebtorIdsByBranchList } = await import('@/lib/branch-lists')
+      debtorIds = await resolveDebtorIdsByBranchList(supabase, branchId, scopeListId)
+      if (!debtorIds.length) {
         setExpenses([])
         const { data: l } = await lq
         setLawyers(l ?? [])
         setLoading(false)
         return
       }
-      eq = (eq as any).in('debtor_id', ids)
     }
+
+    if (effectiveCaseType && !debouncedSearch.trim()) {
+      let dq = supabase.from('debtors').select('id').eq('case_type', effectiveCaseType)
+      if (branchId) dq = dq.eq('branch_id', branchId)
+      if (scopeListId) dq = dq.eq('branch_list_id', scopeListId)
+      const { data: scopedDebtors } = await dq.limit(5000)
+      const ctIds = (scopedDebtors ?? []).map(d => d.id)
+      if (!ctIds.length) {
+        setExpenses([])
+        const { data: l } = await lq
+        setLawyers(l ?? [])
+        setLoading(false)
+        return
+      }
+      debtorIds = debtorIds ? debtorIds.filter(id => ctIds.includes(id)) : ctIds
+      if (!debtorIds.length) {
+        setExpenses([])
+        const { data: l } = await lq
+        setLawyers(l ?? [])
+        setLoading(false)
+        return
+      }
+    }
+
+    if (debouncedSearch.trim()) {
+      const searchIds = await resolveDebtorIdsBySearch(
+        supabase,
+        debouncedSearch,
+        branchId,
+        200,
+        scopeListId,
+        effectiveCaseType,
+      )
+      if (!searchIds?.length) {
+        setExpenses([])
+        const { data: l } = await lq
+        setLawyers(l ?? [])
+        setLoading(false)
+        return
+      }
+      debtorIds = debtorIds
+        ? debtorIds.filter(id => searchIds.includes(id))
+        : searchIds
+      if (!debtorIds.length) {
+        setExpenses([])
+        const { data: l } = await lq
+        setLawyers(l ?? [])
+        setLoading(false)
+        return
+      }
+    }
+
+    if (debtorIds) eq = (eq as any).in('debtor_id', debtorIds)
+
     const [{ data: e }, { data: l }] = await Promise.all([eq, lq])
     setExpenses(e ?? []); setLawyers(l ?? [])
     setLoading(false)
-  }, [branchId, debouncedSearch])
+  }, [branchId, viewAllBranches, listId, debouncedSearch, effectiveCaseType])
 
   useEffect(() => { load() }, [load])
 
@@ -144,11 +208,11 @@ export default function ExpensesPage() {
     const supabase = createClient()
     const { error } = await supabase.from('expenses').update({ amount: amt, expense_type: editForm.expense_type || null, description: editForm.description || null, expense_date: editForm.expense_date }).eq('id', editingExpense.id)
     if (error) { setEditError(error.message); setSaving(false); return }
-    await logActivity({ action: 'update_expense', entity_type: 'expense', entity_id: editingExpense.id, description: `تعديل صرفية: ${formatMoney(amt)} — ${editingExpense.debtors?.full_name ?? ''}` }, supabase)
+    await logActivity({ action: 'update_expense', entity_type: 'expense', entity_id: editingExpense.id, description: `تعديل صرفية: ${formatMoney(amt)} — ${editingExpense.debtors?.full_name ?? ''}`, case_type: editingExpense.debtors?.case_type === 'criminal' ? 'criminal' : 'civil' }, supabase)
     setSaving(false); setEditingExpense(null); load()
   }
 
-  async function deleteExpense(id: string, debtorName: string, amount: number) {
+  async function deleteExpense(id: string, debtorName: string, amount: number, caseType?: string | null) {
     if (!canWrite) { await appAlert({ message: PERMISSION_DENIED_MSG, variant: 'warning' }); return }
     const ok = await appConfirm({
       title: 'تأكيد الحذف',
@@ -161,11 +225,11 @@ export default function ExpensesPage() {
     const supabase = createClient()
     const { error } = await supabase.from('expenses').delete().eq('id', id)
     if (error) { await appAlert({ message: `فشل الحذف: ${error.message}`, variant: 'error' }); setDeletingId(null); return }
-    await logActivity({ action: 'delete_expense', entity_type: 'expense', entity_id: id, description: `حذف صرفية: ${formatMoney(amount)} — ${debtorName}` }, supabase)
+    await logActivity({ action: 'delete_expense', entity_type: 'expense', entity_id: id, description: `حذف صرفية: ${formatMoney(amount)} — ${debtorName}`, case_type: caseType === 'criminal' ? 'criminal' : 'civil' }, supabase)
     setDeletingId(null); load()
   }
 
-  async function approveExpense(exp: { id: string; task_id?: string | null; debtor_id?: string | null; debtors?: { full_name?: string } | null; amount?: number }) {
+  async function approveExpense(exp: { id: string; task_id?: string | null; debtor_id?: string | null; debtors?: { full_name?: string; case_type?: string } | null; amount?: number }) {
     if (!canWrite) { await appAlert({ message: PERMISSION_DENIED_MSG, variant: 'warning' }); return }
     if (exp.task_id) {
       await appAlert({ message: 'صرفيات المهام تُعتمد تلقائياً عند اعتماد الإنجاز من مراجعة المهام', variant: 'info' })
@@ -211,6 +275,7 @@ export default function ExpensesPage() {
       entity_type: 'expense',
       entity_id: exp.id,
       description: `اعتماد صرفية يدوية — ${exp.debtors?.full_name ?? ''} — ${formatMoney(Number(exp.amount ?? 0))}`,
+      case_type: exp.debtors?.case_type === 'criminal' ? 'criminal' : 'civil',
     }, supabase)
     load()
     refreshAdminNotifications()
@@ -223,7 +288,7 @@ export default function ExpensesPage() {
     const supabase = createClient()
     const { error } = await (supabase as any).from('expenses').update({ status: 'rejected', rejection_reason: rejectReason || 'مرفوضة من قبل الإدارة' }).eq('id', rejectModal.id)
     if (error) { await appAlert({ message: error.message, variant: 'error' }); setRejectSaving(false); return }
-    await logActivity({ action: 'reject_expense', entity_type: 'expense', entity_id: rejectModal.id, description: `رفض صرفية — ${rejectModal.debtorName} — السبب: ${rejectReason || 'لا يوجد سبب'}` }, supabase)
+    await logActivity({ action: 'reject_expense', entity_type: 'expense', entity_id: rejectModal.id, description: `رفض صرفية — ${rejectModal.debtorName} — السبب: ${rejectReason || 'لا يوجد سبب'}`, case_type: rejectModal.caseType === 'criminal' ? 'criminal' : 'civil' }, supabase)
     setRejectSaving(false); setRejectModal(null); setRejectReason(''); load(); refreshAdminNotifications()
   }
 
@@ -310,6 +375,22 @@ export default function ExpensesPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <input type="search" placeholder={DEBTOR_SEARCH_PLACEHOLDER} value={search} onChange={e => setSearch(e.target.value)} className={SEL} />
           <PremiumSelect
+            value={lockedCaseType ?? filterCaseType}
+            onChange={v => {
+              if (lockedCaseType) return
+              setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')
+            }}
+            options={
+              lockedCaseType
+                ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
+                : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+            }
+            placeholder="كل أنواع الدعاوى"
+            headerTitle="تصفية حسب نوع الدعوى"
+            searchable={false}
+            disabled={Boolean(lockedCaseType)}
+          />
+          <PremiumSelect
             value={filterLawyer}
             onChange={setFilterLawyer}
             options={[
@@ -395,7 +476,7 @@ export default function ExpensesPage() {
                               اعتماد
                             </button>
                             <button
-                              onClick={() => setRejectModal({ id: exp.id, debtorName: exp.debtors?.full_name ?? '' })}
+                              onClick={() => setRejectModal({ id: exp.id, debtorName: exp.debtors?.full_name ?? '', caseType: exp.debtors?.case_type })}
                               className="text-xs font-bold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg"
                             >
                               رفض
@@ -404,7 +485,7 @@ export default function ExpensesPage() {
                         ) : (
                           <>
                             <button onClick={() => startEdit(exp)} className="text-xs text-[#231F20] hover:text-[#2C8780] border border-[rgba(118,118,118,0.2)] hover:border-[#2C8780]/40 px-2.5 py-1.5 rounded-lg transition-colors">تعديل</button>
-                            <button onClick={() => deleteExpense(exp.id, exp.debtors?.full_name ?? '', Number(exp.amount))} disabled={deletingId === exp.id} className="text-xs text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50">
+                            <button onClick={() => deleteExpense(exp.id, exp.debtors?.full_name ?? '', Number(exp.amount), exp.debtors?.case_type)} disabled={deletingId === exp.id} className="text-xs text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50">
                               {deletingId === exp.id ? '...' : 'حذف'}
                             </button>
                           </>

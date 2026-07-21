@@ -1,9 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isGeneralLawyerType } from '@/lib/lawyer-type'
+import { normalizeCaseType } from '@/lib/case-type'
 
 export type LawyerTaskAccessResult =
   | { ok: true; task: Record<string, unknown>; branchId: string | null }
-  | { ok: false; reason: 'not_found' | 'unassigned' | 'closed' | 'branch' | 'rejected' }
+  | { ok: false; reason: 'not_found' | 'unassigned' | 'closed' | 'branch' | 'rejected' | 'section' }
 
 const CLOSED_STATUSES = new Set(['closed'])
 
@@ -14,7 +15,7 @@ export async function checkLawyerTaskAccess(
   taskId: string,
 ): Promise<LawyerTaskAccessResult> {
   const [{ data: profile }, { data: task }] = await Promise.all([
-    supabase.from('profiles').select('branch_id, lawyer_type').eq('id', userId).single(),
+    supabase.from('profiles').select('branch_id, lawyer_type, case_type').eq('id', userId).single(),
     supabase
       .from('tasks')
       .select('*')
@@ -30,6 +31,20 @@ export async function checkLawyerTaskAccess(
   }
 
   if (task.assigned_to !== userId) return { ok: false, reason: 'unassigned' }
+
+  const debtorId = (task as { debtor_id?: string | null }).debtor_id
+  if (debtorId) {
+    const { data: debtor } = await supabase
+      .from('debtors')
+      .select('case_type')
+      .eq('id', debtorId)
+      .maybeSingle()
+    const lawyerCt = normalizeCaseType(profile?.case_type)
+    const debtorCt = normalizeCaseType(debtor?.case_type)
+    if (lawyerCt !== debtorCt) {
+      return { ok: false, reason: 'section' }
+    }
+  }
 
   const isGeneral = isGeneralLawyerType(profile?.lawyer_type)
   const lawyerBranch = profile?.branch_id ?? null

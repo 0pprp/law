@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireStaffProfile } from '@/lib/api-auth'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { canStaffReadBranch, canStaffWriteBranch } from '@/lib/staff-branch-access'
 import {
   apiForbiddenResponse,
@@ -8,6 +8,7 @@ import {
   canAssignTasks,
 } from '@/lib/permissions'
 import { logActivity } from '@/lib/activity-log'
+import { requireDebtorInScope } from '@/lib/section-guard'
 
 /** حالات تسمح بتغيير تعريف المهمة قبل التكليف/الإنجاز */
 const EDITABLE_STATUSES = new Set([
@@ -41,15 +42,24 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = createAdminClient()
-  const { data: debtor, error: debtorErr } = await admin
-    .from('debtors')
-    .select('id, branch_id, current_task_id, full_name, case_status, case_type')
-    .eq('id', debtorId)
-    .maybeSingle()
+  const scope = sessionCaseScope(auth.profile)
+  const gate = await requireDebtorInScope(
+    admin,
+    scope,
+    debtorId,
+    'id, branch_id, current_task_id, full_name, case_status, case_type',
+  )
+  if (!gate.ok) return gate.error
 
-  if (debtorErr || !debtor) {
-    return NextResponse.json({ error: 'المدين غير موجود' }, { status: 404 })
+  const debtor = gate.data as {
+    id: string
+    branch_id: string | null
+    current_task_id: string | null
+    full_name: string | null
+    case_status: string | null
+    case_type?: string
   }
+
   if (debtor.case_status === 'closed') {
     return NextResponse.json({ error: 'لا يمكن تعديل مهمة قضية مغلقة' }, { status: 400 })
   }
@@ -62,7 +72,7 @@ export async function POST(request: NextRequest) {
     return apiForbiddenResponse()
   }
 
-  const debtorCaseType = (debtor as { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil'
+  const debtorCaseType = gate.caseType
 
   const { data: def, error: defErr } = await admin
     .from('task_definitions')
@@ -81,7 +91,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'تعريف المهمة لا يطابق نوع دعوى المدين' }, { status: 400 })
   }
 
-  const fee = Number(def.fee_amount) || 0
+  const fee = debtorCaseType === 'criminal' ? 0 : (Number(def.fee_amount) || 0)
 
   if (!debtor.current_task_id) {
     const { data: created, error: createErr } = await admin
@@ -108,6 +118,7 @@ export async function POST(request: NextRequest) {
       entity_type: 'debtor',
       entity_id: debtor.id,
       description: `تعيين المهمة المطلوبة: ${def.label}`,
+      case_type: gate.caseType,
     }, auth.supabase)
 
     return NextResponse.json({ ok: true, taskId: created.id, label: def.label })
@@ -155,6 +166,7 @@ export async function POST(request: NextRequest) {
     entity_type: 'task',
     entity_id: task.id,
     description: `تغيير المهمة المطلوبة للمدين ${debtor.full_name ?? ''}: ${def.label}`,
+    case_type: gate.caseType,
   }, auth.supabase)
 
   return NextResponse.json({ ok: true, taskId: task.id, label: def.label })

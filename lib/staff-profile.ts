@@ -7,42 +7,61 @@ export interface StaffProfileRow {
   role: string | null
   branch_id?: string | null
   accountant_type?: AccountantType | null
+  case_type?: 'civil' | 'criminal' | null
   is_active?: boolean | null
 }
 
-function isMissingAccountantTypeColumn(error: { message?: string; code?: string } | null): boolean {
+function isMissingOptionalColumn(error: { message?: string; code?: string } | null, col: string): boolean {
   if (!error?.message) return false
   const msg = error.message.toLowerCase()
   return (
-    msg.includes('accountant_type') ||
+    msg.includes(col) ||
     (msg.includes('column') && msg.includes('does not exist'))
   )
 }
 
 /**
  * تحميل ملف الموظف بأمان.
- * إذا لم يُطبَّق عمود accountant_type بعد، لا نكسر الدور/الصلاحيات.
+ * إذا لم يُطبَّق عمود accountant_type / case_type بعد، لا نكسر الدور/الصلاحيات.
  */
 export async function fetchStaffProfile(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<StaffProfileRow | null> {
-  const withType = await supabase
+  const withAll = await supabase
+    .from('profiles')
+    .select('full_name, role, branch_id, accountant_type, case_type, is_active')
+    .eq('id', userId)
+    .single()
+
+  if (!withAll.error && withAll.data) {
+    const ct = withAll.data.case_type
+    return {
+      ...withAll.data,
+      accountant_type: normalizeAccountantType(withAll.data.accountant_type),
+      case_type: ct === 'civil' || ct === 'criminal' ? ct : 'civil',
+    }
+  }
+
+  const missingCaseType = isMissingOptionalColumn(withAll.error, 'case_type')
+  const missingAccountant = isMissingOptionalColumn(withAll.error, 'accountant_type')
+
+  if (!missingCaseType && !missingAccountant) {
+    console.error('[fetchStaffProfile]', withAll.error?.message ?? withAll.error)
+  }
+
+  const withAccountant = await supabase
     .from('profiles')
     .select('full_name, role, branch_id, accountant_type, is_active')
     .eq('id', userId)
     .single()
 
-  if (!withType.error && withType.data) {
+  if (!withAccountant.error && withAccountant.data) {
     return {
-      ...withType.data,
-      accountant_type: normalizeAccountantType(withType.data.accountant_type),
+      ...withAccountant.data,
+      accountant_type: normalizeAccountantType(withAccountant.data.accountant_type),
+      case_type: 'civil',
     }
-  }
-
-  if (!isMissingAccountantTypeColumn(withType.error)) {
-    console.error('[fetchStaffProfile]', withType.error?.message ?? withType.error)
-    // ما زلنا نحاول بدون العمود إذا فشل الاستعلام لأي سبب مشابه
   }
 
   const fallback = await supabase
@@ -59,6 +78,7 @@ export async function fetchStaffProfile(
   return {
     ...fallback.data,
     accountant_type: 'branch',
+    case_type: 'civil',
   }
 }
 

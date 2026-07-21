@@ -11,7 +11,7 @@ import { cacheInvalidatePrefix } from '@/lib/query-cache'
 /** لوحة التحكم ← طلبات عدم الالتزام (مدير / مسؤول القانونية) */
 export default function DashboardNoncompliancePage() {
   const branchId = useBranchId()
-  const { viewAllBranches } = useBranch()
+  const { viewAllBranches, listId } = useBranch()
   const role = useAdminRole()
 
   if (!canReviewPaymentNoncomplianceRequest(role)) {
@@ -37,6 +37,7 @@ export default function DashboardNoncompliancePage() {
         <PaymentNoncomplianceRequestsCard
           branchId={branchId}
           viewAllBranches={viewAllBranches}
+          listId={listId}
           hideHeader
           onChanged={() => cacheInvalidatePrefix('dashboard:')}
         />

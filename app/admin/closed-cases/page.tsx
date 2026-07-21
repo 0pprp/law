@@ -14,6 +14,7 @@ import Link from 'next/link'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, type CaseType } from '@/lib/case-type'
+import { useCaseScope } from '@/hooks/use-case-scope'
 
 interface ClosedCase {
   id: string
@@ -30,7 +31,8 @@ interface ClosedCase {
 
 export default function ClosedCasesPage() {
   const branchId = useBranchId()
-  const { viewAllBranches } = useBranch()
+  const { viewAllBranches, listId } = useBranch()
+  const { caseTypeFilter: lockedCaseType } = useCaseScope()
   const [cases, setCases] = useState<ClosedCase[]>([])
   const [total, setTotal] = useState(0)
   const [pageOffset, setPageOffset] = useState(0)
@@ -38,9 +40,15 @@ export default function ClosedCasesPage() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>('')
+  const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>(lockedCaseType ?? '')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [loadError, setLoadError] = useState('')
+
+  const effectiveCaseType = lockedCaseType ?? (filterCaseType || null)
+
+  useEffect(() => {
+    setFilterCaseType(lockedCaseType ?? '')
+  }, [branchId, viewAllBranches, listId, lockedCaseType])
 
   const loadPage = useCallback(async (append = false, offset = 0) => {
     if (!branchId && !viewAllBranches) {
@@ -55,8 +63,9 @@ export default function ClosedCasesPage() {
     }
 
     const supabase = createClient()
+    const scopeListId = (!viewAllBranches && listId) ? listId : null
     const debtorIds = debouncedSearch.trim()
-      ? await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId)
+      ? await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId, 200, scopeListId, effectiveCaseType)
       : null
 
     if (debtorIds && !debtorIds.length) {
@@ -71,7 +80,13 @@ export default function ClosedCasesPage() {
     const { rows: debtors, total: count, error } = await fetchBranchClosedDebtorsPaginated(
       supabase,
       branchId,
-      { offset, limit: CLOSED_CASES_PAGE_SIZE, debtorIds, caseType: filterCaseType || null },
+      {
+        offset,
+        limit: CLOSED_CASES_PAGE_SIZE,
+        debtorIds,
+        caseType: effectiveCaseType,
+        branchListId: scopeListId,
+      },
     )
 
     if (error) {
@@ -121,7 +136,7 @@ export default function ClosedCasesPage() {
     setPageOffset(offset + pageCases.length)
     setLoading(false)
     setLoadingMore(false)
-  }, [branchId, viewAllBranches, debouncedSearch, filterCaseType])
+  }, [branchId, viewAllBranches, listId, debouncedSearch, effectiveCaseType])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -148,11 +163,19 @@ export default function ClosedCasesPage() {
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
           <div className="w-full sm:w-52">
             <PremiumSelect
-              value={filterCaseType}
-              onChange={v => setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')}
-              options={CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+              value={lockedCaseType ?? filterCaseType}
+              onChange={v => {
+                if (lockedCaseType) return
+                setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')
+              }}
+              options={
+                lockedCaseType
+                  ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
+                  : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+              }
               placeholder="كل أنواع الدعاوى"
               searchable={false}
+              disabled={Boolean(lockedCaseType)}
             />
           </div>
           <input

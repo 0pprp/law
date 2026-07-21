@@ -1,15 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { logActivity } from '@/lib/activity-log'
 import { parseMoneyInput, formatMoney } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 import CenteredModalPortal from '@/components/ui/centered-modal-portal'
-import { syncDebtorRemainingAfterPayments } from '@/lib/debtor-balances'
 import { fmtMoney } from '@/lib/utils'
 import { RECEIPT_NUMBER_LABEL } from '@/lib/ui-labels'
+import { newClientRequestId } from '@/lib/client-request-id'
 
 const INP =
   'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white'
@@ -41,20 +39,24 @@ export default function DebtorPaymentModal({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
+  const submitLock = useRef(false)
+  const requestIdRef = useRef<string | null>(null)
 
   if (!open) return null
 
   function handleClose() {
-    if (saving) return
+    if (saving || submitLock.current) return
     onClose()
     setAmount('')
     setNotes('')
     setError('')
     setSuccess(false)
+    requestIdRef.current = null
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (saving || submitLock.current) return
     const parsed = parseMoneyInput(amount)
     if (!parsed || parsed <= 0) {
       setError('يرجى إدخال مبلغ أكبر من صفر')
@@ -65,66 +67,44 @@ export default function DebtorPaymentModal({
       return
     }
 
+    submitLock.current = true
     setSaving(true)
     setError('')
-    const supabase = createClient()
+    if (!requestIdRef.current) requestIdRef.current = newClientRequestId()
+    const clientRequestId = requestIdRef.current
 
-    const { data: debtorRow, error: readErr } = await supabase
-      .from('debtors')
-      .select('remaining_amount')
-      .eq('id', debtorId)
-      .single()
+    try {
+      const res = await fetch('/api/admin/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          debtorId,
+          amount: parsed,
+          notes: notes.trim() || null,
+          branchId: branchId ?? null,
+          clientRequestId,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) {
+        setError(typeof data.error === 'string' ? data.error : 'فشل تسجيل التسديد')
+        setSaving(false)
+        submitLock.current = false
+        return
+      }
 
-    if (readErr || !debtorRow) {
-      setError(readErr?.message ?? 'تعذّر قراءة بيانات المدين')
       setSaving(false)
-      return
-    }
-
-    const currentRemaining = Number(debtorRow.remaining_amount ?? 0)
-    if (parsed > currentRemaining) {
-      setError(`المبلغ يتجاوز المتبقي (${fmtMoney(currentRemaining)})`)
+      submitLock.current = false
+      requestIdRef.current = null
+      setSuccess(true)
+      onSaved?.()
+      router.refresh()
+      setTimeout(() => handleClose(), 900)
+    } catch {
+      setError('فشل تسجيل التسديد')
       setSaving(false)
-      return
+      submitLock.current = false
     }
-
-    const paymentDate = new Date().toISOString().split('T')[0]
-    const { error: insertErr } = await supabase.from('debtor_payments').insert({
-      debtor_id: debtorId,
-      amount: parsed,
-      payment_date: paymentDate,
-      notes: notes.trim() || null,
-      ...(branchId ? { branch_id: branchId } : {}),
-    })
-
-    if (insertErr) {
-      setError(insertErr.message)
-      setSaving(false)
-      return
-    }
-
-    const syncResult = await syncDebtorRemainingAfterPayments(supabase, debtorId)
-    if (!syncResult.ok) {
-      setError(syncResult.error ?? 'فشل تحديث المبلغ المتبقي')
-      setSaving(false)
-      return
-    }
-
-    await logActivity(
-      {
-        action: 'add_payment',
-        entity_type: 'payment',
-        entity_id: debtorId,
-        description: `تسجيل تسديد: ${formatMoney(parsed)} — ${debtorName}`,
-      },
-      supabase,
-    )
-
-    setSaving(false)
-    setSuccess(true)
-    onSaved?.()
-    router.refresh()
-    setTimeout(() => handleClose(), 900)
   }
 
   return (

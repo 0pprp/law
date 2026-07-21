@@ -52,13 +52,15 @@ export async function POST(request: NextRequest) {
     const admin = createAdminClient()
     const { data: targetLm } = await admin
       .from('profiles')
-      .select('id, full_name, branch_id')
+      .select('id, full_name, branch_id, role')
       .eq('id', legalManagerUserId)
       .single()
 
     if (!targetLm) {
       return NextResponse.json({ error: 'مدير القانونية غير موجود' }, { status: 404 })
     }
+
+    const lmCaseType = targetLm.role === 'criminal_legal_manager' ? 'criminal' : 'civil'
 
     const params = {
       legalManagerUserId,
@@ -81,6 +83,7 @@ export async function POST(request: NextRequest) {
       entity_type: 'profile',
       entity_id: legalManagerUserId,
       description: isDeposit ? LEGAL_MANAGER_MANUAL_DEPOSIT_LABEL : LEGAL_MANAGER_MANUAL_WITHDRAWAL_LABEL,
+      case_type: lmCaseType,
       metadata: {
         executor_id: user.id,
         executor_name: profile.full_name,

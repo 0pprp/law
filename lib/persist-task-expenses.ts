@@ -29,6 +29,7 @@ export async function persistTaskExpenses(
     branchId?: string | null
     lawyerId: string
     rows: PendingTaskExpense[]
+    caseType?: string | null
   },
 ): Promise<{ ok: boolean; error?: string; count: number; total: number }> {
   const { taskId, debtorId, caseId, branchId, lawyerId, rows } = params
@@ -69,11 +70,24 @@ export async function persistTaskExpenses(
 
   const total = inserts.reduce((s, e) => s + Number(e.amount), 0)
   const payableCount = inserts.filter(e => Number(e.amount) > 0).length
+
+  let resolvedCaseType: 'civil' | 'criminal' | null =
+    params.caseType === 'criminal' ? 'criminal' : params.caseType === 'civil' ? 'civil' : null
+  if (!resolvedCaseType && debtorId) {
+    const { data: debtorRow } = await supabase
+      .from('debtors')
+      .select('case_type')
+      .eq('id', debtorId)
+      .maybeSingle()
+    resolvedCaseType = debtorRow?.case_type === 'criminal' ? 'criminal' : 'civil'
+  }
+
   await logActivity({
     action: 'submit_task_expenses',
     entity_type: 'task',
     entity_id: taskId,
     description: `تسجيل صرفيات المهمة (${payableCount} بند بمبلغ > 0) — ${total.toLocaleString('en-US')} د.ع`,
+    case_type: resolvedCaseType ?? 'civil',
   }, supabase)
 
   return { ok: true, count: inserts.length, total }

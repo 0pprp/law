@@ -1,4 +1,12 @@
-export type UserRole = 'admin' | 'employee' | 'accountant' | 'lawyer' | 'viewer' | 'delegate' | 'payment_follow_up'
+export type UserRole =
+  | 'admin'
+  | 'employee'
+  | 'accountant'
+  | 'lawyer'
+  | 'viewer'
+  | 'delegate'
+  | 'payment_follow_up'
+  | 'criminal_legal_manager'
 
 /** حالة جاري التسديد على debtors.case_status */
 export const CASE_STATUS_PAYMENT_IN_PROGRESS = 'payment_in_progress' as const
@@ -131,6 +139,8 @@ export interface Profile {
   identity_category: string | null
   lawyer_type?: LawyerType | null
   accountant_type?: AccountantType | null
+  /** قسم المحامي (مدني/جزائي) — يُعيَّن عند الإنشاء ولا يُغيَّر من الواجهة العادية */
+  case_type?: 'civil' | 'criminal' | null
   branch_id?: string | null
   branch_list_id?: string | null
   avatar_url: string | null
@@ -379,9 +389,10 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   employee: 'موظف',
   accountant: 'محاسب',
   lawyer: 'محامي',
-  viewer: 'مسؤول القانونية',
+  viewer: 'مسؤول الدعاوى المدنية',
   delegate: 'مندوب',
   payment_follow_up: 'مسؤول متابعة التسديد',
+  criminal_legal_manager: 'مسؤول الجزائيات',
 }
 
 export const LAWYER_TYPE_LABELS: Record<LawyerType, string> = {

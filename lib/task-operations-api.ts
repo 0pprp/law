@@ -222,7 +222,7 @@ export async function applyTaskTransition(
     task_type: nextDef?.task_type ?? null,
     task_status: 'waiting_assignment',
     assigned_to: null,
-    reward_amount: nextDef?.fee_amount ?? 0,
+    reward_amount: debtorCase === 'criminal' ? 0 : (nextDef?.fee_amount ?? 0),
     branch_id: branchId,
     created_by: userId,
   } as any).select('id').single()
@@ -277,6 +277,22 @@ export async function assignTasksViaApi(
     return { ok: false, error: data.error ?? 'فشل تكليف المهمة' }
   }
   return { ok: true, error: null }
+}
+
+export async function unassignTasksViaApi(
+  taskIds: string[],
+  reason?: string | null,
+): Promise<{ ok: boolean; error: string | null; updatedIds?: string[] }> {
+  const res = await fetch('/api/admin/unassign-tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskIds, reason: reason ?? null }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || !data.ok) {
+    return { ok: false, error: data.error ?? 'فشل إلغاء التكليف' }
+  }
+  return { ok: true, error: null, updatedIds: data.updatedIds }
 }
 
 export async function rejectTaskViaApi(

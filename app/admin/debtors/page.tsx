@@ -1,11 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { useBranch, useBranchId } from '@/context/branch'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import Link from 'next/link'
-import { logActivity } from '@/lib/activity-log'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -15,10 +13,10 @@ import { fmtMoney, fmtDate } from '@/lib/utils'
 import { DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
 import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL } from '@/lib/ui-labels'
 import DebtorImportModal from '@/components/DebtorImportModal'
-import { BranchListFilterSelect } from '@/components/BranchListSelect'
-import { useBranchLists } from '@/hooks/use-branch-lists'
+import CriminalDebtorImportModal from '@/components/CriminalDebtorImportModal'
 import { useAdminRole } from '@/context/admin-role'
-import { canAddDebtor, canAssignTasks, canDelete, canEditDebtor, canImportDebtors, canMoveToPaymentInProgress, isLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { canAddDebtor, canAssignTasks, canDelete, canEditDebtor, canImportDebtors, canImportCriminalDebtors, canMoveToPaymentInProgress, isAnyLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { resolveCaseScope, filterBySection } from '@/lib/case-scope'
 import { appConfirm, appAlert } from '@/lib/app-dialog'
 import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
@@ -52,18 +50,23 @@ const INP = 'w-full pr-9 pl-4 py-2.5 text-sm bg-white border border-[rgba(118,11
 
 export default function DebtorsPage() {
   const branchId = useBranchId()
-  const { viewAllBranches } = useBranch()
+  const { viewAllBranches, listId: filterListId } = useBranch()
   const role = useAdminRole()
   const allowDelete = canDelete(role)
   const allowEdit = canEditDebtor(role)
   const allowAdd = canAddDebtor(role)
   const allowImport = canImportDebtors(role)
+  const allowCriminalImport = canImportCriminalDebtors(role)
   const allowChangeTask = canAddDebtor(role) || canAssignTasks(role)
   const allowPaymentInProgress = canMoveToPaymentInProgress(role)
-  const showEditLink = allowEdit || isLegalManager(role)
+  const showEditLink = allowEdit || isAnyLegalManager(role)
   const showDeleteBtn = allowDelete
   const showAddBtn = allowAdd
-  const showImportBtn = allowImport
+  const scope = resolveCaseScope(role)
+  const lockedCaseType = filterBySection(scope)
+  const showCivilImportBtn = allowImport && lockedCaseType !== 'criminal'
+  const showCriminalImportBtn = allowCriminalImport && lockedCaseType !== 'civil'
+  const showImportBtn = showCivilImportBtn || showCriminalImportBtn
   const [debtors, setDebtors] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -71,23 +74,21 @@ export default function DebtorsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
-  const [filterListId, setFilterListId] = useState('')
-  const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>('')
+  const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>(lockedCaseType ?? '')
   const [importOpen, setImportOpen] = useState(false)
+  const [criminalImportOpen, setCriminalImportOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [moveModalOpen, setMoveModalOpen] = useState(false)
-  const { lists: branchLists } = useBranchLists(branchId)
 
   useEffect(() => {
-    setFilterListId('')
-    setFilterCaseType('')
+    setFilterCaseType(lockedCaseType ?? '')
     setSearch('')
-  }, [branchId, viewAllBranches])
+  }, [branchId, viewAllBranches, filterListId, lockedCaseType])
   const [showAllDebtors, setShowAllDebtors] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Server-side fetch with optional search (via admin API لتجاوز قيود RLS على المحاسب العام)
-  const fetchDebtors = useCallback(async (searchTerm: string, listId: string, caseType: '' | CaseType = '', offset = 0, append = false) => {
+  const fetchDebtors = useCallback(async (searchTerm: string, listId: string | null, caseType: '' | CaseType = '', offset = 0, append = false) => {
     if (!branchId && !viewAllBranches) {
       setDebtors([])
       setTotal(0)
@@ -168,12 +169,20 @@ export default function DebtorsPage() {
     if (!ok) return
     setDeletingId(id)
     setError('')
-    const supabase = createClient()
-    const { error: dbErr } = await supabase.from('debtors').delete().eq('id', id)
-    if (dbErr) { setError(`فشل الحذف: ${dbErr.message}`); setDeletingId(null); return }
-    await logActivity({ action: 'delete_debtor', entity_type: 'debtor', entity_id: id, description: `حذف مدين: ${name}` }, supabase)
-    setDeletingId(null)
-    fetchDebtors(search, filterListId, filterCaseType)
+    try {
+      const res = await fetch(`/api/admin/debtors/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setError(typeof data.error === 'string' ? data.error : 'فشل الحذف')
+        setDeletingId(null)
+        return
+      }
+      setDeletingId(null)
+      fetchDebtors(search, filterListId, filterCaseType)
+    } catch {
+      setError('فشل الحذف')
+      setDeletingId(null)
+    }
   }
 
   const hasMore = debtors.length < total
@@ -228,9 +237,14 @@ export default function DebtorsPage() {
         subtitle={viewAllBranches ? `${total} مدين في كل الفروع` : `${total} مدين مسجّل في النظام`}
         actions={showAddBtn || showImportBtn ? (
           <div className="flex items-center gap-2">
-            {showImportBtn && (
+            {showCivilImportBtn && (
               <Button variant="outline" size="sm" onClick={() => allowImport ? setImportOpen(true) : setError(PERMISSION_DENIED_MSG)} disabled={!branchId || !allowImport}>
-                استيراد من Excel
+                استيراد مدني
+              </Button>
+            )}
+            {showCriminalImportBtn && (
+              <Button variant="outline" size="sm" onClick={() => allowCriminalImport ? setCriminalImportOpen(true) : setError(PERMISSION_DENIED_MSG)} disabled={!allowCriminalImport}>
+                استيراد جزائي
               </Button>
             )}
             {showAddBtn && (
@@ -256,7 +270,7 @@ export default function DebtorsPage() {
 
       {/* Search bar */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
-        <div className={`grid grid-cols-1 gap-3 ${viewAllBranches ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="relative">
             <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-[#767676]">
               <SearchIcon />
@@ -276,21 +290,22 @@ export default function DebtorsPage() {
             )}
           </div>
           <PremiumSelect
-            value={filterCaseType}
-            onChange={v => setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')}
-            options={CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+            value={lockedCaseType ?? filterCaseType}
+            onChange={v => {
+              if (lockedCaseType) return
+              setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')
+            }}
+            options={
+              lockedCaseType
+                ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
+                : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+            }
             placeholder="كل أنواع الدعاوى"
             fieldLabel="نوع الدعوى"
             headerTitle="تصفية حسب نوع الدعوى"
             searchable={false}
+            disabled={Boolean(lockedCaseType)}
           />
-          {!viewAllBranches && (
-            <BranchListFilterSelect
-              value={filterListId}
-              onChange={setFilterListId}
-              lists={branchLists}
-            />
-          )}
         </div>
         {(search || filterListId || filterCaseType) && !loading && (
           <p className="text-xs text-[#767676] mt-2">
@@ -568,6 +583,11 @@ export default function DebtorsPage() {
       <DebtorImportModal
         open={importOpen}
         onClose={() => setImportOpen(false)}
+        onComplete={() => fetchDebtors(search, filterListId, filterCaseType)}
+      />
+      <CriminalDebtorImportModal
+        open={criminalImportOpen}
+        onClose={() => setCriminalImportOpen(false)}
         onComplete={() => fetchDebtors(search, filterListId, filterCaseType)}
       />
       <MoveToPaymentInProgressModal

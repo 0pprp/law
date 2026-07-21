@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getSessionProfile } from '@/lib/api-auth'
+import { getSessionProfile, sessionCaseScope } from '@/lib/api-auth'
 import { canStaffReadBranch } from '@/lib/staff-branch-access'
 import { canReadAllBranches, isAdmin, isLegalManager } from '@/lib/permissions'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
+import { requireLawyerInScope } from '@/lib/section-guard'
 
 const SIGNED_TTL_SEC = 900
 
@@ -45,13 +46,11 @@ export async function POST(request: Request) {
     return safeClientError('الملف غير موجود', 404)
   }
 
-  const { data: lawyer } = await admin
-    .from('profiles')
-    .select('branch_id')
-    .eq('id', row.lawyer_id)
-    .maybeSingle()
+  const scope = sessionCaseScope(auth.profile)
+  const gate = await requireLawyerInScope(admin, scope, row.lawyer_id)
+  if (!gate.ok) return gate.error
 
-  const lawyerBranch = lawyer?.branch_id ?? null
+  const lawyerBranch = (gate.data as { branch_id?: string | null }).branch_id ?? null
   const canRead = lawyerBranch
     ? canStaffReadBranch(auth.profile, lawyerBranch)
     : isAdmin(auth.profile.role)

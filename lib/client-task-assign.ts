@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/client'
 import { logActivity } from '@/lib/activity-log'
-import { assignTasksViaApi } from '@/lib/task-operations-api'
+import { assignTasksViaApi, unassignTasksViaApi } from '@/lib/task-operations-api'
 import { PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { fmtDate } from '@/lib/utils'
-import { cacheDelete } from '@/lib/query-cache'
+import { cacheDelete, cacheInvalidatePrefix } from '@/lib/query-cache'
 
 export interface AssignmentTaskRef {
   id: string
@@ -35,6 +35,9 @@ export function validateTaskAssignmentInput(
 export function invalidateAssignmentCaches(branchId: string | null, taskView?: string, filterDef?: string, filterListId?: string, debouncedSearch?: string) {
   const branchKey = branchId ?? 'all'
   cacheDelete(`dashboard:${branchKey}`)
+  cacheInvalidatePrefix('dashboard:')
+  cacheInvalidatePrefix('tasks:assign:')
+  cacheInvalidatePrefix('tasks:review:')
   if (taskView) {
     cacheDelete(`tasks:assign:${branchKey}:${taskView}:${filterDef ?? ''}:${filterListId ?? ''}:${debouncedSearch ?? ''}:0`)
   }
@@ -55,6 +58,7 @@ export async function executeTaskAssignment(params: {
   filterDef?: string
   filterListId?: string
   debouncedSearch?: string
+  caseType?: 'civil' | 'criminal' | null
 }): Promise<{ ok: boolean; error: string | null }> {
   const result = await assignTasksViaApi(params.taskIds, params.lawyerId, params.dueDate)
   if (!result.ok) return result
@@ -73,6 +77,44 @@ export async function executeTaskAssignment(params: {
     description: isDelegate
       ? `تكليف ${params.taskIds.length} مهمة للمندوب ${lawyerName}`
       : `تكليف ${params.taskIds.length} مهمة للمحامي ${lawyerName}`,
+    case_type: params.caseType === 'criminal' ? 'criminal' : 'civil',
+  }, supabase)
+
+  invalidateAssignmentCaches(
+    params.branchId,
+    params.taskView,
+    params.filterDef,
+    params.filterListId,
+    params.debouncedSearch,
+  )
+
+  return { ok: true, error: null }
+}
+
+export async function executeTaskUnassign(params: {
+  taskIds: string[]
+  reason?: string | null
+  branchId: string | null
+  taskView?: string
+  filterDef?: string
+  filterListId?: string
+  debouncedSearch?: string
+  caseType?: 'civil' | 'criminal' | null
+  canAssign: boolean
+}): Promise<{ ok: boolean; error: string | null }> {
+  if (!params.canAssign) return { ok: false, error: PERMISSION_DENIED_MSG }
+  if (!params.taskIds.length) return { ok: false, error: 'حدد مهمة واحدة على الأقل' }
+
+  const result = await unassignTasksViaApi(params.taskIds, params.reason)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  const supabase = createClient()
+  await logActivity({
+    action: 'bulk_unassign_tasks',
+    entity_type: 'task',
+    entity_id: params.taskIds[0],
+    description: `إلغاء تكليف ${params.taskIds.length} مهمة — عادت بانتظار التكليف`,
+    case_type: params.caseType === 'criminal' ? 'criminal' : 'civil',
   }, supabase)
 
   invalidateAssignmentCaches(

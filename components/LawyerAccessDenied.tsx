@@ -1,6 +1,10 @@
 import Link from 'next/link'
 
-export default function LawyerAccessDenied() {
+export default function LawyerAccessDenied({
+  message = 'يمكنك فقط عرض ملفات المدينين المكلفين بمهام نشطة لديك في فرعك.',
+}: {
+  message?: string
+}) {
   return (
     <div className="max-w-lg mx-auto px-4 pt-16 pb-24">
       <div className="bg-white rounded-2xl border border-red-200 shadow-sm p-8 text-center">
@@ -11,7 +15,7 @@ export default function LawyerAccessDenied() {
         </div>
         <h1 className="text-lg font-bold text-slate-800 mb-2">لا تملك صلاحية الوصول إلى هذا الملف</h1>
         <p className="text-sm text-slate-500 mb-6 leading-relaxed">
-          يمكنك فقط عرض ملفات المدينين المكلفين بمهام نشطة لديك في فرعك.
+          {message}
         </p>
         <Link
           href="/lawyer/tasks"

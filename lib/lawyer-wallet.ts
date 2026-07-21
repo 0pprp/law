@@ -357,8 +357,18 @@ export async function creditLawyerWallet(
     createdBy: string
     referenceId?: string | null
   },
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; alreadyCredited?: boolean }> {
   if (params.amount <= 0) return { ok: false, error: 'المبلغ يجب أن يكون أكبر من صفر' }
+
+  if (params.referenceId) {
+    const { data: existing } = await supabase
+      .from('lawyer_wallet_transactions')
+      .select('id')
+      .eq('reference_id', params.referenceId)
+      .limit(1)
+      .maybeSingle()
+    if (existing) return { ok: true, alreadyCredited: true }
+  }
 
   const wallet = params.wallet ?? (params.type === 'accountant_transfer' ? 'savings' : 'fees')
 
@@ -395,8 +405,9 @@ export async function creditLawyerSavingsWallet(
     amount: number
     notes?: string | null
     createdBy: string
+    referenceId?: string | null
   },
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; alreadyCredited?: boolean }> {
   return creditLawyerWallet(supabase, {
     ...params,
     type: 'accountant_transfer',
@@ -412,9 +423,20 @@ export async function withdrawLawyerSavings(
     amount: number
     notes?: string | null
     createdBy: string
+    referenceId?: string | null
   },
-): Promise<{ ok: boolean; error?: string; newBalance?: number }> {
+): Promise<{ ok: boolean; error?: string; newBalance?: number; alreadyWithdrawn?: boolean }> {
   if (params.amount <= 0) return { ok: false, error: 'المبلغ يجب أن يكون أكبر من صفر' }
+
+  if (params.referenceId) {
+    const { data: existing } = await supabase
+      .from('lawyer_wallet_transactions')
+      .select('id')
+      .eq('reference_id', params.referenceId)
+      .limit(1)
+      .maybeSingle()
+    if (existing) return { ok: true, alreadyWithdrawn: true }
+  }
 
   const balance = await fetchLawyerDisbursementBalance(supabase, params.lawyerId)
   if (params.amount > balance) {
@@ -431,6 +453,7 @@ export async function withdrawLawyerSavings(
     amount: -params.amount,
     notes: note,
     created_by: params.createdBy,
+    reference_id: params.referenceId ?? null,
   }
 
   const result = await insertWalletTransaction(supabase, {
@@ -449,9 +472,20 @@ export async function payoutLawyerFees(
     amount: number
     notes?: string | null
     createdBy: string
+    referenceId?: string | null
   },
-): Promise<{ ok: boolean; error?: string; newBalance?: number }> {
+): Promise<{ ok: boolean; error?: string; newBalance?: number; alreadyWithdrawn?: boolean }> {
   if (params.amount <= 0) return { ok: false, error: 'المبلغ يجب أن يكون أكبر من صفر' }
+
+  if (params.referenceId) {
+    const { data: existing } = await supabase
+      .from('lawyer_wallet_transactions')
+      .select('id')
+      .eq('reference_id', params.referenceId)
+      .limit(1)
+      .maybeSingle()
+    if (existing) return { ok: true, alreadyWithdrawn: true }
+  }
 
   const balance = await fetchLawyerFeesOnlyBalance(supabase, params.lawyerId)
   if (balance <= 0) {
@@ -468,6 +502,7 @@ export async function payoutLawyerFees(
     amount: -params.amount,
     notes: note,
     created_by: params.createdBy,
+    reference_id: params.referenceId ?? null,
   }
 
   const result = await insertWithTypeFallback(

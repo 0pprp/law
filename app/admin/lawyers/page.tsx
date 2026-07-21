@@ -12,6 +12,7 @@ import { fmtDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { canCreateLawyerUser, canEditLawyerProfile, canDeleteUsers } from '@/lib/permissions'
 import { fetchStaffRoleFields } from '@/lib/staff-profile'
+import { filterBySection, normalizeCaseType, resolveCaseScope } from '@/lib/case-scope'
 
 const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange' | 'purple' | 'gray'>> = {
   admin: 'purple',
@@ -51,6 +52,21 @@ export default async function LawyersPage() {
     profiles = (result[0].data as any[]) ?? []
     attachmentRows = (result[1].data as { lawyer_id: string }[]) ?? []
     branchRows = (result[2].data as { id: string; name: string }[]) ?? []
+
+    const scope = resolveCaseScope(myProfile?.role)
+    const sectionFilter = filterBySection(scope)
+    if (sectionFilter) {
+      const lockedRole = myProfile?.role === 'viewer' || myProfile?.role === 'criminal_legal_manager'
+      profiles = profiles.filter(p => {
+        if (p.role === 'lawyer') {
+          return normalizeCaseType(p.case_type) === sectionFilter
+        }
+        if (lockedRole) {
+          return p.id === user?.id || p.role === myProfile?.role
+        }
+        return true
+      })
+    }
   }
 
   const branchNameMap = new Map(branchRows.map(b => [b.id, b.name]))

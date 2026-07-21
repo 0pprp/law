@@ -31,6 +31,9 @@ import {
   RECEIPT_NUMBER_EMPTY_ERROR,
 } from '@/lib/receipt-number'
 import { CASE_TYPE_OPTIONS, type CaseType } from '@/lib/case-type'
+import { useCaseScope } from '@/hooks/use-case-scope'
+import CriminalDebtorCreateForm from '@/components/CriminalDebtorCreateForm'
+import { BackButton } from '@/components/ui/back-button'
 
 const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
 /** قيمة واجهة فقط — تُحفظ في DB كـ other لتفادي كسر القيود */
@@ -51,7 +54,9 @@ function resolveReceiptType(value: string): ReceiptType {
 export default function NewDebtorPage() {
   const router = useRouter()
   const role = useAdminRole()
+  const { section, filterCaseType } = useCaseScope()
   const readOnly = !canAddDebtor(role)
+  const caseTypeLocked = filterCaseType != null
   const {
     needsPick,
     effectiveBranchId: branchId,
@@ -67,7 +72,7 @@ export default function NewDebtorPage() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [taskDefs, setTaskDefs] = useState<TaskDef[]>([])
-  const [caseType, setCaseType] = useState<CaseType | ''>('')
+  const [caseType, setCaseType] = useState<CaseType | ''>(filterCaseType ?? '')
   const [selectedTaskDefId, setSelectedTaskDefId] = useState('')
   const [branchListId, setBranchListId] = useState('')
 
@@ -87,21 +92,37 @@ export default function NewDebtorPage() {
   })
 
   useEffect(() => {
-    if (!branchId || !caseType) {
+    if (filterCaseType) setCaseType(filterCaseType)
+  }, [filterCaseType])
+
+  useEffect(() => {
+    if (!branchId || !caseType || caseType === 'criminal') {
       setTaskDefs([])
       return
     }
-    let q = createClient()
+    createClient()
       .from('task_definitions')
       .select('id, label, fee_amount, task_type, case_type')
       .eq('is_active', true)
       .eq('case_type', caseType)
       .eq('branch_id', branchId)
-    q.order('sort_order').order('label').then(({ data }) => {
-      setTaskDefs((data ?? []) as TaskDef[])
-      setSelectedTaskDefId(prev => ((data ?? []) as TaskDef[]).some(d => d.id === prev) ? prev : '')
-    })
+      .order('sort_order')
+      .order('label')
+      .then(({ data }) => {
+        setTaskDefs((data ?? []) as TaskDef[])
+        setSelectedTaskDefId(prev => ((data ?? []) as TaskDef[]).some(d => d.id === prev) ? prev : '')
+      })
   }, [branchId, caseType])
+
+  // نموذج الجزائي المنفصل
+  if (caseType === 'criminal' || filterCaseType === 'criminal') {
+    return (
+      <CriminalDebtorCreateForm
+        readOnly={readOnly}
+        lockCaseType={caseTypeLocked || section === 'criminal'}
+      />
+    )
+  }
 
   function clearFieldError(field: DebtorFormField) {
     setFieldErrors(prev => {
@@ -131,7 +152,6 @@ export default function NewDebtorPage() {
     )
   }
 
-  /** نوع الدعوى مطلوب + رقم الوصل غير فارغ — المهمة اختيارية */
   function validateForm(): FieldErrors {
     const errors: FieldErrors = {}
     if (!caseType) {
@@ -260,8 +280,13 @@ export default function NewDebtorPage() {
     })),
   ]
 
+  const showCaseTypePicker = !caseTypeLocked && section === 'both'
+
   return (
     <div className="max-w-3xl space-y-5">
+      <div>
+        <BackButton fallback="/admin/debtors" />
+      </div>
       <PageHeader
         title="إضافة مدين جديد"
         subtitle="سجّل بيانات المدين — يمكنك اختيار المهمة الآن أو إسنادها لاحقاً من لوحة التحكم"
@@ -296,7 +321,9 @@ export default function NewDebtorPage() {
           <FormFlowStep
             step={1}
             title="نوع الدعوى والمهمة"
-            subtitle="حدد نوع الدعوى (إلزامي) ثم اختر المهمة المطابقة — يمكن ترك المهمة لاحقاً"
+            subtitle={showCaseTypePicker
+              ? 'حدد نوع الدعوى (إلزامي) ثم اختر المهمة المطابقة — يمكن ترك المهمة لاحقاً'
+              : 'قسم الدعاوى المدنية — اختر المهمة أو اتركها لاحقاً'}
             icon={
               <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -304,18 +331,22 @@ export default function NewDebtorPage() {
             }
           >
             <div className="space-y-4">
-              <FormField label="نوع الدعوى" required error={fieldErrors.caseType}>
-                <PremiumSelect
-                  value={caseType}
-                  onChange={handleCaseTypeChange}
-                  options={CASE_TYPE_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
-                  placeholder="— اختر نوع الدعوى —"
-                  headerTitle="نوع الدعوى"
-                  headerSubtitle="مدنية أو جزائية"
-                  searchable={false}
-                  disabled={!branchOk}
-                />
-              </FormField>
+              {showCaseTypePicker ? (
+                <FormField label="نوع الدعوى" required error={fieldErrors.caseType}>
+                  <PremiumSelect
+                    value={caseType}
+                    onChange={handleCaseTypeChange}
+                    options={CASE_TYPE_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+                    placeholder="— اختر نوع الدعوى —"
+                    headerTitle="نوع الدعوى"
+                    headerSubtitle="مدنية أو جزائية"
+                    searchable={false}
+                    disabled={!branchOk}
+                  />
+                </FormField>
+              ) : (
+                <p className="text-sm text-[#767676]">القسم: مدني</p>
+              )}
               <FormField label="المهمة المطلوبة" hint="اختياري — بدونها يظهر المدين في «الأسماء التي تحت إسناد مهمة»" error={fieldErrors.selectedTaskDefId}>
                 <PremiumSelect
                   value={selectedTaskDefId}
@@ -429,7 +460,6 @@ export default function NewDebtorPage() {
                   <input type="checkbox" checked={form.has_contract}
                     onChange={e => {
                       const checked = e.target.checked
-                      // مرتبطان: عقد موقّع ⇒ الوصل موقّع لتحمل التكاليف القانونية
                       setForm(prev => ({
                         ...prev,
                         has_contract: checked,
@@ -446,7 +476,6 @@ export default function NewDebtorPage() {
                   <input type="checkbox" checked={form.receipt_signed_legal_costs}
                     onChange={e => {
                       const checked = e.target.checked
-                      // مرتبطان: إلغاء أحدهما يلغي الآخر، وتفعيل التكاليف يستلزم العقد
                       setForm(prev => ({
                         ...prev,
                         receipt_signed_legal_costs: checked,

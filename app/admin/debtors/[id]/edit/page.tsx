@@ -1,27 +1,39 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { RECEIPT_TYPE_LABELS } from '@/lib/types'
-import type { ReceiptType } from '@/lib/types'
 import Link from 'next/link'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { fmtDate } from '@/lib/utils'
 import { parseMoneyInput } from '@/lib/money-input'
-import MoneyInput from '@/components/ui/money-input'
-import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
-import { RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
-import { PremiumSelect } from '@/components/ui/premium-select'
 import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { cn } from '@/lib/utils'
 import { useAdminRole } from '@/context/admin-role'
+import { canAssignTasks, canEditDebtor } from '@/lib/permissions'
+import { assertDebtorSection, resolveCaseScope, sectionForbiddenMessage } from '@/lib/case-scope'
+import PermissionDenied from '@/components/PermissionDenied'
+import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
+import {
+  CriminalDebtorFields,
+  EMPTY_CRIMINAL_DETAILS,
+  criminalDetailsPayload,
+  validateCriminalClientForm,
+  type CriminalDetailsFormState,
+} from '@/components/CriminalDebtorFields'
+import { isContractGuarantorStatus } from '@/lib/criminal-debtor-details'
+import { BackButton } from '@/components/ui/back-button'
+import { RECEIPT_TYPE_LABELS } from '@/lib/types'
+import type { ReceiptType } from '@/lib/types'
+import { createClient } from '@/lib/supabase/client'
+import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
+import { RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import MoneyInput from '@/components/ui/money-input'
 import BranchListSelect from '@/components/BranchListSelect'
 import { fetchBranchLists } from '@/lib/branch-lists'
 import type { BranchList } from '@/lib/branch-lists'
-import { canAssignTasks, canDelete, canEditDebtor } from '@/lib/permissions'
-import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
+import { canDelete } from '@/lib/permissions'
 import { appConfirm } from '@/lib/app-dialog'
 import {
   isReceiptNumberMissing,
@@ -38,16 +50,21 @@ export default function EditDebtorPage() {
   const params = useParams()
   const id = params.id as string
   const role = useAdminRole()
+  const submitLock = useRef(false)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [sectionDenied, setSectionDenied] = useState(false)
+  const [isCriminal, setIsCriminal] = useState(false)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [createdAt, setCreatedAt] = useState<string | null>(null)
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null)
   const [debtorBranchId, setDebtorBranchId] = useState<string | null>(null)
   const [branchLists, setBranchLists] = useState<BranchList[]>([])
+  const [criminal, setCriminal] = useState<CriminalDetailsFormState>(EMPTY_CRIMINAL_DETAILS)
 
   const [form, setForm] = useState({
     full_name: '', phone: '', address: '', id_number: '',
@@ -68,10 +85,17 @@ export default function EditDebtorPage() {
       }
       const data = payload.debtor
       const files = payload.attachments
+      const details = payload.criminal_details
       if (data) {
+        if (!assertDebtorSection(resolveCaseScope(role), data.case_type)) {
+          setSectionDenied(true)
+          setLoading(false)
+          return
+        }
         setCreatedAt(data.created_at ?? null)
         setDebtorBranchId(data.branch_id ?? null)
-        const hasPenalty = parseMoneyInput(data.penalty_amount) > 0
+        const criminalCase = data.case_type === 'criminal'
+        setIsCriminal(criminalCase)
         setForm({
           full_name: data.full_name ?? '',
           phone: data.phone ?? '',
@@ -83,12 +107,25 @@ export default function EditDebtorPage() {
           remaining_amount: data.remaining_amount?.toString() ?? '',
           lawyer_fees: data.lawyer_fees?.toString() ?? '',
           penalty_amount: data.penalty_amount?.toString() ?? '',
-          has_contract: Boolean(data.has_contract) || hasPenalty,
+          has_contract: Boolean(data.has_contract),
           receipt_signed_legal_costs: Boolean(data.receipt_signed_legal_costs),
           notes: data.notes ?? '',
           branch_list_id: data.branch_list_id ?? '',
         })
-        if (data.branch_id) {
+        if (criminalCase) {
+          setCriminal({
+            job_title: details?.job_title ?? '',
+            current_address: details?.current_address ?? '',
+            incident_date: details?.incident_date ?? '',
+            charge_type: details?.charge_type ?? '',
+            contract_guarantor_status: isContractGuarantorStatus(details?.contract_guarantor_status)
+              ? details.contract_guarantor_status
+              : '',
+            first_witness_name: details?.first_witness_name ?? '',
+            second_witness_name: details?.second_witness_name ?? '',
+            amount_owed: data.remaining_amount != null ? String(data.remaining_amount) : '',
+          })
+        } else if (data.branch_id) {
           const supabase = createClient()
           fetchBranchLists(supabase, data.branch_id).then(setBranchLists)
         }
@@ -97,9 +134,13 @@ export default function EditDebtorPage() {
       setLoading(false)
     }
     load()
-  }, [id])
+  }, [id, role])
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
+
+  function setCriminalField(field: keyof CriminalDetailsFormState, value: string) {
+    setCriminal(prev => ({ ...prev, [field]: value }))
+  }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null
@@ -126,12 +167,47 @@ export default function EditDebtorPage() {
 
   async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
-    if (readOnly) return
-    setSaving(true); setError('')
+    if (readOnly || saving || submitLock.current) return
+    submitLock.current = true
+    setSaving(true); setError(''); setSuccess('')
+
+    if (isCriminal) {
+      const validation = validateCriminalClientForm(form.full_name, debtorBranchId, criminal)
+      if (validation) {
+        setError(validation)
+        setSaving(false)
+        submitLock.current = false
+        return
+      }
+      const amountRaw = criminal.amount_owed.trim()
+      const response = await fetch(`/api/admin/debtors/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: form.full_name.trim(),
+          notes: form.notes || null,
+          remaining_amount: amountRaw ? parseMoneyInput(amountRaw) : null,
+          branch_list_id: null,
+          criminal_details: criminalDetailsPayload(criminal),
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setError(typeof result.error === 'string' ? result.error : 'فشل حفظ بيانات المدين')
+        setSaving(false)
+        submitLock.current = false
+        return
+      }
+      setSuccess('تم حفظ التعديلات')
+      router.push(`/admin/debtors/${id}/account`)
+      return
+    }
+
     const receiptNumber = normalizeReceiptNumberInput(form.receipt_number)
     if (isReceiptNumberMissing(receiptNumber)) {
       setError(RECEIPT_NUMBER_EMPTY_ERROR)
       setSaving(false)
+      submitLock.current = false
       return
     }
     const updatePayload = {
@@ -157,6 +233,7 @@ export default function EditDebtorPage() {
     if (!response.ok) {
       setError(typeof result.error === 'string' ? result.error : 'فشل حفظ بيانات المدين')
       setSaving(false)
+      submitLock.current = false
       return
     }
     if (pdfFile) {
@@ -165,6 +242,7 @@ export default function EditDebtorPage() {
       } catch (uploadError) {
         setError(`تم حفظ البيانات لكن فشل رفع الملف: ${uploadError instanceof Error ? uploadError.message : 'خطأ غير معروف'}`)
         setSaving(false)
+        submitLock.current = false
         return
       }
     }
@@ -178,12 +256,60 @@ export default function EditDebtorPage() {
     </div>
   )
 
+  if (sectionDenied) {
+    return <PermissionDenied message={sectionForbiddenMessage()} backHref="/admin/debtors" />
+  }
+
   const readOnly = !canEditDebtor(role)
   const allowChangeTask = canAssignTasks(role)
   const allowDeleteFile = canDelete(role)
 
+  if (isCriminal) {
+    return (
+      <div className="max-w-3xl space-y-5">
+        <div>
+          <BackButton fallback={`/admin/debtors/${id}/account`} />
+        </div>
+        <PageHeader
+          title="تعديل مدين جزائي"
+          subtitle={createdAt ? `تاريخ الإضافة: ${fmtDate(createdAt)}` : undefined}
+          breadcrumb={[{ label: 'المدينون', href: '/admin/debtors' }, { label: 'تعديل' }]}
+        />
+        {readOnly && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            عرض البيانات فقط — لا تملك صلاحية تعديل المدين.
+          </div>
+        )}
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <fieldset disabled={readOnly} className="space-y-5 border-0 p-0 m-0 min-w-0">
+            <FormFlow>
+              <FormFlowStep step={1} title="البيانات الأساسية">
+                <FormField label="الاسم الكامل" required>
+                  <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={formInputClass} />
+                </FormField>
+                <p className="text-xs text-[#767676]">نوع الدعوى: جزائي (لا يمكن تغييره) — القائمة غير متاحة للجزائي</p>
+              </FormFlowStep>
+              <FormFlowStep step={2} title="تفاصيل القضية" isLast>
+                <CriminalDebtorFields form={criminal} onChange={setCriminalField} disabled={readOnly} />
+              </FormFlowStep>
+            </FormFlow>
+          </fieldset>
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>}
+          {success && <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm rounded-xl px-4 py-3">{success}</div>}
+          <div className="flex gap-3 pb-6">
+            <Button type="submit" variant="primary" loading={saving} disabled={readOnly || saving}>حفظ التعديلات</Button>
+            <Link href={`/admin/debtors/${id}/account`}><Button type="button" variant="outline">إلغاء</Button></Link>
+          </div>
+        </form>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-3xl space-y-5">
+      <div>
+        <BackButton fallback="/admin/debtors" />
+      </div>
       <PageHeader
         title="تعديل بيانات المدين"
         subtitle={createdAt ? `تاريخ الإضافة: ${fmtDate(createdAt)}` : undefined}

@@ -94,6 +94,7 @@ export function PremiumSelect({
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
+  const [listMaxHeight, setListMaxHeight] = useState<number | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -122,9 +123,12 @@ export function PremiumSelect({
     return () => document.removeEventListener('mousedown', onOutside)
   }, [open])
 
+  const showSearch = searchable && options.length > 1
+
   useLayoutEffect(() => {
     if (!open || !menuPortal || !triggerRef.current) {
       setMenuStyle(null)
+      setListMaxHeight(null)
       return
     }
 
@@ -132,20 +136,31 @@ export function PremiumSelect({
       const trigger = triggerRef.current
       if (!trigger) return
       const rect = trigger.getBoundingClientRect()
-      const estimatedHeight = Math.min(320, 120 + options.length * 44)
-      const spaceBelow = window.innerHeight - rect.bottom - 12
-      const spaceAbove = rect.top - 12
-      const openAbove = spaceBelow < estimatedHeight && spaceAbove > spaceBelow
+      const gap = 8
+      const viewportPad = 12
+      const chromeHeight = showSearch ? 118 : 56
+      const spaceBelow = window.innerHeight - rect.bottom - gap - viewportPad
+      const spaceAbove = rect.top - gap - viewportPad
+      // قرب أسفل الشاشة/المودال → افتح للأعلى وابقَ داخل الإطار
+      const openAbove = spaceBelow < 220 && spaceAbove > spaceBelow
+      const available = Math.max(160, openAbove ? spaceAbove : spaceBelow)
+      const menuMax = Math.min(320, available)
+      const listMax = Math.max(80, menuMax - chromeHeight)
 
+      setListMaxHeight(listMax)
       setMenuStyle({
         position: 'fixed',
-        left: rect.left,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8)),
         width: rect.width,
+        maxHeight: menuMax,
         zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
         ...MENU_SURFACE,
         ...(openAbove
-          ? { bottom: window.innerHeight - rect.top + 8 }
-          : { top: rect.bottom + 8 }),
+          ? { bottom: window.innerHeight - rect.top + gap }
+          : { top: rect.bottom + gap }),
       })
     }
 
@@ -156,10 +171,12 @@ export function PremiumSelect({
       window.removeEventListener('resize', updatePosition)
       window.removeEventListener('scroll', updatePosition, true)
     }
-  }, [open, menuPortal, options.length])
+  }, [open, menuPortal, options.length, showSearch])
 
   useEffect(() => {
-    if (open && searchable) setTimeout(() => searchRef.current?.focus(), 50)
+    if (open && searchable) {
+      setTimeout(() => searchRef.current?.focus({ preventScroll: true }), 50)
+    }
   }, [open, searchable])
 
   function pick(val: string) {
@@ -167,8 +184,6 @@ export function PremiumSelect({
     setOpen(false)
     setSearch('')
   }
-
-  const showSearch = searchable && options.length > 1
 
   const menuPanel = (
     <div
@@ -180,7 +195,7 @@ export function PremiumSelect({
       style={menuPortal ? (menuStyle ?? { ...MENU_SURFACE, visibility: 'hidden' }) : MENU_SURFACE}
     >
       <div
-        className="px-4 py-3 flex items-center gap-2"
+        className="px-4 py-3 flex items-center gap-2 shrink-0"
         style={{ background: 'linear-gradient(135deg, #2C8780 0%, #1D6365 100%)' }}
       >
         <div className="min-w-0">
@@ -192,7 +207,7 @@ export function PremiumSelect({
       </div>
 
       {showSearch && (
-        <div className="p-3 border-b border-[rgba(118,118,118,0.08)]">
+        <div className="p-3 border-b border-[rgba(118,118,118,0.08)] shrink-0">
           <div className="relative">
             <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#767676] pointer-events-none" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -221,7 +236,21 @@ export function PremiumSelect({
         </div>
       )}
 
-      <div className={cn('py-1', filtered.length > 6 && 'max-h-60 overflow-y-auto overscroll-contain')}>
+      <div
+        className={cn(
+          'py-1 min-h-0',
+          (menuPortal && listMaxHeight != null) || filtered.length > 6
+            ? 'overflow-y-auto overscroll-contain'
+            : '',
+        )}
+        style={
+          menuPortal && listMaxHeight != null
+            ? { maxHeight: listMaxHeight }
+            : filtered.length > 6
+              ? { maxHeight: 240 }
+              : undefined
+        }
+      >
         {filtered.length === 0 ? (
           <div className="py-8 text-center text-xs text-[#767676]">لا توجد نتائج</div>
         ) : (
@@ -248,7 +277,7 @@ export function PremiumSelect({
                   />
                 )}
                 <div className="flex-1 min-w-0">
-                  <span className={cn('block text-sm leading-tight', isActive ? 'font-bold text-[#2C8780]' : 'font-medium text-[#231F20]')}>
+                  <span className={cn('block text-sm leading-snug py-0.5', isActive ? 'font-bold text-[#2C8780]' : 'font-medium text-[#231F20]')}>
                     {option.label}
                   </span>
                   {option.hint && (

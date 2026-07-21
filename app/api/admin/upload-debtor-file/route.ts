@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireMutationStaff } from '@/lib/api-auth'
+import { requireMutationStaff, sessionCaseScope } from '@/lib/api-auth'
 import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { logActivity } from '@/lib/activity-log'
 import { isPdfFile } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
+import { requireDebtorInScope } from '@/lib/section-guard'
 
 const MAX_BYTES = 15 * 1024 * 1024
 
@@ -32,16 +33,11 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = createAdminClient()
+  const scope = sessionCaseScope(auth.profile)
+  const gate = await requireDebtorInScope(admin, scope, debtorId, 'id, branch_id, case_type')
+  if (!gate.ok) return gate.error
 
-  const { data: debtor, error: debtorErr } = await admin
-    .from('debtors')
-    .select('id, branch_id')
-    .eq('id', debtorId)
-    .single()
-
-  if (debtorErr || !debtor) {
-    return safeClientError('المدين غير موجود', 404)
-  }
+  const debtor = gate.data as { id: string; branch_id: string | null }
 
   if (!canStaffWriteBranch(auth.profile, debtor.branch_id)) {
     return safeClientError('صلاحية غير كافية', 403)
@@ -81,6 +77,7 @@ export async function POST(request: NextRequest) {
     entity_type: 'debtor',
     entity_id: debtorId,
     description: `رفع ملف مدين: ${file.name.slice(0, 120)}`,
+    case_type: gate.caseType,
   }, auth.supabase)
 
   return NextResponse.json({ ok: true, filePath, attachment: row })

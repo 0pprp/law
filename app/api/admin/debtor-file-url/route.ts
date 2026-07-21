@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireStaffProfile } from '@/lib/api-auth'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { canStaffReadBranch } from '@/lib/staff-branch-access'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
+import { requireDebtorInScope } from '@/lib/section-guard'
 
 const SIGNED_TTL_SEC = 900
 
@@ -27,7 +28,7 @@ export async function POST(request: Request) {
   const admin = createAdminClient()
   let q = admin
     .from('debtor_attachments')
-    .select('id, file_path, debtor:debtors!debtor_attachments_debtor_id_fkey(branch_id)')
+    .select('id, file_path, debtor_id, debtor:debtors!debtor_attachments_debtor_id_fkey(branch_id)')
   if (fileId) q = q.eq('id', fileId)
   else q = q.eq('file_path', path!)
 
@@ -38,6 +39,10 @@ export async function POST(request: Request) {
   if (fileId && path && row.file_path !== path) {
     return safeClientError('الملف غير موجود', 404)
   }
+
+  const scope = sessionCaseScope(auth.profile)
+  const gate = await requireDebtorInScope(admin, scope, row.debtor_id)
+  if (!gate.ok) return gate.error
 
   const debtor = Array.isArray(row.debtor) ? row.debtor[0] : row.debtor
   const branchId = (debtor as { branch_id?: string | null } | null)?.branch_id ?? null

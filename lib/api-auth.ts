@@ -4,6 +4,7 @@ import type { UserRole } from '@/lib/types'
 import type { AccountantType } from '@/lib/accountant-type'
 import { fetchStaffProfile } from '@/lib/staff-profile'
 import { normalizeAccountantType } from '@/lib/accountant-type'
+import { resolveCaseScope, type CaseScope } from '@/lib/case-scope'
 
 export type SessionProfile = {
   id: string
@@ -11,6 +12,8 @@ export type SessionProfile = {
   branch_id: string | null
   full_name: string | null
   accountant_type: AccountantType
+  /** قسم المحامي إن وُجد — لـ resolveCaseScope */
+  case_type: 'civil' | 'criminal' | null
   is_active: boolean
 }
 
@@ -40,9 +43,22 @@ export async function getSessionProfile(): Promise<{
       branch_id: row.branch_id ?? null,
       full_name: row.full_name ?? null,
       accountant_type: normalizeAccountantType(row.accountant_type),
+      case_type: row.case_type === 'criminal' || row.case_type === 'civil'
+        ? row.case_type
+        : null,
       is_active: true,
     },
   }
+}
+
+/** نطاق القسم للجلسة الحالية */
+export function sessionCaseScope(profile: SessionProfile | null): CaseScope {
+  if (!profile) {
+    return resolveCaseScope(null)
+  }
+  return resolveCaseScope(profile.role, {
+    lawyerCaseType: profile.role === 'lawyer' ? profile.case_type : null,
+  })
 }
 
 export async function requireStaffProfile() {

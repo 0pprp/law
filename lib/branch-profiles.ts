@@ -8,6 +8,7 @@ export interface BranchProfileRow {
   role: string | null
   branch_id: string | null
   lawyer_type?: string | null
+  case_type?: string | null
   is_active?: boolean | null
   active?: boolean | null
   status?: string | null
@@ -53,41 +54,65 @@ export function filterGeneralLawyerProfiles(profiles: BranchProfileRow[]): Branc
 export async function fetchBranchProfiles(
   supabase: SupabaseClient,
   branchId: string | null,
+  options?: { caseType?: 'civil' | 'criminal' | null },
 ): Promise<{ profiles: BranchProfileRow[]; error: unknown | null }> {
   if (!branchId) return { profiles: [], error: null }
 
-  const { data, error } = await supabase
+  let q = supabase
     .from('profiles')
-    .select('id, full_name, role, branch_id, lawyer_type, is_active')
+    .select('id, full_name, role, branch_id, lawyer_type, case_type, is_active')
     .eq('branch_id', branchId)
     .order('full_name')
 
-  return { profiles: (data ?? []) as BranchProfileRow[], error: error ?? null }
+  // فلتر قسم المحامين فقط — الأدوار الأخرى تبقى ظاهرة للإدارة عند both
+  const { data, error } = await q
+  let profiles = (data ?? []) as BranchProfileRow[]
+  const ct = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
+  if (ct) {
+    profiles = profiles.filter(p => {
+      if (!isLawyerRole(p.role)) return true
+      const pct = (p as { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil'
+      return pct === ct
+    })
+  }
+
+  return { profiles, error: error ?? null }
 }
 
 export async function fetchGeneralLawyers(
   supabase: SupabaseClient,
+  options?: { caseType?: 'civil' | 'criminal' | null },
 ): Promise<{ profiles: BranchProfileRow[]; error: unknown | null }> {
-  const { data, error } = await supabase
+  let q = supabase
     .from('profiles')
-    .select('id, full_name, role, branch_id, lawyer_type, is_active')
+    .select('id, full_name, role, branch_id, lawyer_type, case_type, is_active')
     .eq('role', 'lawyer')
     .eq('lawyer_type', 'general')
     .eq('is_active', true)
     .order('full_name')
+  if (options?.caseType === 'civil' || options?.caseType === 'criminal') {
+    q = q.eq('case_type', options.caseType)
+  }
+  const { data, error } = await q
 
   return { profiles: (data ?? []) as BranchProfileRow[], error: error ?? null }
 }
 
 /** For task assignment: branch normal lawyers + all general lawyers.
  * When branchId is null (كل الفروع), only general lawyers — assignment across mixed branches needs a selected branch for normal lawyers.
+ * options.caseType يفلتر المحامين حسب قسم المدين/النطاق.
  */
 export async function fetchAssignmentLawyers(
   supabase: SupabaseClient,
   branchId: string | null,
+  options?: { caseType?: 'civil' | 'criminal' | null },
 ): Promise<{ lawyers: LawyerOption[]; error: unknown | null }> {
+  const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal'
+    ? options.caseType
+    : null
+
   if (!branchId) {
-    const generalRes = await fetchGeneralLawyers(supabase)
+    const generalRes = await fetchGeneralLawyers(supabase, { caseType })
     if (generalRes.error) return { lawyers: [], error: generalRes.error }
     const lawyers = filterGeneralLawyerProfiles(generalRes.profiles).map(p => ({
       id: p.id,
@@ -100,8 +125,8 @@ export async function fetchAssignmentLawyers(
   }
 
   const [branchRes, generalRes] = await Promise.all([
-    fetchBranchProfiles(supabase, branchId),
-    fetchGeneralLawyers(supabase),
+    fetchBranchProfiles(supabase, branchId, { caseType }),
+    fetchGeneralLawyers(supabase, { caseType }),
   ])
 
   const error = branchRes.error ?? generalRes.error

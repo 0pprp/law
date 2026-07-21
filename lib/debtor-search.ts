@@ -12,6 +12,7 @@ export type DebtorSearchRow = DebtorSearchFields & {
   id: string
   governorate?: string | null
   case_status?: string | null
+  case_type?: string | null
   current_task_id?: string | null
   remaining_amount?: number | null
   required_amount?: number | null
@@ -31,7 +32,7 @@ export const DEBTOR_DEFAULT_SELECT =
   'id, full_name, phone, receipt_number, governorate'
 
 export const DEBTOR_TASK_SELECT =
-  'id, full_name, phone, governorate, receipt_type, receipt_number, remaining_amount, required_amount, has_contract, case_status, current_task_id'
+  'id, full_name, phone, governorate, receipt_type, receipt_number, remaining_amount, required_amount, has_contract, case_status, case_type, current_task_id'
 
 function digitsOnly(value: string): string {
   return value.replace(/\D/g, '')
@@ -84,6 +85,9 @@ export function debtorSelectOption(
 
 export interface FetchDebtorsBySearchOptions {
   branchId?: string | null
+  branchListId?: string | null
+  /** عزل القسم — null/undefined = بدون فلتر */
+  caseType?: 'civil' | 'criminal' | null
   limit?: number
   select?: string
 }
@@ -102,6 +106,10 @@ export async function fetchDebtorsBySearch(
     .select(options?.select ?? DEBTOR_DEFAULT_SELECT)
 
   if (options?.branchId) q = (q as any).eq('branch_id', options.branchId)
+  if (options?.branchListId) q = (q as any).eq('branch_list_id', options.branchListId)
+  if (options?.caseType === 'civil' || options?.caseType === 'criminal') {
+    q = (q as any).eq('case_type', options.caseType)
+  }
 
   q = q
     .or(debtorSearchOrFilter(trimmed))
@@ -129,6 +137,10 @@ export async function fetchDebtorById(
     .eq('id', id)
 
   if (options?.branchId) q = (q as any).eq('branch_id', options.branchId)
+  if (options?.branchListId) q = (q as any).eq('branch_list_id', options.branchListId)
+  if (options?.caseType === 'civil' || options?.caseType === 'criminal') {
+    q = (q as any).eq('case_type', options.caseType)
+  }
 
   const { data, error } = await q.maybeSingle()
   if (error) {
@@ -144,8 +156,10 @@ export async function resolveDebtorIdsBySearch(
   term: string,
   branchId?: string | null,
   limit = 200,
+  branchListId?: string | null,
+  caseType?: 'civil' | 'criminal' | null,
 ): Promise<string[] | null> {
   if (!term.trim()) return null
-  const rows = await fetchDebtorsBySearch(supabase, term, { branchId, limit })
+  const rows = await fetchDebtorsBySearch(supabase, term, { branchId, branchListId, caseType, limit })
   return rows.map(r => r.id)
 }

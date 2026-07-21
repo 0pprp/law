@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { Suspense, useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId, useBranch } from '@/context/branch'
 import { TASK_STATUS_LABELS, assigneePersonLabel } from '@/lib/types'
@@ -11,7 +12,7 @@ import {
   type CurrentBranchTaskRow,
   CURRENT_TASK_PAGE_SIZE,
 } from '@/lib/task-assignment'
-import { executeTaskAssignment, validateTaskAssignmentInput } from '@/lib/client-task-assign'
+import { executeTaskAssignment, executeTaskUnassign, validateTaskAssignmentInput } from '@/lib/client-task-assign'
 import { taskOverdueDays } from '@/lib/local-date'
 import { fetchAssignmentLawyers, fetchBranchDelegates } from '@/lib/branch-profiles'
 import { isFindAddressTaskType } from '@/lib/delegate'
@@ -30,9 +31,9 @@ import { fetchActiveTaskDefinitions, dedupeTaskDefinitionsByLabel, expandTaskDef
 import { DatePicker } from '@/components/ui/date-picker'
 import { useAdminRole } from '@/context/admin-role'
 import { canAssignTasks } from '@/lib/permissions'
-import { BranchListFilterSelect } from '@/components/BranchListSelect'
-import { useBranchLists } from '@/hooks/use-branch-lists'
+import { useCaseScope } from '@/hooks/use-case-scope'
 import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, type CaseType } from '@/lib/case-type'
+import { appConfirm } from '@/lib/app-dialog'
 
 type TaskView = 'waiting' | 'assigned' | 'overdue'
 
@@ -62,10 +63,28 @@ interface TasksPageCache {
 }
 
 export default function TasksPage() {
+  return (
+    <Suspense fallback={<div className="py-16 text-center text-sm text-[#767676]">جارٍ التحميل...</div>}>
+      <TasksPageInner />
+    </Suspense>
+  )
+}
+
+function TasksPageInner() {
+  const searchParams = useSearchParams()
+  const urlView = searchParams.get('view')
+  const urlDef = searchParams.get('def') ?? ''
+  const urlCaseType = searchParams.get('caseType')
+  const initialView: TaskView =
+    urlView === 'assigned' || urlView === 'overdue' || urlView === 'waiting' ? urlView : 'waiting'
+  const initialCaseType: '' | CaseType =
+    urlCaseType === 'civil' || urlCaseType === 'criminal' ? urlCaseType : ''
+
   const branchId = useBranchId()
-  const { branchName, viewAllBranches } = useBranch()
+  const { branchName, viewAllBranches, listId: filterListId } = useBranch()
   const role = useAdminRole()
   const canAssign = canAssignTasks(role)
+  const { caseTypeFilter: lockedCaseType } = useCaseScope()
   const [tasks, setTasks] = useState<CurrentBranchTaskRow[]>([])
   const [total, setTotal] = useState(0)
   const [unassignedTotal, setUnassignedTotal] = useState(0)
@@ -76,7 +95,7 @@ export default function TasksPage() {
   const [taskDefs, setTaskDefs] = useState<{ id: string; label: string }[]>([])
   const [lawyers, setLawyers] = useState<{ id: string; full_name: string }[]>([])
   const [delegates, setDelegates] = useState<{ id: string; full_name: string }[]>([])
-  const [taskView, setTaskView] = useState<TaskView>('waiting')
+  const [taskView, setTaskView] = useState<TaskView>(initialView)
   const [loading, setLoading] = useState(true)
   const [assigning, setAssigning] = useState(false)
   const [error, setError] = useState('')
@@ -84,21 +103,26 @@ export default function TasksPage() {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [filterDef, setFilterDef] = useState('')
-  const [filterListId, setFilterListId] = useState('')
-  const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>('')
+  const [filterDef, setFilterDef] = useState(urlDef)
+  const [filterCaseType, setFilterCaseType] = useState<'' | CaseType>(lockedCaseType ?? initialCaseType)
   /** فلتر المحامي — تبويب تكليف المهام (بانتظار التكليف) فقط */
   const [filterLawyerId, setFilterLawyerId] = useState('')
-  const { lists: branchLists } = useBranchLists(branchId)
+  const skipNextFilterResetRef = useRef(true)
 
   useEffect(() => {
-    setFilterListId('')
+    if (skipNextFilterResetRef.current) {
+      skipNextFilterResetRef.current = false
+      if (lockedCaseType) setFilterCaseType(lockedCaseType)
+      return
+    }
     setFilterDef('')
-    setFilterCaseType('')
+    setFilterCaseType(lockedCaseType ?? '')
     setFilterLawyerId('')
     setSearch('')
     setDebouncedSearch('')
-  }, [branchId, viewAllBranches])
+  }, [branchId, viewAllBranches, filterListId, lockedCaseType])
+
+  const effectiveCaseType = lockedCaseType ?? (filterCaseType || null)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkLawyerId, setBulkLawyerId] = useState('')
@@ -140,7 +164,7 @@ export default function TasksPage() {
     const offset = offsetOverride ?? 0
     const lawyerFilterId = taskView === 'waiting' ? filterLawyerId : ''
     // v2: استبعاد المهام المعتمدة/النهائية من قوائم التكليف
-    const cacheKey = `tasks:assign:v2:${branchId ?? 'all'}:${taskView}:${filterDef}:${filterListId}:${filterCaseType}:${lawyerFilterId}:${debouncedSearch}:${offset}`
+    const cacheKey = `tasks:assign:v2:${branchId ?? 'all'}:${taskView}:${filterDef}:${filterListId}:${effectiveCaseType ?? 'all'}:${lawyerFilterId}:${debouncedSearch}:${offset}`
 
     if (!append) {
       const cached = cacheGet<TasksPageCache>(cacheKey)
@@ -169,7 +193,7 @@ export default function TasksPage() {
 
     try {
       let debtorIds = debouncedSearch.trim()
-        ? await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId)
+        ? await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId, 200, null, effectiveCaseType)
         : null
 
       // فلتر المحامي (تكليف المهام فقط): تقاطع مع نتائج البحث إن وجدت
@@ -199,7 +223,7 @@ export default function TasksPage() {
           supabase,
           branchId,
           'id, label',
-          filterCaseType ? { caseType: filterCaseType } : undefined,
+          effectiveCaseType ? { caseType: effectiveCaseType } : undefined,
         ) as { id: string; label: string }[]
         defsForFilter = raw
         allTaskDefsRef.current = raw
@@ -219,12 +243,14 @@ export default function TasksPage() {
           taskDefinitionId: (!viewAllBranches && filterDef) ? filterDef : null,
           taskDefinitionIds: (viewAllBranches && defFilterIds?.length) ? defFilterIds : null,
           branchListId: (!viewAllBranches && filterListId) ? filterListId : null,
-          caseType: filterCaseType || null,
+          caseType: effectiveCaseType,
           debtorIds,
           offset,
           limit: CURRENT_TASK_PAGE_SIZE,
         }),
-        append ? Promise.resolve(null) : fetchAssignmentLawyers(supabase, branchId),
+        append ? Promise.resolve(null) : fetchAssignmentLawyers(supabase, branchId, {
+          caseType: effectiveCaseType,
+        }),
         append ? Promise.resolve(null) : fetchBranchDelegates(supabase, branchId),
       ])
 
@@ -283,7 +309,7 @@ export default function TasksPage() {
     }
     setLoading(false)
     setLoadingMore(false)
-  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, filterCaseType, filterLawyerId, debouncedSearch])
+  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, effectiveCaseType, filterLawyerId, debouncedSearch])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -294,7 +320,7 @@ export default function TasksPage() {
   useEffect(() => {
     setPageOffset(0)
     load(false, 0)
-  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, filterCaseType, filterLawyerId, debouncedSearch, load])
+  }, [branchId, viewAllBranches, taskView, filterDef, filterListId, effectiveCaseType, filterLawyerId, debouncedSearch, load])
 
   function loadMore() {
     if (loadingMore || tasks.length >= total) return
@@ -309,7 +335,8 @@ export default function TasksPage() {
 
   const isWaitingView = taskView === 'waiting'
   const isOverdueView = taskView === 'overdue'
-  const allSelected = isWaitingView && filtered.length > 0 && filtered.every(t => selected.has(t.id))
+  const isAssignedBoard = taskView === 'assigned' || taskView === 'overdue'
+  const allSelected = (isWaitingView || isAssignedBoard) && filtered.length > 0 && filtered.every(t => selected.has(t.id))
 
   const assignmentTargetIds = useMemo(() => {
     if (selected.size > 0) return Array.from(selected)
@@ -390,8 +417,9 @@ export default function TasksPage() {
       branchId,
       taskView,
       filterDef,
-      filterListId,
+      filterListId: filterListId ?? undefined,
       debouncedSearch,
+      caseType: effectiveCaseType,
     })
     if (!result.ok) {
       setError(result.error ?? 'فشل تكليف المهمة')
@@ -409,12 +437,56 @@ export default function TasksPage() {
     await load(false, 0)
   }
 
-  const hasFilters = search || filterDef || filterListId || filterCaseType || (isWaitingView && filterLawyerId)
+  async function unassignTaskIds(ids: string[]) {
+    if (!canAssign) {
+      setError('ليس لديك صلاحية إلغاء التكليف')
+      return
+    }
+    if (!ids.length) {
+      setError('حدد مهمة واحدة على الأقل')
+      return
+    }
+
+    const ok = await appConfirm({
+      title: 'إلغاء التكليف',
+      message: ids.length === 1
+        ? 'ستُعاد هذه المهمة إلى «بانتظار التكليف» وتُزال من قائمة المكلَّف. هل تريد المتابعة؟'
+        : `ستُعاد ${ids.length} مهام إلى «بانتظار التكليف» وتُزال من قوائم المكلَّفين. هل تريد المتابعة؟`,
+      confirmLabel: 'إلغاء التكليف',
+      cancelLabel: 'تراجع',
+      danger: true,
+    })
+    if (!ok) return
+
+    setAssigning(true)
+    setError('')
+    const result = await executeTaskUnassign({
+      taskIds: ids,
+      branchId,
+      taskView,
+      filterDef,
+      filterListId: filterListId ?? undefined,
+      debouncedSearch,
+      caseType: effectiveCaseType,
+      canAssign,
+    })
+    if (!result.ok) {
+      setError(result.error ?? 'فشل إلغاء التكليف')
+      setAssigning(false)
+      return
+    }
+
+    setAssigning(false)
+    setSelected(new Set())
+    setPageOffset(0)
+    await load(false, 0)
+  }
+
+  const hasFilters = search || filterDef || filterListId || effectiveCaseType || (isWaitingView && filterLawyerId)
   function clearFilters() {
     setSearch('')
     setDebouncedSearch('')
     setFilterDef('')
-    setFilterListId('')
     setFilterCaseType('')
     setFilterLawyerId('')
   }
@@ -485,16 +557,9 @@ export default function TasksPage() {
 
       <div className={`grid grid-cols-1 gap-3 ${
         isWaitingView
-          ? (viewAllBranches ? 'md:grid-cols-4' : 'md:grid-cols-5')
-          : (viewAllBranches ? 'md:grid-cols-3' : 'md:grid-cols-4')
+          ? 'md:grid-cols-4'
+          : 'md:grid-cols-3'
       }`}>
-        {!viewAllBranches && (
-          <BranchListFilterSelect
-            value={filterListId}
-            onChange={setFilterListId}
-            lists={branchLists}
-          />
-        )}
         {isWaitingView && (
           <PremiumSelect
             value={filterLawyerId}
@@ -510,13 +575,21 @@ export default function TasksPage() {
           />
         )}
         <PremiumSelect
-          value={filterCaseType}
-          onChange={v => setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')}
-          options={CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+          value={lockedCaseType ?? filterCaseType}
+          onChange={v => {
+            if (lockedCaseType) return
+            setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')
+          }}
+          options={
+            lockedCaseType
+              ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
+              : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+          }
           placeholder="كل أنواع الدعاوى"
           fieldLabel="نوع الدعوى"
           headerTitle="تصفية حسب نوع الدعوى"
           searchable={false}
+          disabled={Boolean(lockedCaseType)}
         />
         <PremiumSelect
           value={filterDef}
@@ -608,6 +681,22 @@ export default function TasksPage() {
         </>
       )}
 
+      {canAssign && isAssignedBoard && (
+        <div className="bg-white border border-[rgba(118,118,118,0.15)] rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3 shadow-sm">
+          <p className="text-sm text-[#454042] font-medium flex-1">
+            إلغاء التكليف يعيد المهام إلى «بانتظار التكليف» ويزيلها من قائمة المكلَّف.
+          </p>
+          <button
+            type="button"
+            onClick={() => void unassignTaskIds(Array.from(selected))}
+            disabled={assigning || selected.size === 0}
+            className="shrink-0 px-5 py-2.5 rounded-lg text-sm font-bold text-white disabled:opacity-50 bg-orange-600 hover:bg-orange-700 transition-colors"
+          >
+            {assigning ? 'جارٍ الإلغاء...' : `إلغاء تكليف المحددين${selected.size > 0 ? ` (${selected.size})` : ''}`}
+          </button>
+        </div>
+      )}
+
       {error && (
         <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
       )}
@@ -640,7 +729,7 @@ export default function TasksPage() {
           <Table>
             <THead>
               <TR>
-                {canAssign && isWaitingView && (
+                {canAssign && (isWaitingView || isAssignedBoard) && (
                   <TH className="w-10">
                     <input
                       type="checkbox"
@@ -663,12 +752,13 @@ export default function TasksPage() {
                 {isOverdueView && <TH>أيام التأخير</TH>}
                 <TH>الحالة</TH>
                 {canAssign && isWaitingView && <TH>تكليف</TH>}
+                {canAssign && isAssignedBoard && <TH>إجراء</TH>}
               </TR>
             </THead>
             <TBody>
               {filtered.map(t => (
                 <TR key={t.id}>
-                  {canAssign && isWaitingView && (
+                  {canAssign && (isWaitingView || isAssignedBoard) && (
                     <TD>
                       <input
                         type="checkbox"
@@ -772,6 +862,18 @@ export default function TasksPage() {
                           تكليف
                         </button>
                       )}
+                    </TD>
+                  )}
+                  {canAssign && isAssignedBoard && (
+                    <TD>
+                      <button
+                        type="button"
+                        onClick={() => void unassignTaskIds([t.id])}
+                        disabled={assigning}
+                        className="text-[11px] font-bold text-orange-700 bg-orange-50 border border-orange-200 px-2.5 py-1 rounded-lg hover:bg-orange-100 disabled:opacity-50"
+                      >
+                        إلغاء التكليف
+                      </button>
                     </TD>
                   )}
                 </TR>

@@ -50,7 +50,16 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
   if (!user) return <LawyerAccessDenied />
 
   const access = await checkLawyerTaskAccess(supabase, user.id, id)
-  if (!access.ok) return <LawyerAccessDenied />
+  if (!access.ok) {
+    if (access.reason === 'section') {
+      return (
+        <LawyerAccessDenied
+          message="لا صلاحية على هذا القسم (مدني/جزائي) — المهمة تتبع قسماً مختلفاً عن قسمك."
+        />
+      )
+    }
+    return <LawyerAccessDenied />
+  }
 
   const { data: lawyerProfile } = await supabase
     .from('profiles')

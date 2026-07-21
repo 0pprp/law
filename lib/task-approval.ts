@@ -203,7 +203,24 @@ export async function creditTaskFeeOnApproval(
 
   const lawyerId = taskLawyerId(task as { assigned_to?: string | null; lawyer_id?: string | null })
   const debtorId = task.debtor_id as string | null
-  const amount = await resolveTaskFeeAmount(supabase, task)
+
+  // الجزائي: أجر المهمة دائماً 0 — لا إيداع أتعاب حتى لو أُرسل مبلغ من الواجهة
+  let amount = 0
+  if (debtorId) {
+    const { data: debtorRow } = await supabase
+      .from('debtors')
+      .select('case_type')
+      .eq('id', debtorId)
+      .maybeSingle()
+    if (debtorRow?.case_type === 'criminal') {
+      amount = 0
+    } else {
+      amount = await resolveTaskFeeAmount(supabase, task)
+    }
+  } else {
+    amount = await resolveTaskFeeAmount(supabase, task)
+  }
+
   const def = unwrapTaskDef(task.task_definitions)
   const taskLabel = def?.label ?? (task.task_type as string) ?? 'مهمة'
 

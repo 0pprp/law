@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireMutationStaff, requireStaffProfile } from '@/lib/api-auth'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { canStaffReadBranch, canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { canAddDebtor, canUseViewAllBranchesFilter } from '@/lib/permissions'
 import { apiForbiddenResponse } from '@/lib/permissions'
@@ -14,6 +14,33 @@ import {
 } from '@/lib/receipt-number'
 import { computeDebtorRequiredAmount, computeRemainingFromRequired } from '@/lib/debtor-balances'
 import { logActivity } from '@/lib/activity-log'
+import {
+  assertDebtorSection,
+  filterBySection,
+  normalizeBranchListForCaseType,
+  rejectBranchListForCriminal,
+  sectionForbiddenResponse,
+} from '@/lib/case-scope'
+import { upsertCriminalDebtorDetails } from '@/lib/criminal-debtor-details'
+import { cleanupFailedDebtorCreate } from '@/lib/debtor-hard-delete'
+
+/** مبلغ اختياري للجزائي: null/فارغ → 0؛ سالب → خطأ */
+function parseOptionalNonNegativeAmount(value: unknown): { ok: true; value: number } | { ok: false; error: string } {
+  if (value == null || value === '') return { ok: true, value: 0 }
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0) {
+    return { ok: false, error: 'المبلغ يجب أن يكون رقماً موجباً أو فارغاً' }
+  }
+  return { ok: true, value: n }
+}
+
+function isValidOptionalDate(value: unknown): boolean {
+  if (value == null || value === '') return true
+  const s = String(value).trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false
+  const d = new Date(`${s}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
+}
 
 const DEFAULT_COLS =
   'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, case_type, branch_list_id, branch_id, branch_list:branch_lists(name)'
@@ -43,6 +70,9 @@ export async function GET(request: NextRequest) {
   }
 
   const admin = createAdminClient()
+  const scope = sessionCaseScope(auth.profile)
+  const scopeCaseType = filterBySection(scope)
+
   let q = admin
     .from('debtors')
     .select(cols, { count: 'exact' })
@@ -50,8 +80,32 @@ export async function GET(request: NextRequest) {
     .range(offset, offset + limit - 1)
 
   if (!viewAll && branchId) q = q.eq('branch_id', branchId)
-  if (listId) q = q.eq('branch_list_id', listId)
-  if (caseType === 'civil' || caseType === 'criminal') q = q.eq('case_type', caseType)
+  if (listId) {
+    // تأكد أن القائمة تتبع الفرع المحدد (منع تسريب عبر listId خارج النطاق)
+    // الجزائي لا يستخدم القوائم — تجاهل listId عند نطاق جزائي قسري
+    if (scopeCaseType === 'criminal') {
+      /* ignore list filter for criminal scope */
+    } else if (branchId) {
+      const { data: listOk } = await admin
+        .from('branch_lists')
+        .select('id')
+        .eq('id', listId)
+        .eq('branch_id', branchId)
+        .maybeSingle()
+      if (!listOk) {
+        return NextResponse.json({ debtors: [], total: 0 })
+      }
+      q = q.eq('branch_list_id', listId)
+    } else {
+      q = q.eq('branch_list_id', listId)
+    }
+  }
+  // نطاق الدور يفرض القسم؛ معامل caseType اختياري فقط ضمن both
+  if (scopeCaseType) {
+    q = q.eq('case_type', scopeCaseType)
+  } else if (caseType === 'civil' || caseType === 'criminal') {
+    q = q.eq('case_type', caseType)
+  }
   if (search) {
     const s = search.replace(/[%_,]/g, '')
     q = q.or(`full_name.ilike.%${s}%,phone.ilike.%${s}%,receipt_number.ilike.%${s}%`)
@@ -79,7 +133,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireMutationStaff()
+  const auth = await requireStaffProfile()
   if (auth.error) return auth.error
   if (!canAddDebtor(auth.profile?.role)) return apiForbiddenResponse()
 
@@ -99,6 +153,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'يجب اختيار نوع الدعوى (مدنية أو جزائية)' }, { status: 400 })
   }
   const caseType = caseTypeRaw
+  const scope = sessionCaseScope(auth.profile)
+  if (!assertDebtorSection(scope, caseType)) return sectionForbiddenResponse()
+
+  const listReject = rejectBranchListForCriminal(caseType, body.branch_list_id as string | null)
+  if (listReject) return NextResponse.json({ error: listReject }, { status: 400 })
+  const branchListId = normalizeBranchListForCaseType(caseType, body.branch_list_id as string | null)
 
   // المهمة اختيارية — بدونها يظهر المدين في «الأسماء التي تحت إسناد مهمة»
   if (!branchId || !fullName) {
@@ -112,16 +172,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'يجب اختيار فرعاً رسمياً قبل إضافة مدين' }, { status: 400 })
   }
 
-  if (isReceiptNumberMissing(receiptNumber)) {
-    return NextResponse.json({ error: RECEIPT_NUMBER_EMPTY_ERROR }, { status: 400 })
+  const isCriminal = caseType === 'criminal'
+
+  // المدني: رقم الوصل إلزامي؛ الجزائي: الاسم والفرع فقط
+  if (!isCriminal) {
+    if (isReceiptNumberMissing(receiptNumber)) {
+      return NextResponse.json({ error: RECEIPT_NUMBER_EMPTY_ERROR }, { status: 400 })
+    }
+    const dup = await findDuplicateReceiptInBranch(admin, branchId, receiptNumber)
+    if (dup.error) return NextResponse.json({ error: dup.error }, { status: 500 })
+    if (dup.duplicate) return NextResponse.json({ error: RECEIPT_NUMBER_DUP_BRANCH_ERROR }, { status: 400 })
+  } else if (receiptNumber) {
+    const dup = await findDuplicateReceiptInBranch(admin, branchId, receiptNumber)
+    if (dup.error) return NextResponse.json({ error: dup.error }, { status: 500 })
+    if (dup.duplicate) return NextResponse.json({ error: RECEIPT_NUMBER_DUP_BRANCH_ERROR }, { status: 400 })
   }
-  const dup = await findDuplicateReceiptInBranch(admin, branchId, receiptNumber)
-  if (dup.error) return NextResponse.json({ error: dup.error }, { status: 500 })
-  if (dup.duplicate) return NextResponse.json({ error: RECEIPT_NUMBER_DUP_BRANCH_ERROR }, { status: 400 })
 
   type TaskDefRow = { id: string; fee_amount: number | null; task_type: string; case_type?: string }
   let taskDef: TaskDefRow | null = null
-  if (taskDefinitionId) {
+  if (taskDefinitionId && !isCriminal) {
     const { data: td, error: tdErr } = await admin
       .from('task_definitions')
       .select('id, fee_amount, task_type, case_type')
@@ -143,9 +212,25 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const remaining = Number(body.remaining_amount ?? 0) || 0
-  const receiptAmount = Number(body.receipt_amount ?? 0) || 0
-  const penalty = body.has_contract ? Number(body.penalty_amount ?? 0) || 0 : 0
+  let remaining = 0
+  let receiptAmount = 0
+  let penalty = 0
+  if (isCriminal) {
+    const amt = parseOptionalNonNegativeAmount(body.remaining_amount ?? body.amount_owed)
+    if (!amt.ok) return NextResponse.json({ error: amt.error }, { status: 400 })
+    remaining = amt.value
+    const details = body.criminal_details
+    if (details && typeof details === 'object') {
+      const incident = (details as Record<string, unknown>).incident_date
+      if (!isValidOptionalDate(incident)) {
+        return NextResponse.json({ error: 'تاريخ الواقعة غير صالح' }, { status: 400 })
+      }
+    }
+  } else {
+    remaining = Number(body.remaining_amount ?? 0) || 0
+    receiptAmount = Number(body.receipt_amount ?? 0) || 0
+    penalty = body.has_contract ? Number(body.penalty_amount ?? 0) || 0 : 0
+  }
   const required = computeDebtorRequiredAmount(remaining, 0, penalty, receiptAmount)
   const balanceRemaining = computeRemainingFromRequired(required, 0)
   const today = new Date().toISOString().split('T')[0]
@@ -154,23 +239,25 @@ export async function POST(request: NextRequest) {
     .from('debtors')
     .insert({
       full_name: fullName,
-      phone: String(body.phone ?? '').trim() || null,
+      phone: isCriminal ? null : (String(body.phone ?? '').trim() || null),
       governorate: null,
-      address: String(body.address ?? '').trim() || null,
-      id_number: String(body.id_number ?? '').trim() || null,
+      address: isCriminal
+        ? null
+        : (String(body.address ?? '').trim() || null),
+      id_number: isCriminal ? null : (String(body.id_number ?? '').trim() || null),
       export_date: today,
-      receipt_type: body.receipt_type ?? 'other',
-      receipt_number: receiptNumber,
+      receipt_type: isCriminal ? 'other' : (body.receipt_type ?? 'other'),
+      receipt_number: isCriminal ? (receiptNumber || null) : receiptNumber,
       receipt_amount: receiptAmount,
       remaining_amount: balanceRemaining,
       required_amount: required,
       lawyer_fees: 0,
       penalty_amount: penalty,
-      receipt_signed_legal_costs: Boolean(body.receipt_signed_legal_costs),
+      receipt_signed_legal_costs: isCriminal ? false : Boolean(body.receipt_signed_legal_costs),
       notes: String(body.notes ?? '').trim() || null,
       created_by: auth.user!.id,
       branch_id: branchId,
-      branch_list_id: String(body.branch_list_id ?? '').trim() || null,
+      branch_list_id: isCriminal ? null : branchListId,
       case_type: caseType,
     })
     .select('id')
@@ -178,6 +265,25 @@ export async function POST(request: NextRequest) {
 
   if (dbError || !newDebtor) {
     return NextResponse.json({ error: dbError?.message ?? 'فشل إنشاء المدين' }, { status: 500 })
+  }
+
+  if (isCriminal) {
+    const detailsInput =
+      body.criminal_details && typeof body.criminal_details === 'object'
+        ? (body.criminal_details as Record<string, string | null>)
+        : {}
+    const detailsRes = await upsertCriminalDebtorDetails(admin, newDebtor.id, detailsInput)
+    if (detailsRes.error) {
+      const cleaned = await cleanupFailedDebtorCreate(admin, newDebtor.id, { caseType: 'criminal' })
+      return NextResponse.json(
+        {
+          error: cleaned.ok
+            ? `فشل حفظ تفاصيل المدين الجزائي: ${detailsRes.error}`
+            : `فشل حفظ التفاصيل وتعذّر التراجع: ${cleaned.error}`,
+        },
+        { status: 500 },
+      )
+    }
   }
 
   const notes = String(body.notes ?? '').trim()
@@ -195,7 +301,10 @@ export async function POST(request: NextRequest) {
       action: 'create_debtor',
       entity_type: 'debtor',
       entity_id: newDebtor.id,
-      description: `إضافة مدين بدون مهمة مطلوبة: ${fullName}`,
+      description: isCriminal
+        ? `إضافة مدين جزائي: ${fullName}`
+        : `إضافة مدين بدون مهمة مطلوبة: ${fullName}`,
+      case_type: caseType,
     }, auth.supabase)
     return NextResponse.json({ ok: true, id: newDebtor.id, taskId: null })
   }
@@ -207,7 +316,7 @@ export async function POST(request: NextRequest) {
       task_definition_id: taskDefinitionId,
       task_type: taskDef.task_type,
       task_status: 'waiting_assignment',
-      reward_amount: taskDef.fee_amount ?? 0,
+      reward_amount: isCriminal ? 0 : (taskDef.fee_amount ?? 0),
       created_by: auth.user!.id,
       branch_id: branchId,
     })
@@ -215,8 +324,14 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (taskErr || !newTask) {
-    await admin.from('debtors').delete().eq('id', newDebtor.id)
-    return NextResponse.json({ error: `فشل إنشاء المهمة الأولية: ${taskErr?.message ?? ''}` }, { status: 500 })
+    const cleaned = await cleanupFailedDebtorCreate(admin, newDebtor.id, {
+      caseType: isCriminal ? 'criminal' : 'civil',
+    })
+    return NextResponse.json({
+      error: cleaned.ok
+        ? `فشل إنشاء المهمة الأولية: ${taskErr?.message ?? ''}`
+        : `فشل إنشاء المهمة وتعذّر التراجع: ${cleaned.error}`,
+    }, { status: 500 })
   }
 
   const { error: linkErr } = await admin
@@ -224,9 +339,15 @@ export async function POST(request: NextRequest) {
     .update({ current_task_id: newTask.id })
     .eq('id', newDebtor.id)
   if (linkErr) {
-    await admin.from('tasks').delete().eq('id', newTask.id)
-    await admin.from('debtors').delete().eq('id', newDebtor.id)
-    return NextResponse.json({ error: `فشل ربط المهمة بالمدين: ${linkErr.message}` }, { status: 500 })
+    const cleaned = await cleanupFailedDebtorCreate(admin, newDebtor.id, {
+      caseType: isCriminal ? 'criminal' : 'civil',
+      alsoDeleteTaskIds: [newTask.id],
+    })
+    return NextResponse.json({
+      error: cleaned.ok
+        ? `فشل ربط المهمة بالمدين: ${linkErr.message}`
+        : `فشل الربط وتعذّر التراجع: ${cleaned.error}`,
+    }, { status: 500 })
   }
 
   await logActivity({
@@ -234,6 +355,7 @@ export async function POST(request: NextRequest) {
     entity_type: 'debtor',
     entity_id: newDebtor.id,
     description: `إضافة مدين: ${fullName}`,
+    case_type: caseType,
   }, auth.supabase)
 
   return NextResponse.json({ ok: true, id: newDebtor.id, taskId: newTask.id })

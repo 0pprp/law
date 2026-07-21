@@ -2,10 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { logActivity } from '@/lib/activity-log'
 import { formatMoney } from '@/lib/money-input'
-import { syncDebtorRemainingAfterPayments } from '@/lib/debtor-balances'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { canDelete, PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { appConfirm } from '@/lib/app-dialog'
@@ -51,35 +48,21 @@ export default function DebtorPaymentsPanel({ debtorId, debtorName, initialPayme
 
     setDeletingId(payment.id)
     setError('')
-    const supabase = createClient()
-
-    const { error: delErr } = await supabase.from('debtor_payments').delete().eq('id', payment.id)
-    if (delErr) {
-      setError(delErr.message)
+    try {
+      const res = await fetch(`/api/admin/payments/${payment.id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) {
+        setError(typeof data.error === 'string' ? data.error : 'فشل حذف الدفعة')
+        setDeletingId(null)
+        return
+      }
+      setPayments(prev => prev.filter(p => p.id !== payment.id))
+      router.refresh()
+    } catch {
+      setError('فشل حذف الدفعة')
+    } finally {
       setDeletingId(null)
-      return
     }
-
-    const syncResult = await syncDebtorRemainingAfterPayments(supabase, debtorId)
-    if (!syncResult.ok) {
-      setError(syncResult.error ?? 'فشل تحديث المتبقي')
-      setDeletingId(null)
-      return
-    }
-
-    await logActivity(
-      {
-        action: 'delete_payment',
-        entity_type: 'payment',
-        entity_id: payment.id,
-        description: `حذف تسديد: ${formatMoney(Number(payment.amount))} — ${debtorName}`,
-      },
-      supabase,
-    )
-
-    setPayments(prev => prev.filter(p => p.id !== payment.id))
-    setDeletingId(null)
-    router.refresh()
   }
 
   return (

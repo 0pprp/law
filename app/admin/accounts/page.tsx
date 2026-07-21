@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
+import { useBranch, useBranchId } from '@/context/branch'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -11,12 +11,18 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtMoney } from '@/lib/utils'
 import { debtorSearchOrFilter, DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { useCaseScope } from '@/hooks/use-case-scope'
+import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
 
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 const ACCOUNT_COLS = 'id, full_name, governorate, phone, receipt_number, remaining_amount, penalty_amount, total_expenses, lawyer_fees, total_payments, required_amount'
 
 export default function AccountsPage() {
   const branchId = useBranchId()
+  const { viewAllBranches, listId } = useBranch()
+  const { caseTypeFilter: lockedCaseType } = useCaseScope()
+  const [filterCaseType, setFilterCaseType] = useState<'' | 'civil' | 'criminal'>(lockedCaseType ?? '')
+  const effectiveCaseType = lockedCaseType ?? (filterCaseType || null)
   const [debtors, setDebtors] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
@@ -38,6 +44,7 @@ export default function AccountsPage() {
     }
     setLoading(true)
     const supabase = createClient()
+    const scopeListId = (!viewAllBranches && listId) ? listId : null
     let q = supabase
       .from('debtors')
       .select(ACCOUNT_COLS)
@@ -46,11 +53,13 @@ export default function AccountsPage() {
       .limit(100)
 
     if (branchId) q = (q as any).eq('branch_id', branchId)
+    if (scopeListId) q = (q as any).eq('branch_list_id', scopeListId)
+    if (effectiveCaseType) q = (q as any).eq('case_type', effectiveCaseType)
 
     const { data } = await q
     setDebtors(data ?? [])
     setLoading(false)
-  }, [branchId])
+  }, [branchId, viewAllBranches, listId, effectiveCaseType])
 
   useEffect(() => { fetchDebtors(debouncedSearch) }, [fetchDebtors, debouncedSearch])
 
@@ -99,13 +108,29 @@ export default function AccountsPage() {
       )}
 
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <input
             type="search"
             placeholder={DEBTOR_SEARCH_PLACEHOLDER}
             value={search}
             onChange={e => setSearch(e.target.value)}
             className={SEL}
+          />
+          <PremiumSelect
+            value={lockedCaseType ?? filterCaseType}
+            onChange={v => {
+              if (lockedCaseType) return
+              setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')
+            }}
+            options={
+              lockedCaseType
+                ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
+                : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+            }
+            placeholder="كل أنواع الدعاوى"
+            headerTitle="تصفية حسب نوع الدعوى"
+            searchable={false}
+            disabled={Boolean(lockedCaseType)}
           />
           <PremiumSelect
             value={filterGov}

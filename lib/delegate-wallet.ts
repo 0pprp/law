@@ -329,6 +329,7 @@ export interface DelegateReportRow {
 export async function fetchDelegateReport(
   supabase: SupabaseClient,
   branchId?: string | null,
+  branchListId?: string | null,
 ): Promise<DelegateReportRow[]> {
   // بدون embeds: علاقة tasks↔debtors مزدوجة وتكسر PostgREST أحياناً
   let q = supabase
@@ -368,8 +369,8 @@ export async function fetchDelegateReport(
       ? supabase.from('profiles').select('id, full_name, role').in('id', assigneeIds)
       : Promise.resolve({ data: [] as { id: string; full_name: string; role: string | null }[] }),
     debtorIds.length
-      ? supabase.from('debtors').select('id, full_name, branch_list:branch_lists(name)').in('id', debtorIds)
-      : Promise.resolve({ data: [] as { id: string; full_name: string; branch_list?: { name?: string } | { name?: string }[] | null }[] }),
+      ? supabase.from('debtors').select('id, full_name, branch_list_id, branch_list:branch_lists(name)').in('id', debtorIds)
+      : Promise.resolve({ data: [] as { id: string; full_name: string; branch_list_id?: string | null; branch_list?: { name?: string } | { name?: string }[] | null }[] }),
     defIds.length
       ? supabase.from('task_definitions').select('id, label').in('id', defIds)
       : Promise.resolve({ data: [] as { id: string; label: string }[] }),
@@ -402,11 +403,13 @@ export async function fetchDelegateReport(
     return bl?.name?.trim() || '—'
   }
 
+  const listFilter = branchListId?.trim() || null
   const rows: DelegateReportRow[] = []
   for (const t of tasks) {
     const assignee = t.assigned_to ? assigneeMap.get(t.assigned_to) : null
     if (!assignee || assignee.role !== 'delegate') continue
     const debtor = t.debtor_id ? debtorMap.get(t.debtor_id) : null
+    if (listFilter && debtor?.branch_list_id !== listFilter) continue
     const def = t.task_definition_id ? defMap.get(t.task_definition_id) : null
     rows.push({
       task_id: t.id,

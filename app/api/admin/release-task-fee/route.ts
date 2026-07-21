@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { releaseLawyerFee } from '@/lib/task-approval'
 import {
   canApproveCompletions,
@@ -8,7 +8,7 @@ import {
   isAccountant,
   isGeneralAccountant,
 } from '@/lib/permissions'
-import { fetchStaffRoleFields } from '@/lib/staff-profile'
+import { requireTaskInScope } from '@/lib/section-guard'
 
 /**
  * مسار قديم — احتساب الأتعاب يتم الآن عبر finalizeTaskApproval بعد المهمة التالية.
@@ -16,13 +16,10 @@ import { fetchStaffRoleFields } from '@/lib/staff-profile'
  */
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'غير مصرح' }, { status: 401 })
+    const auth = await requireStaffProfile()
+    if (auth.error) return auth.error
 
-    const profile = await fetchStaffRoleFields(supabase, user.id)
-
-    if (!canApproveCompletions(profile?.role)) {
+    if (!canApproveCompletions(auth.profile?.role)) {
       return apiForbiddenResponse()
     }
 
@@ -32,12 +29,16 @@ export async function POST(request: NextRequest) {
     }
 
     const admin = createAdminClient()
+    const scope = sessionCaseScope(auth.profile)
+    const gate = await requireTaskInScope(admin, scope, taskId)
+    if (!gate.ok) return gate.error
 
-    const branchScoped = (isAccountant(profile!.role) && !isGeneralAccountant(profile!.role, profile!.accountant_type))
-      || profile!.role === 'employee'
+    const profile = auth.profile!
+    const branchScoped = (isAccountant(profile.role) && !isGeneralAccountant(profile.role, profile.accountant_type))
+      || profile.role === 'employee'
     if (branchScoped) {
       const { data: taskRow } = await admin.from('tasks').select('branch_id, fee_status').eq('id', taskId).single()
-      if (!taskRow?.branch_id || taskRow.branch_id !== profile!.branch_id) {
+      if (!taskRow?.branch_id || taskRow.branch_id !== profile.branch_id) {
         return apiForbiddenResponse()
       }
       if ((taskRow as { fee_status?: string | null }).fee_status === 'approved_pending_next') {
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const result = await releaseLawyerFee(admin, taskId, user.id)
+    const result = await releaseLawyerFee(admin, taskId, auth.user!.id)
     if (!result.ok) {
       return NextResponse.json({ error: result.error ?? 'فشل صرف أتعاب المحامي' }, { status: 400 })
     }

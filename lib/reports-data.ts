@@ -376,31 +376,43 @@ export async function fetchReportSnapshot(
   if (branchId) closedQ = closedQ.eq('branch_id', branchId)
   closedQ = applyDebtorScope(closedQ, 'id', scopedDebtorIds)
 
-  const branchLawyersPromise = branchId
-    ? supabase
-        .from('profiles')
-        .select('id, full_name, governorate, lawyer_type')
-        .eq('branch_id', branchId)
-        .eq('role', 'lawyer')
-        .eq('is_active', true)
-        .order('full_name')
-    : supabase
-        .from('profiles')
-        .select('id, full_name, governorate, lawyer_type')
-        .eq('role', 'lawyer')
-        .eq('is_active', true)
-        .order('full_name')
+  const branchLawyersPromise = (() => {
+    let q = branchId
+      ? supabase
+          .from('profiles')
+          .select('id, full_name, governorate, lawyer_type, case_type')
+          .eq('branch_id', branchId)
+          .eq('role', 'lawyer')
+          .eq('is_active', true)
+          .order('full_name')
+      : supabase
+          .from('profiles')
+          .select('id, full_name, governorate, lawyer_type, case_type')
+          .eq('role', 'lawyer')
+          .eq('is_active', true)
+          .order('full_name')
+    if (filters.caseType === 'civil' || filters.caseType === 'criminal') {
+      q = q.eq('case_type', filters.caseType)
+    }
+    return q
+  })()
 
   const [branchLawyersRes, generalLawyersRes, taskDefsRes, closedRes] = await Promise.all([
     branchLawyersPromise,
     branchId
-      ? supabase
-          .from('profiles')
-          .select('id, full_name, governorate, lawyer_type')
-          .eq('role', 'lawyer')
-          .eq('lawyer_type', 'general')
-          .eq('is_active', true)
-          .order('full_name')
+      ? (() => {
+          let q = supabase
+            .from('profiles')
+            .select('id, full_name, governorate, lawyer_type, case_type')
+            .eq('role', 'lawyer')
+            .eq('lawyer_type', 'general')
+            .eq('is_active', true)
+            .order('full_name')
+          if (filters.caseType === 'civil' || filters.caseType === 'criminal') {
+            q = q.eq('case_type', filters.caseType)
+          }
+          return q
+        })()
       : Promise.resolve({ data: [] as { id: string; full_name: string; governorate: string | null; lawyer_type: string | null }[] }),
     branchId
       ? (() => {

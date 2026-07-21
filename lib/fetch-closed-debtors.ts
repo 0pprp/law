@@ -138,6 +138,7 @@ export interface FetchClosedDebtorsOptions {
   limit?: number
   debtorIds?: string[] | null
   caseType?: 'civil' | 'criminal' | null
+  branchListId?: string | null
 }
 
 export interface PaginatedClosedDebtorsResult {
@@ -161,6 +162,7 @@ async function queryClosedPaginated(
       .select(CLOSED_DEBTOR_COLS, { count: 'exact' })
       .eq(statusColumn, 'closed')
     if (branchId) q = q.eq('branch_id', branchId)
+    if (options?.branchListId) q = q.eq('branch_list_id', options.branchListId)
     if (options?.caseType) q = q.eq('case_type', options.caseType)
     if (options?.debtorIds?.length) q = q.in('id', options.debtorIds)
     return q

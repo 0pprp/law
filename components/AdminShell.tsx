@@ -11,7 +11,8 @@ import { BranchProvider, useBranchId } from '@/context/branch'
 import { AdminRoleProvider } from '@/context/admin-role'
 import AdminRouteGuard from '@/components/AdminRouteGuard'
 import BranchSelector from '@/components/BranchSelector'
-import { isNavVisibleForRole, isAccountant, isViewer, canAccessFinance, canManageFinance, accountantNotificationTotal } from '@/lib/permissions'
+import ListSelector from '@/components/ListSelector'
+import { isNavVisibleForRole, isAccountant, isViewer, isCriminalLegalManager, isAnyLegalManager, canAccessFinance, canManageFinance, accountantNotificationTotal } from '@/lib/permissions'
 import {
   ADMIN_NOTIFICATIONS_REFRESH,
   fetchAdminNotificationCounts,
@@ -28,6 +29,8 @@ interface AdminShellProps {
   initialBranchId?: string | null
   initialBranchName?: string | null
   initialViewAll?: boolean
+  initialListId?: string | null
+  initialListName?: string | null
   children: ReactNode
 }
 
@@ -74,7 +77,7 @@ const sections = [
       { label: 'أتعاب المحامين', href: '/admin/finance', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
       )},
-      { label: 'محفظة مسؤول القانونية', href: '/admin/legal-manager-wallet', icon: (
+      { label: 'محفظة مسؤول الدعاوى المدنية', href: '/admin/legal-manager-wallet', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
       )},
       { label: 'الصرفيات', href: '/admin/expenses', icon: (
@@ -161,7 +164,7 @@ function HeaderNotifications({
   const financeVisible = canAccessFinance(userRole) && (financeActionVisible || isAccountant(userRole))
   const total = isAccountant(userRole)
     ? accountantNotificationTotal(counts)
-    : isViewer(userRole)
+    : isAnyLegalManager(userRole)
       ? counts.pendingReview
       : totalAdminNotifications(counts)
   if (!total) return null
@@ -346,6 +349,8 @@ export default function AdminShell(props: AdminShellProps) {
       initialBranchId={props.initialBranchId ?? null}
       initialBranchName={props.initialBranchName ?? null}
       initialViewAll={props.initialViewAll}
+      initialListId={props.initialListId ?? null}
+      initialListName={props.initialListName ?? null}
     >
       <AdminRoleProvider role={role} accountantType={props.accountantType}>
         <AdminShellInner {...props} />
@@ -402,13 +407,18 @@ function AdminShellInner({
         {sections.map((section, si) => {
           const items = section.items.filter(item => isNavVisibleForRole(item.href, userRole))
           if (!items.length) return null
+          // مسؤول الجزائيات: التقارير فقط تحت هذه المجموعة — بدون عنوان «المالية»
+          const sectionLabel =
+            section.label === 'المالية' && isCriminalLegalManager(userRole)
+              ? null
+              : section.label
           return (
           <div key={si} className={si > 0 ? 'mt-4' : ''}>
-            {section.label && (
-              <>
-                <div className="border-t border-white/[0.05] mb-3" />
-                <p className="text-white/25 text-[11px] font-bold uppercase tracking-[0.2em] px-3 mb-2">{section.label}</p>
-              </>
+            {(sectionLabel || (si > 0 && items.length > 0)) && (
+              <div className="border-t border-white/[0.05] mb-3" />
+            )}
+            {sectionLabel && (
+              <p className="text-white/25 text-[11px] font-bold uppercase tracking-[0.2em] px-3 mb-2">{sectionLabel}</p>
             )}
             <div className="space-y-0.5">
               {items.map(item => (
@@ -492,8 +502,8 @@ function AdminShellInner({
               <span>{arabicDate}</span>
             </div>
 
-            {/* ── Premium Branch Selector ── */}
-            <div className="hidden sm:block">
+            {/* ── Premium Branch + List Filters ── */}
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
               <BranchSelector
                 userRole={userRole}
                 accountantType={accountantType}
@@ -501,6 +511,7 @@ function AdminShellInner({
                 initialBranchId={initialBranchId ?? undefined}
                 initialBranchName={initialBranchName ?? undefined}
               />
+              {!isCriminalLegalManager(userRole) && <ListSelector />}
             </div>
 
             <div className="flex items-center gap-2 mr-auto">
@@ -525,9 +536,16 @@ function AdminShellInner({
 
           {isViewer(userRole) && (
             <div className="shrink-0 bg-sky-50 border-b border-sky-200 px-4 py-2.5 text-center text-sm text-sky-950 font-medium">
-              <span className="font-bold">مسؤول القانونية</span>
+              <span className="font-bold">مسؤول الدعاوى المدنية</span>
               {' — '}
-              نفس واجهة المدير للعرض. التنفيذ المسموح: تكليف المحامين، مراجعة/اعتماد/رفض الإنجازات، والتقارير.
+              يرى الدعاوى المدنية فقط. التنفيذ المسموح: تكليف المحامين، مراجعة/اعتماد/رفض الإنجازات، والتقارير.
+            </div>
+          )}
+          {isCriminalLegalManager(userRole) && (
+            <div className="shrink-0 bg-violet-50 border-b border-violet-200 px-4 py-2.5 text-center text-sm text-violet-950 font-medium">
+              <span className="font-bold">مسؤول الجزائيات</span>
+              {' — '}
+              يرى الدعاوى الجزائية فقط. بعض الشاشات المدنية (مثل المندوبين) غير متاحة.
             </div>
           )}
 

@@ -138,11 +138,18 @@ export default function TaskExpenseForm({ taskId, debtorId, caseId, branchId, ex
 
     if (dbErr) { setError(dbErr.message); setSaving(false); return }
 
+    const { data: debtorRow } = await supabase
+      .from('debtors')
+      .select('case_type')
+      .eq('id', debtorId)
+      .maybeSingle()
+
     await logActivity({
       action: 'add_expense',
       entity_type: 'expense',
       entity_id: debtorId,
       description: `طلب صرفية: ${selectedType.name} — ${formatMoney(selectedType.default_amount)} (بانتظار الاعتماد)`,
+      case_type: debtorRow?.case_type === 'criminal' ? 'criminal' : 'civil',
     }, supabase)
 
     resetForm()

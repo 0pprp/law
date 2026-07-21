@@ -76,11 +76,27 @@ export async function POST(request: NextRequest) {
 
     const { data: reqRow } = await admin
       .from('lawyer_payout_requests')
-      .select('wallet_kind')
+      .select('wallet_kind, lawyer_id')
       .eq('id', requestId)
       .maybeSingle()
 
     const isLegalManagerPayout = (reqRow?.wallet_kind ?? 'fees') === 'legal_manager'
+
+    let caseType: 'civil' | 'criminal' = 'civil'
+    if (reqRow?.lawyer_id) {
+      const { data: lawyer } = await admin
+        .from('profiles')
+        .select('case_type, role')
+        .eq('id', reqRow.lawyer_id)
+        .maybeSingle()
+      if (lawyer?.role === 'criminal_legal_manager' || lawyer?.case_type === 'criminal') {
+        caseType = 'criminal'
+      } else if (lawyer?.role === 'viewer') {
+        caseType = 'civil'
+      } else if (lawyer?.case_type === 'criminal') {
+        caseType = 'criminal'
+      }
+    }
 
     await logActivity({
       action: action === 'approved'
@@ -91,6 +107,7 @@ export async function POST(request: NextRequest) {
       description: action === 'approved'
         ? (isLegalManagerPayout ? 'اعتماد طلب سحب من محفظة مدير القانونية' : 'اعتماد طلب صرف أتعاب من محامٍ')
         : (isLegalManagerPayout ? 'رفض طلب سحب من محفظة مدير القانونية' : 'رفض طلب صرف أتعاب من محامٍ'),
+      case_type: caseType,
     }, supabase)
 
     return NextResponse.json({ success: true })

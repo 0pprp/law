@@ -10,10 +10,24 @@ export interface PendingNoncomplianceRow extends PaymentNoncomplianceRequest {
 export async function fetchPendingNoncomplianceRequests(
   supabase: SupabaseClient,
   branchId: string | null,
-  options?: { offset?: number; limit?: number },
+  options?: { offset?: number; limit?: number; branchListId?: string | null; caseType?: 'civil' | 'criminal' | null },
 ): Promise<{ rows: PendingNoncomplianceRow[]; total: number; error: string | null }> {
   const offset = Math.max(0, options?.offset ?? 0)
   const limit = Math.min(100, Math.max(1, options?.limit ?? 50))
+  const branchListId = options?.branchListId?.trim() || null
+  const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
+
+  let scopedDebtorIds: string[] | null = null
+  if (branchListId || caseType) {
+    let dq = supabase.from('debtors').select('id')
+    if (branchId) dq = dq.eq('branch_id', branchId)
+    if (branchListId) dq = dq.eq('branch_list_id', branchListId)
+    if (caseType) dq = dq.eq('case_type', caseType)
+    const { data: listDebtors, error: listErr } = await dq
+    if (listErr) return { rows: [], total: 0, error: listErr.message }
+    scopedDebtorIds = (listDebtors ?? []).map(d => d.id)
+    if (!scopedDebtorIds.length) return { rows: [], total: 0, error: null }
+  }
 
   let q = supabase
     .from('payment_noncompliance_requests')
@@ -23,6 +37,7 @@ export async function fetchPendingNoncomplianceRequests(
     .range(offset, offset + limit - 1)
 
   if (branchId) q = q.eq('branch_id', branchId)
+  if (scopedDebtorIds) q = q.in('debtor_id', scopedDebtorIds)
 
   const { data, count, error } = await q
   if (error) {
@@ -64,6 +79,72 @@ export async function fetchPendingNoncomplianceRequests(
   }))
 
   return { rows, total: count ?? 0, error: null }
+}
+
+export interface NoncomplianceBranchSummary {
+  branchId: string
+  branchName: string
+  count: number
+}
+
+/** فروع فيها طلبات عدم التزام معلّقة فقط */
+export async function fetchPendingNoncomplianceBranchSummaries(
+  supabase: SupabaseClient,
+  branchId: string | null,
+  options?: { caseType?: 'civil' | 'criminal' | null },
+): Promise<{ branches: NoncomplianceBranchSummary[]; error: string | null }> {
+  const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
+  let scopedDebtorIds: string[] | null = null
+  if (caseType) {
+    let dq = supabase.from('debtors').select('id')
+    if (branchId) dq = dq.eq('branch_id', branchId)
+    dq = dq.eq('case_type', caseType)
+    const { data, error } = await dq
+    if (error) return { branches: [], error: error.message }
+    scopedDebtorIds = (data ?? []).map(d => d.id)
+    if (!scopedDebtorIds.length) return { branches: [], error: null }
+  }
+
+  const counts = new Map<string, number>()
+  let offset = 0
+  const CHUNK = 500
+  while (true) {
+    let q = supabase
+      .from('payment_noncompliance_requests')
+      .select('branch_id')
+      .eq('status', 'pending')
+      .order('id')
+      .range(offset, offset + CHUNK - 1)
+    if (branchId) q = q.eq('branch_id', branchId)
+    if (scopedDebtorIds) q = q.in('debtor_id', scopedDebtorIds)
+    const { data, error } = await q
+    if (error) {
+      if (error.message?.includes('payment_noncompliance_requests') || error.code === '42P01') {
+        return { branches: [], error: null }
+      }
+      return { branches: [], error: error.message }
+    }
+    const rows = data ?? []
+    for (const r of rows) {
+      const id = r.branch_id as string | null
+      if (id) counts.set(id, (counts.get(id) ?? 0) + 1)
+    }
+    if (rows.length < CHUNK) break
+    offset += CHUNK
+  }
+
+  const ids = [...counts.entries()].filter(([, n]) => n > 0).map(([id]) => id)
+  if (!ids.length) return { branches: [], error: null }
+
+  const { data: branches } = await supabase.from('branches').select('id, name').in('id', ids)
+  const nameMap = new Map((branches ?? []).map(b => [b.id as string, b.name as string]))
+  const result: NoncomplianceBranchSummary[] = ids.map(id => ({
+    branchId: id,
+    branchName: nameMap.get(id) ?? 'فرع',
+    count: counts.get(id) ?? 0,
+  }))
+  result.sort((a, b) => a.branchName.localeCompare(b.branchName, 'ar'))
+  return { branches: result, error: null }
 }
 
 /** حالة الطلب المعلق لكل مدين (لصفحة متابعة التسديد) */

@@ -1,23 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { approveTaskCompletion } from '@/lib/task-approval'
-import { STAFF_ROLES, isAccountant, canApproveCompletions, apiForbiddenResponse, isGeneralAccountant } from '@/lib/permissions'
-import { fetchStaffRoleFields } from '@/lib/staff-profile'
+import { isAccountant, canApproveCompletions, apiForbiddenResponse, isGeneralAccountant } from '@/lib/permissions'
+import { requireTaskInScope } from '@/lib/section-guard'
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'غير مصرح' }, { status: 401 })
+    const auth = await requireStaffProfile()
+    if (auth.error) return auth.error
 
-    const profile = await fetchStaffRoleFields(supabase, user.id)
-
-    if (!profile?.role || !STAFF_ROLES.includes(profile.role as typeof STAFF_ROLES[number])) {
-      return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
-    }
-
-    if (!canApproveCompletions(profile.role)) {
+    if (!canApproveCompletions(auth.profile?.role)) {
       return apiForbiddenResponse()
     }
 
@@ -28,20 +21,24 @@ export async function POST(request: NextRequest) {
     }
 
     const admin = createAdminClient()
+    const scope = sessionCaseScope(auth.profile)
+    const gate = await requireTaskInScope(admin, scope, taskId)
+    if (!gate.ok) return gate.error
 
+    const profile = auth.profile!
     const branchScoped = (isAccountant(profile.role) && !isGeneralAccountant(profile.role, profile.accountant_type))
       || profile.role === 'employee'
     if (branchScoped) {
       if (!profile.branch_id) {
         return apiForbiddenResponse()
       }
-      const { data: taskRow } = await admin.from('tasks').select('branch_id').eq('id', taskId).single()
-      if (!taskRow?.branch_id || taskRow.branch_id !== profile.branch_id) {
+      const taskBranch = (gate.data.task as { branch_id?: string | null }).branch_id
+      if (!taskBranch || taskBranch !== profile.branch_id) {
         return apiForbiddenResponse()
       }
     }
 
-    const result = await approveTaskCompletion(admin, taskId, user.id)
+    const result = await approveTaskCompletion(admin, taskId, auth.user!.id)
 
     if (!result.ok) {
       return NextResponse.json({ error: result.error ?? 'فشل اعتماد الإنجاز' }, { status: 400 })

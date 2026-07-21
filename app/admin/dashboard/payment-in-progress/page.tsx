@@ -10,7 +10,7 @@ import PaymentInProgressCard from '@/components/PaymentInProgressCard'
 /** لوحة التحكم ← جاري التسديد (مدير / مسؤول القانونية) */
 export default function DashboardPaymentInProgressPage() {
   const branchId = useBranchId()
-  const { viewAllBranches } = useBranch()
+  const { viewAllBranches, listId } = useBranch()
   const role = useAdminRole()
 
   if (!canViewPaymentInProgressCard(role)) {
@@ -36,6 +36,7 @@ export default function DashboardPaymentInProgressPage() {
         <PaymentInProgressCard
           branchId={branchId}
           viewAllBranches={viewAllBranches}
+          listId={listId}
           hideHeader
         />
       )}

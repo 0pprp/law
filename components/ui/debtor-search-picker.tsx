@@ -18,6 +18,8 @@ interface DebtorSearchPickerProps {
   disabled?: boolean
   /** Supabase select columns — use DEBTOR_TASK_SELECT for task forms */
   select?: string
+  /** عزل القسم — يُمرَّر إلى fetchDebtorsBySearch */
+  caseType?: 'civil' | 'criminal' | null
   className?: string
   allowClear?: boolean
   clearLabel?: string
@@ -29,6 +31,7 @@ export function DebtorSearchPicker({
   branchId,
   disabled = false,
   select,
+  caseType = null,
   className,
   allowClear = false,
   clearLabel = 'إلغاء التحديد',
@@ -49,11 +52,11 @@ export function DebtorSearchPicker({
     if (selected?.id === value) return
 
     let cancelled = false
-    fetchDebtorById(createClient(), value, { branchId, select }).then(row => {
+    fetchDebtorById(createClient(), value, { branchId, select, caseType }).then(row => {
       if (!cancelled && row) setSelected(row)
     })
     return () => { cancelled = true }
-  }, [value, branchId, select, selected?.id])
+  }, [value, branchId, select, caseType, selected?.id])
 
   useEffect(() => {
     if (!open) return
@@ -73,11 +76,11 @@ export function DebtorSearchPicker({
       return
     }
     setLoading(true)
-    const rows = await fetchDebtorsBySearch(createClient(), term, { branchId, select })
+    const rows = await fetchDebtorsBySearch(createClient(), term, { branchId, select, caseType })
     setResults(rows)
     setLoading(false)
     setOpen(true)
-  }, [branchId, select])
+  }, [branchId, select, caseType])
 
   function onInputChange(v: string) {
     setQuery(v)

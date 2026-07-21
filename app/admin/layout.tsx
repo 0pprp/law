@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import AdminShell from '@/components/AdminShell'
-import { BRANCH_COOKIE, BRANCH_COOKIE_ALL } from '@/lib/branch-context'
+import { BRANCH_COOKIE, BRANCH_COOKIE_ALL, BRANCH_LIST_COOKIE } from '@/lib/branch-context'
 import { isMainBranchName } from '@/lib/branch-constants'
 import { canReadAllBranches, canUseViewAllBranchesFilter, isGeneralAccountant, isPaymentFollowUp } from '@/lib/permissions'
 import { fetchStaffProfile } from '@/lib/staff-profile'
@@ -29,6 +29,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   let initialBranchId: string | null = null
   let initialBranchName: string | null = null
   let initialViewAll = false
+  let initialListId: string | null = null
+  let initialListName: string | null = null
 
   if (canPickBranch) {
     const cookieStore = await cookies()
@@ -69,6 +71,44 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     }
   }
 
+  // فلتر القائمة — فقط مع فرع محدد، وتُتجاهل إن لم تعد تابعة للفرع
+  {
+    const cookieStore = await cookies()
+    const listRaw = cookieStore.get(BRANCH_LIST_COOKIE)?.value?.trim() || null
+    if (listRaw) {
+      if (initialBranchId && !initialViewAll) {
+        const { data: list } = await supabase
+          .from('branch_lists')
+          .select('id, name')
+          .eq('id', listRaw)
+          .eq('branch_id', initialBranchId)
+          .maybeSingle()
+        if (list) {
+          initialListId = list.id
+          initialListName = list.name
+        } else {
+          // كوكي قائمة من فرع آخر أو قائمة محذوفة — امسحها فوراً
+          cookieStore.set(BRANCH_LIST_COOKIE, '', {
+            httpOnly: false,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            path: '/',
+            maxAge: 0,
+          })
+        }
+      } else {
+        // بدون فرع محدد (كل الفروع) لا معنى لفلتر القائمة
+        cookieStore.set(BRANCH_LIST_COOKIE, '', {
+          httpOnly: false,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 0,
+        })
+      }
+    }
+  }
+
   return (
     <AdminShell
       userName={profile?.full_name ?? ''}
@@ -78,6 +118,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       initialBranchId={initialBranchId}
       initialBranchName={initialBranchName}
       initialViewAll={initialViewAll}
+      initialListId={initialListId}
+      initialListName={initialListName}
     >
       {children}
     </AdminShell>

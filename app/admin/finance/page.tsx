@@ -10,6 +10,7 @@ import { RECEIPT_STATUS_LABELS } from '@/lib/types'
 import type { ReceiptStatus, WalletTransactionType, LawyerWalletKind } from '@/lib/types'
 import {
   payoutLawyerFees,
+  creditLawyerWallet,
   type LawyerWalletRow,
 } from '@/lib/lawyer-wallet'
 import {
@@ -28,12 +29,16 @@ import { PageHeader } from '@/components/ui/page-header'
 import { useAdminRole } from '@/context/admin-role'
 import { canManualWalletOps, canWriteData, PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
+import { useCaseScope } from '@/hooks/use-case-scope'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
 
 interface Lawyer {
   id: string
   full_name: string
   username: string | null
   phone: string | null
+  case_type?: string | null
 }
 
 interface Receipt {
@@ -79,6 +84,9 @@ export default function FinancePage() {
   const role = useAdminRole()
   const canWrite = canWriteData(role)
   const canWalletOps = canManualWalletOps(role)
+  const { caseTypeFilter: lockedCaseType } = useCaseScope()
+  const [filterCaseType, setFilterCaseType] = useState<'' | 'civil' | 'criminal'>(lockedCaseType ?? '')
+  const effectiveCaseType = lockedCaseType ?? (filterCaseType || null)
   const [lawyers, setLawyers] = useState<Lawyer[]>([])
   const [balanceMap, setBalanceMap] = useState<Map<string, number>>(new Map())
   const [savingsMap, setSavingsMap] = useState<Map<string, number>>(new Map())
@@ -88,6 +96,8 @@ export default function FinancePage() {
   const [loading, setLoading] = useState(true)
   const [payoutAmount, setPayoutAmount] = useState('')
   const [payoutNotes, setPayoutNotes] = useState('')
+  const [depositAmount, setDepositAmount] = useState('')
+  const [depositNotes, setDepositNotes] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [tab, setTab] = useState<'requests' | 'wallet'>('requests')
@@ -101,9 +111,16 @@ export default function FinancePage() {
 
   const supabase = createClient()
 
+  useEffect(() => {
+    setFilterCaseType(lockedCaseType ?? '')
+  }, [lockedCaseType])
+
   const loadLawyers = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/lawyer-wallet', { cache: 'no-store' })
+      const params = new URLSearchParams()
+      if (effectiveCaseType) params.set('caseType', effectiveCaseType)
+      const qs = params.toString()
+      const res = await fetch(`/api/admin/lawyer-wallet${qs ? `?${qs}` : ''}`, { cache: 'no-store' })
       const payload = await res.json()
       if (!res.ok) {
         setError(payload.error ?? 'فشل تحميل المحامين')
@@ -130,11 +147,14 @@ export default function FinancePage() {
       setLawyers([])
       return []
     }
-  }, [branchId])
+  }, [branchId, effectiveCaseType])
 
   const loadBranchRequests = useCallback(async (lawyerList: Lawyer[]) => {
     try {
-      const res = await fetch('/api/admin/finance-requests', { cache: 'no-store' })
+      const params = new URLSearchParams()
+      if (effectiveCaseType) params.set('caseType', effectiveCaseType)
+      const qs = params.toString()
+      const res = await fetch(`/api/admin/finance-requests${qs ? `?${qs}` : ''}`, { cache: 'no-store' })
       const data = await res.json()
       if (res.ok) {
         setAllPayoutRequests(data.payouts ?? [])
@@ -174,7 +194,7 @@ export default function FinancePage() {
         lawyer: r.lawyer ?? { full_name: lawyerNameMap.get(r.lawyer_id) ?? 'محامٍ' },
       })),
     )
-  }, [supabase])
+  }, [supabase, effectiveCaseType])
 
   const loadLawyerWallet = useCallback(async (lawyerId: string) => {
     if (!lawyerId) return
@@ -296,8 +316,52 @@ export default function FinancePage() {
     setSaving(false)
   }
 
+  async function handleFeeDeposit() {
+    if (!canWalletOps) { setError(PERMISSION_DENIED_MSG); return }
+    if (saving) return
+    const amt = parseMoneyInput(depositAmount)
+    if (!amt || amt <= 0 || !selectedId) return
+    setSaving(true)
+    setError('')
+    const { data: me } = await supabase.auth.getUser()
+    if (!me.user) { setSaving(false); return }
+
+    const referenceId = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? `fee-dep-${selectedId}-${crypto.randomUUID()}`
+      : `fee-dep-${selectedId}-${Date.now()}`
+
+    const result = await creditLawyerWallet(supabase, {
+      lawyerId: selectedId,
+      amount: amt,
+      type: 'manual_adjustment',
+      wallet: 'fees',
+      notes: depositNotes.trim() || 'إيداع يدوي — محفظة الأتعاب',
+      createdBy: me.user.id,
+      referenceId,
+    })
+    if (!result.ok) {
+      setError(result.error ?? 'فشل الإيداع')
+      setSaving(false)
+      return
+    }
+
+    await logActivity({
+      action: 'lawyer_fee_deposit',
+      entity_type: 'lawyer',
+      entity_id: selectedId,
+      description: `إيداع أتعاب ${formatMoney(amt)} — ${selectedLawyer?.full_name ?? 'محامٍ'}`,
+      case_type: selectedLawyer?.case_type === 'criminal' ? 'criminal' : 'civil',
+    }, supabase)
+
+    setDepositAmount('')
+    setDepositNotes('')
+    await refreshAll()
+    setSaving(false)
+  }
+
   async function handlePayout() {
     if (!canWalletOps) { setError(PERMISSION_DENIED_MSG); return }
+    if (saving) return
     const amt = parseMoneyInput(payoutAmount)
     if (!amt || amt <= 0 || !selectedId) return
     setSaving(true)
@@ -305,11 +369,16 @@ export default function FinancePage() {
     const { data: me } = await supabase.auth.getUser()
     if (!me.user) { setSaving(false); return }
 
+    const referenceId = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? `fee-wd-${selectedId}-${crypto.randomUUID()}`
+      : `fee-wd-${selectedId}-${Date.now()}`
+
     const result = await payoutLawyerFees(supabase, {
       lawyerId: selectedId,
       amount: amt,
       notes: payoutNotes || null,
       createdBy: me.user.id,
+      referenceId,
     })
     if (!result.ok) {
       setError(result.error ?? 'فشل صرف الأتعاب')
@@ -322,6 +391,7 @@ export default function FinancePage() {
       entity_type: 'lawyer',
       entity_id: selectedId,
       description: `صرف ${formatMoney(amt)} من أتعاب ${selectedLawyer?.full_name ?? 'محامٍ'}`,
+      case_type: selectedLawyer?.case_type === 'criminal' ? 'criminal' : 'civil',
     }, supabase)
 
     setPayoutAmount('')
@@ -354,6 +424,22 @@ export default function FinancePage() {
         title="أتعاب المحامين"
         subtitle="رصيد المحامين — طلبات الصرف — سجل الحركات"
       />
+
+      <div className="w-44">
+        <PremiumSelect
+          value={lockedCaseType ?? filterCaseType}
+          onChange={v => {
+            if (lockedCaseType) return
+            setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')
+          }}
+          options={
+            lockedCaseType
+              ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
+              : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+          }
+          disabled={Boolean(lockedCaseType)}
+        />
+      </div>
 
       {/* Lawyers grid */}
       <div className="bg-white border border-[rgba(118,118,118,0.15)] rounded-2xl p-4 shadow-sm">
@@ -431,10 +517,28 @@ export default function FinancePage() {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="md:col-span-2 bg-[#2C8780]/5 border border-[#2C8780]/20 rounded-2xl p-4">
               <p className="text-sm font-black text-[#1D6365] mb-0.5">محفظة الأتعاب</p>
-              <p className="text-xs text-[#2C8780]">تزيد عند اعتماد إنجاز المهمة · تنقص بصرف الأتعاب</p>
+              <p className="text-xs text-[#2C8780]">تزيد باعتماد الإنجاز أو الإيداع اليدوي · تنقص بصرف الأتعاب · أجر مهام الجزائي يبقى صفراً</p>
             </div>
             {canWalletOps && (
-            <div className="md:col-span-2 bg-white border border-red-200 rounded-2xl p-5 shadow-sm">
+            <div className="bg-white border border-[#2C8780]/30 rounded-2xl p-5 shadow-sm">
+              <h2 className="text-sm font-bold text-[#1D6365] mb-1">إيداع أتعاب</h2>
+              <p className="text-xs text-[#767676] mb-3">
+                إضافة يدوية لمحفظة الأتعاب · الرصيد الحالي:{' '}
+                <span className="font-black text-[#2C8780]" dir="ltr">{fmtMoney(Math.max(0, walletBalance))}</span>
+              </p>
+              <div className="space-y-3">
+                <MoneyInput value={depositAmount} onChange={v => setDepositAmount(v)} placeholder="المبلغ (دينار)" className={INP} />
+                <input type="text" value={depositNotes} onChange={e => setDepositNotes(e.target.value)} placeholder="ملاحظات (اختياري)" className={INP} />
+                <button onClick={handleFeeDeposit} disabled={saving || !depositAmount}
+                  className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}>
+                  {saving ? 'جارٍ...' : 'إيداع في محفظة الأتعاب'}
+                </button>
+              </div>
+            </div>
+            )}
+            {canWalletOps && (
+            <div className="bg-white border border-red-200 rounded-2xl p-5 shadow-sm">
               <h2 className="text-sm font-bold text-red-800 mb-1">صرف أتعاب</h2>
               <p className="text-xs text-[#767676] mb-3">
                 يُخصم من محفظة الأتعاب فقط · الرصيد المتاح:{' '}

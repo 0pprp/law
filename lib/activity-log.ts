@@ -3,7 +3,9 @@ export interface LogParams {
   entity_type?: string
   entity_id?: string
   description?: string
+  /** يُدمج في new_data — استخدم case_type لتوثيق القسم */
   metadata?: Record<string, unknown>
+  case_type?: 'civil' | 'criminal' | null
 }
 
 export async function logActivity(params: LogParams, supabaseClient?: any) {
@@ -16,6 +18,9 @@ export async function logActivity(params: LogParams, supabaseClient?: any) {
     const newData: Record<string, unknown> = {}
     if (params.description) newData.description = params.description
     if (params.metadata) Object.assign(newData, params.metadata)
+    if (params.case_type === 'civil' || params.case_type === 'criminal') {
+      newData.case_type = params.case_type
+    }
 
     await client.from('activity_logs').insert({
       action: params.action,

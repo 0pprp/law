@@ -5,66 +5,184 @@ import { useAdminRole } from '@/context/admin-role'
 import { canReviewPaymentNoncomplianceRequest } from '@/lib/permissions'
 import { fmtDate } from '@/lib/utils'
 import { appAlert } from '@/lib/app-dialog'
-import type { PendingNoncomplianceRow } from '@/lib/payment-noncompliance'
+import BranchListBox from '@/components/BranchListBox'
+import {
+  fetchPendingNoncomplianceBranchSummaries,
+  fetchPendingNoncomplianceRequests,
+  type NoncomplianceBranchSummary,
+  type PendingNoncomplianceRow,
+} from '@/lib/payment-noncompliance'
+import { useCaseScope } from '@/hooks/use-case-scope'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
+import { createClient } from '@/lib/supabase/client'
 
 interface Props {
   branchId: string | null
   viewAllBranches: boolean
+  listId?: string | null
   onChanged?: () => void
-  /** إخفاء ترويسة الكارد عند استخدامه داخل صفحة لها PageHeader */
   hideHeader?: boolean
+}
+
+function BranchNoncomplianceBox({
+  summary,
+  caseType,
+  initialListId,
+  busyId,
+  onApprove,
+  onReject,
+}: {
+  summary: NoncomplianceBranchSummary
+  caseType: 'civil' | 'criminal' | null
+  initialListId: string
+  busyId: string | null
+  onApprove: (r: PendingNoncomplianceRow) => void
+  onReject: (r: PendingNoncomplianceRow) => void
+}) {
+  const [listId, setListId] = useState(initialListId)
+  const [rows, setRows] = useState<PendingNoncomplianceRow[]>([])
+  const [total, setTotal] = useState(summary.count)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => { setListId(initialListId) }, [initialListId, summary.branchId])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    const res = await fetchPendingNoncomplianceRequests(createClient(), summary.branchId, {
+      limit: 50,
+      branchListId: listId || null,
+      caseType,
+    })
+    if (res.error) {
+      setError(res.error)
+      setRows([])
+      setTotal(0)
+    } else {
+      setRows(res.rows)
+      setTotal(res.total)
+    }
+    setLoading(false)
+  }, [summary.branchId, listId, caseType])
+
+  useEffect(() => { void load() }, [load])
+
+  if (!loading && total === 0 && !listId) return null
+
+  return (
+    <BranchListBox
+      branchId={summary.branchId}
+      branchName={summary.branchName}
+      count={total}
+      listId={listId}
+      onListChange={setListId}
+      loadingCount={loading && rows.length === 0}
+    >
+      {error && (
+        <div className="mx-4 mt-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>
+      )}
+      {loading && rows.length === 0 ? (
+        <div className="p-4 space-y-2">
+          {[...Array(2)].map((_, i) => (
+            <div key={i} className="h-10 bg-[rgba(118,118,118,0.07)] rounded-xl animate-pulse" />
+          ))}
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="px-4 py-8 text-center text-sm text-[#767676]">لا طلبات في هذه القائمة</div>
+      ) : (
+        <div className="divide-y divide-[rgba(118,118,118,0.08)]">
+          {rows.map(r => (
+            <div key={r.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+              <div className="min-w-0 space-y-0.5">
+                <p className="font-semibold text-[#231F20]">{r.debtor_name}</p>
+                <p className="text-xs text-[#767676]">
+                  {[r.requester_name ? `من: ${r.requester_name}` : null, fmtDate(r.created_at)]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
+                {r.note && <p className="text-xs text-[#454042] mt-1">{r.note}</p>}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={!!busyId}
+                  onClick={() => onApprove(r)}
+                  className="text-xs font-bold text-white px-3 py-1.5 rounded-lg disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+                >
+                  {busyId === r.id ? '...' : 'موافقة'}
+                </button>
+                <button
+                  type="button"
+                  disabled={!!busyId}
+                  onClick={() => onReject(r)}
+                  className="text-xs font-semibold text-red-600 border border-red-200 bg-red-50 px-3 py-1.5 rounded-lg disabled:opacity-50"
+                >
+                  رفض
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </BranchListBox>
+  )
 }
 
 export default function PaymentNoncomplianceRequestsCard({
   branchId,
   viewAllBranches,
+  listId = null,
   onChanged,
   hideHeader,
 }: Props) {
   const role = useAdminRole()
+  const { caseTypeFilter: lockedCaseType } = useCaseScope()
+  const [filterCaseType, setFilterCaseType] = useState<'' | 'civil' | 'criminal'>(lockedCaseType ?? '')
+  const effectiveCaseType = lockedCaseType ?? (filterCaseType || null)
   const allowed = canReviewPaymentNoncomplianceRequest(role)
-  const [rows, setRows] = useState<PendingNoncomplianceRow[]>([])
-  const [total, setTotal] = useState(0)
+  const [branches, setBranches] = useState<NoncomplianceBranchSummary[]>([])
+  const [grandTotal, setGrandTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
   const [rejectFor, setRejectFor] = useState<PendingNoncomplianceRow | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    setFilterCaseType(lockedCaseType ?? '')
+  }, [lockedCaseType])
+
+  const scopeBranchId = viewAllBranches ? null : branchId
+
+  const loadSummaries = useCallback(async () => {
     if (!allowed) return
     if (!branchId && !viewAllBranches) {
-      setRows([])
-      setTotal(0)
+      setBranches([])
+      setGrandTotal(0)
       setLoading(false)
       return
     }
     setLoading(true)
     setError('')
-    try {
-      const params = new URLSearchParams({ limit: '30' })
-      if (viewAllBranches) params.set('viewAll', '1')
-      else if (branchId) params.set('branchId', branchId)
-      const res = await fetch(`/api/admin/payment-noncompliance?${params}`)
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        setError(typeof json.error === 'string' ? json.error : 'فشل تحميل الطلبات')
-        setRows([])
-        setTotal(0)
-      } else {
-        setRows(json.rows ?? [])
-        setTotal(json.total ?? 0)
-      }
-    } catch {
-      setError('فشل الاتصال')
-      setRows([])
-      setTotal(0)
-    } finally {
-      setLoading(false)
+    const res = await fetchPendingNoncomplianceBranchSummaries(createClient(), scopeBranchId, {
+      caseType: effectiveCaseType,
+    })
+    if (res.error) {
+      setError(res.error)
+      setBranches([])
+      setGrandTotal(0)
+    } else {
+      setBranches(res.branches)
+      setGrandTotal(res.branches.reduce((s, b) => s + b.count, 0))
     }
-  }, [allowed, branchId, viewAllBranches])
+    setLoading(false)
+  }, [allowed, branchId, viewAllBranches, scopeBranchId, effectiveCaseType, reloadKey])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { void loadSummaries() }, [loadSummaries])
 
   async function approve(row: PendingNoncomplianceRow) {
     if (busyId) return
@@ -88,7 +206,7 @@ export default function PaymentNoncomplianceRequestsCard({
         variant: 'success',
       })
       setBusyId(null)
-      await load()
+      setReloadKey(k => k + 1)
       onChanged?.()
     } catch {
       setError('فشل الاتصال')
@@ -124,7 +242,7 @@ export default function PaymentNoncomplianceRequestsCard({
         variant: 'info',
       })
       setBusyId(null)
-      await load()
+      setReloadKey(k => k + 1)
       onChanged?.()
     } catch {
       setError('فشل الاتصال')
@@ -135,71 +253,62 @@ export default function PaymentNoncomplianceRequestsCard({
   if (!allowed) return null
   if (!branchId && !viewAllBranches) return null
 
+  const initialListForBox = viewAllBranches ? '' : (listId ?? '')
+
   return (
-    <div>
+    <div className="space-y-4">
       {!hideHeader && (
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
           <div className="flex items-center gap-2.5">
             <h2 className="font-black text-[#231F20] text-base sm:text-lg">طلبات عدم الالتزام</h2>
             <span className="inline-flex items-center justify-center min-w-[1.75rem] h-7 px-2 rounded-full bg-amber-100 text-amber-800 text-sm font-black tabular-nums">
-              {loading ? '—' : total}
+              {loading ? '—' : grandTotal}
             </span>
           </div>
-          <span className="hidden sm:inline text-sm text-[#454042] font-medium">معلّقة من متابعة التسديد</span>
+          <div className="flex items-center gap-2">
+            {!lockedCaseType && (
+              <div className="w-36">
+                <PremiumSelect
+                  value={filterCaseType}
+                  onChange={v => setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')}
+                  options={CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+                />
+              </div>
+            )}
+            <span className="hidden sm:inline text-sm text-[#454042] font-medium">معلّقة من متابعة التسديد</span>
+          </div>
         </div>
       )}
 
-      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
-        {error && (
-          <div className="mx-4 mt-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>
-        )}
-        {loading ? (
-          <div className="p-4 space-y-2">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-10 bg-[rgba(118,118,118,0.07)] rounded-xl animate-pulse" />
-            ))}
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="px-4 py-10 text-center">
-            <p className="text-sm font-semibold text-[#231F20]">لا توجد طلبات معلّقة حالياً</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-[rgba(118,118,118,0.08)]">
-            {rows.map(r => (
-              <div key={r.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-                <div className="min-w-0 space-y-0.5">
-                  <p className="font-semibold text-[#231F20]">{r.debtor_name}</p>
-                  <p className="text-xs text-[#767676]">
-                    {[r.branch_name, r.requester_name ? `من: ${r.requester_name}` : null, fmtDate(r.created_at)]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </p>
-                  {r.note && <p className="text-xs text-[#454042] mt-1">{r.note}</p>}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    disabled={!!busyId}
-                    onClick={() => void approve(r)}
-                    className="text-xs font-bold text-white px-3 py-1.5 rounded-lg disabled:opacity-50"
-                    style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
-                  >
-                    {busyId === r.id ? '...' : 'موافقة'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!!busyId}
-                    onClick={() => { setRejectFor(r); setRejectReason('') }}
-                    className="text-xs font-semibold text-red-600 border border-red-200 bg-red-50 px-3 py-1.5 rounded-lg disabled:opacity-50"
-                  >
-                    رفض
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>
+      )}
+
+      {loading ? (
+        <div className="space-y-3">
+          {[...Array(2)].map((_, i) => (
+            <div key={i} className="h-32 bg-white rounded-2xl border animate-pulse" />
+          ))}
+        </div>
+      ) : branches.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] px-4 py-10 text-center">
+          <p className="text-sm font-semibold text-[#231F20]">لا توجد طلبات معلّقة حالياً</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {branches.map(b => (
+            <BranchNoncomplianceBox
+              key={`${b.branchId}-${reloadKey}`}
+              summary={b}
+              caseType={effectiveCaseType}
+              initialListId={initialListForBox}
+              busyId={busyId}
+              onApprove={r => void approve(r)}
+              onReject={r => { setRejectFor(r); setRejectReason('') }}
+            />
+          ))}
+        </div>
+      )}
 
       {rejectFor && (
         <div

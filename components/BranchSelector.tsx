@@ -69,7 +69,6 @@ export default function BranchSelector({
         if (def) void handleSelect(def.id, def.name)
       }
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -174,7 +173,7 @@ export default function BranchSelector({
           <span className={`text-[9px] font-bold uppercase tracking-[0.08em] leading-none mb-0.5 ${open ? 'text-white/60' : 'text-[#767676]'}`}>
             الفرع الحالي
           </span>
-          <span className="text-xs font-bold leading-none truncate max-w-[110px]">
+          <span className="text-xs font-bold leading-snug truncate max-w-[110px]">
             {switching ? '...' : (activeName ?? 'اختر فرعاً')}
           </span>
         </div>
@@ -263,7 +262,7 @@ export default function BranchSelector({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
                   </svg>
                 </div>
-                <span className={`flex-1 text-sm leading-none ${viewAllBranches ? 'font-bold text-[#2C8780]' : 'font-medium text-[#231F20]'}`}>
+                <span className={`flex-1 text-sm leading-snug py-0.5 ${viewAllBranches ? 'font-bold text-[#2C8780]' : 'font-medium text-[#231F20]'}`}>
                   الكل
                 </span>
                 {viewAllBranches && <CheckIcon className="w-4 h-4 text-[#2C8780] shrink-0" />}
@@ -306,7 +305,7 @@ export default function BranchSelector({
                       <PinIcon className={`w-3.5 h-3.5 ${isActive ? 'text-[#2C8780]' : 'text-[#767676]'}`} />
                     </div>
 
-                    <span className={`flex-1 text-sm leading-none ${isActive ? 'font-bold text-[#2C8780]' : 'font-medium text-[#231F20]'}`}>
+                    <span className={`flex-1 min-w-0 text-sm leading-snug py-0.5 truncate ${isActive ? 'font-bold text-[#2C8780]' : 'font-medium text-[#231F20]'}`}>
                       {branch.name}
                     </span>
 

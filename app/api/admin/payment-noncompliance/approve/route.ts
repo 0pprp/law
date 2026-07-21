@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireStaffProfile } from '@/lib/api-auth'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { apiForbiddenResponse, canReviewPaymentNoncomplianceRequest } from '@/lib/permissions'
 import { logActivity } from '@/lib/activity-log'
+import { requireDebtorInScope } from '@/lib/section-guard'
 
 export async function POST(request: NextRequest) {
   const auth = await requireStaffProfile()
@@ -37,6 +38,10 @@ export async function POST(request: NextRequest) {
   if (before.status !== 'pending') {
     return NextResponse.json({ error: 'تمت معالجة الطلب مسبقاً' }, { status: 409 })
   }
+
+  const scope = sessionCaseScope(auth.profile)
+  const gate = await requireDebtorInScope(admin, scope, before.debtor_id)
+  if (!gate.ok) return gate.error
 
   const { data: debtorMeta } = await admin
     .from('debtors')
@@ -74,6 +79,7 @@ export async function POST(request: NextRequest) {
     entity_id: before.debtor_id,
     description: `موافقة طلب عدم التزام وإعادة آخر مهمة غير مكلفة: ${debtorMeta?.full_name ?? ''}`,
     metadata: { request_id: requestId, new_task_id: result.new_task_id },
+    case_type: gate.caseType,
   }, auth.supabase)
 
   return NextResponse.json({

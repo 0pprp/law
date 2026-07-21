@@ -19,11 +19,14 @@ import DebtorPaymentsPanel from '@/components/DebtorPaymentsPanel'
 import DebtorExpensesList from '@/components/DebtorExpensesList'
 import DebtorAttachmentsList from '@/components/DebtorAttachmentsList'
 import { canAddDebtor, canAssignTasks, canEditDebtor, canAddPayments } from '@/lib/permissions'
-import { fetchStaffRoleFields } from '@/lib/staff-profile'
+import { fetchStaffProfile } from '@/lib/staff-profile'
 import { canStaffReadBranch } from '@/lib/staff-branch-access'
+import { assertDebtorSection, resolveCaseScope } from '@/lib/case-scope'
 import type { UserRole } from '@/lib/types'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import { BackButton } from '@/components/ui/back-button'
+import { fetchCriminalDebtorDetails, CONTRACT_GUARANTOR_STATUS_LABELS, isContractGuarantorStatus } from '@/lib/criminal-debtor-details'
+import CriminalDebtorFilesPanel from '@/components/CriminalDebtorFilesPanel'
 
 function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
@@ -39,7 +42,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
-  const profile = user ? await fetchStaffRoleFields(supabase, user.id) : null
+  const profile = user ? await fetchStaffProfile(supabase, user.id) : null
 
   const userRole = (profile?.role ?? 'employee') as UserRole
   const allowEdit = canEditDebtor(userRole)
@@ -48,9 +51,10 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
 
   // المحاسب العام وغيره ممن يتجاوز فرعه: قراءة عبر service role لتفادي قيود RLS القديمة
   const admin = createAdminClient()
-  const { data: debtorProbe } = await admin.from('debtors').select('id, branch_id').eq('id', id).maybeSingle()
+  const { data: debtorProbe } = await admin.from('debtors').select('id, branch_id, case_type').eq('id', id).maybeSingle()
   if (!debtorProbe) notFound()
   if (!canStaffReadBranch(profile, debtorProbe.branch_id)) notFound()
+  if (!assertDebtorSection(resolveCaseScope(profile?.role), debtorProbe.case_type)) notFound()
 
   const db = canStaffReadBranch(profile, debtorProbe.branch_id) ? admin : supabase
 
@@ -64,13 +68,53 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
 
   if (!debtor) notFound()
 
+  const isCriminal = debtor.case_type === 'criminal'
+  const criminalDetails = isCriminal ? await fetchCriminalDebtorDetails(admin, id) : null
+
   const taskIds = (taskRows ?? []).map(t => t.id)
   const totalPaymentsSum = (payments ?? []).reduce((s, p) => s + Number(p.amount), 0)
   const totalExpensesSum = (expenses ?? []).filter(e => e.status === 'approved' || e.status == null).reduce((s, e) => s + Number(e.amount), 0)
   const totalOwed = Number(debtor.required_amount ?? 0)
   const collectionRate = totalOwed > 0 ? Math.round((totalPaymentsSum / totalOwed) * 100) : 0
+  const contractLabel = criminalDetails?.contract_guarantor_status
+    && isContractGuarantorStatus(criminalDetails.contract_guarantor_status)
+    ? CONTRACT_GUARANTOR_STATUS_LABELS[criminalDetails.contract_guarantor_status]
+    : '—'
 
-  const overviewTab = (
+  const overviewTab = isCriminal ? (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <StatCard label="المبلغ بذمته" value={fmtMoney(debtor.remaining_amount)} accent="teal" valueColor="text-[#2C8780]" />
+        <StatCard label="إجمالي التسديدات" value={fmtMoney(totalPaymentsSum)} accent="green" valueColor="text-emerald-700" />
+        <StatCard label="حالة المدين" value={debtor.case_status ?? '—'} accent="teal" />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <Card>
+          <CardHeader title="معلومات المدين الجزائي" />
+          <div className="p-4">
+            <InfoRow label="الاسم" value={debtor.full_name} />
+            <InfoRow label="العنوان الوظيفي" value={criminalDetails?.job_title} />
+            <InfoRow label="عنوان السكن الحالي" value={criminalDetails?.current_address} />
+            <InfoRow label="تاريخ الواقعة" value={criminalDetails?.incident_date ? fmtDate(criminalDetails.incident_date) : null} mono />
+            <InfoRow label="نوع التهمة" value={criminalDetails?.charge_type} />
+            <InfoRow label="المبلغ الذي بذمته" value={fmtMoney(debtor.remaining_amount)} />
+            <InfoRow label="هل لديه عقد وكفيل" value={contractLabel} />
+            <InfoRow label="الشاهد الأول" value={criminalDetails?.first_witness_name} />
+            <InfoRow label="الشاهد الثاني" value={criminalDetails?.second_witness_name} />
+            <InfoRow label="حالة المدين" value={debtor.case_status ?? '—'} />
+            <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} mono />
+          </div>
+        </Card>
+        <DebtorNotesPanel debtorId={id} profileNotes={debtor.notes} />
+      </div>
+      <CriminalDebtorFilesPanel
+        debtorId={id}
+        documentsPath={criminalDetails?.documents_contract_file_path ?? null}
+        petitionPath={criminalDetails?.petition_file_path ?? null}
+        canEdit={allowEdit}
+      />
+    </div>
+  ) : (
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="المبلغ المطلوب" value={fmtMoney(debtor.required_amount)} accent="teal" valueColor="text-[#2C8780]" />
@@ -190,9 +234,13 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
             </div>
             <h1 className="text-2xl font-black text-white leading-tight">{debtor.full_name}</h1>
             <div className="flex flex-wrap items-center gap-3 mt-2">
-              {debtor.governorate && <span className="text-xs text-white/50">📍 {debtor.governorate}</span>}
-              {debtor.phone && <span className="text-xs text-white/50 font-mono" dir="ltr">{debtor.phone}</span>}
-              <Badge variant="default">{RECEIPT_TYPE_LABELS[debtor.receipt_type as ReceiptType] ?? debtor.receipt_type}</Badge>
+              <Badge variant="default">{isCriminal ? 'جزائي' : 'مدني'}</Badge>
+              {!isCriminal && debtor.governorate && <span className="text-xs text-white/50">📍 {debtor.governorate}</span>}
+              {!isCriminal && debtor.phone && <span className="text-xs text-white/50 font-mono" dir="ltr">{debtor.phone}</span>}
+              {!isCriminal && (
+                <Badge variant="default">{RECEIPT_TYPE_LABELS[debtor.receipt_type as ReceiptType] ?? debtor.receipt_type}</Badge>
+              )}
+              {debtor.case_status && <Badge variant="default">{debtor.case_status}</Badge>}
             </div>
           </div>
           <div className="flex items-center gap-3 shrink-0 flex-wrap">

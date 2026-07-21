@@ -9,10 +9,11 @@ import {
   canReviewPaymentNoncomplianceRequest,
   canViewPaymentInProgressCard,
   isAdmin,
-  isLegalManager,
+  isAnyLegalManager,
 } from '@/lib/permissions'
 import { countPaymentInProgress } from '@/lib/payment-in-progress'
 import { fetchAwaitingAssignmentDebtors } from '@/lib/awaiting-assignment'
+import { useCaseScope } from '@/hooks/use-case-scope'
 
 function MoneyIcon() {
   return (
@@ -94,17 +95,32 @@ function ColorCard({
 interface Props {
   branchId: string | null
   viewAllBranches: boolean
+  listId?: string | null
+  /** awaiting = إسناد المهام فقط · payment = متابعة التسديد فقط · all = الاثنان */
+  section?: 'awaiting' | 'payment' | 'all'
+  /** تجاوز فلتر القسم من الدور (تبويب المدير: مدني/جزائي) */
+  caseType?: 'civil' | 'criminal' | null
 }
 
 /**
  * كاردات العمليات في اللوحة — بألوان مميزة للتفريق بالنظر:
  * بنفسجي: الأسماء تحت إسناد مهمة · أخضر مُزرق: جاري التسديد · برتقالي: طلبات عدم الالتزام
  */
-export default function PaymentOpsCards({ branchId, viewAllBranches }: Props) {
+export default function PaymentOpsCards({
+  branchId,
+  viewAllBranches,
+  listId = null,
+  section = 'all',
+  caseType,
+}: Props) {
   const role = useAdminRole()
-  const showAwaiting = isAdmin(role) || isLegalManager(role) || canAssignTasks(role)
-  const showPayment = canViewPaymentInProgressCard(role)
-  const showNoncompliance = canReviewPaymentNoncomplianceRequest(role)
+  const { caseTypeFilter: roleCaseType } = useCaseScope()
+  const caseTypeFilter = caseType !== undefined ? caseType : roleCaseType
+  const showAwaitingSection = section === 'all' || section === 'awaiting'
+  const showPaymentSection = section === 'all' || section === 'payment'
+  const showAwaiting = showAwaitingSection && (isAdmin(role) || isAnyLegalManager(role) || canAssignTasks(role))
+  const showPayment = showPaymentSection && canViewPaymentInProgressCard(role)
+  const showNoncompliance = showPaymentSection && canReviewPaymentNoncomplianceRequest(role)
   const [awaitingCount, setAwaitingCount] = useState<number | null>(null)
   const [paymentCount, setPaymentCount] = useState<number | null>(null)
   const [pendingCount, setPendingCount] = useState<number | null>(null)
@@ -118,23 +134,83 @@ export default function PaymentOpsCards({ branchId, viewAllBranches }: Props) {
     }
     const supabase = createClient()
     const scope = viewAllBranches ? null : branchId
+    // القائمة تخص المدني فقط — الجزائي بلا branch_list_id
+    const listScope =
+      viewAllBranches || caseTypeFilter === 'criminal' ? null : listId
 
     if (showAwaiting) {
-      void fetchAwaitingAssignmentDebtors(supabase, scope, { limit: 1 })
-        .then(res => setAwaitingCount(res.error ? 0 : res.total))
+      void (async () => {
+        if (caseTypeFilter === null && listScope) {
+          const [civilRes, crimRes] = await Promise.all([
+            fetchAwaitingAssignmentDebtors(supabase, scope, {
+              limit: 1,
+              branchListId: listScope,
+              caseType: 'civil',
+            }),
+            fetchAwaitingAssignmentDebtors(supabase, scope, {
+              limit: 1,
+              branchListId: null,
+              caseType: 'criminal',
+            }),
+          ])
+          setAwaitingCount(
+            (civilRes.error ? 0 : civilRes.total) + (crimRes.error ? 0 : crimRes.total),
+          )
+          return
+        }
+        const res = await fetchAwaitingAssignmentDebtors(supabase, scope, {
+          limit: 1,
+          branchListId: listScope,
+          caseType: caseTypeFilter,
+        })
+        setAwaitingCount(res.error ? 0 : res.total)
+      })()
     }
     if (showPayment) {
-      void countPaymentInProgress(supabase, scope).then(setPaymentCount)
+      void (async () => {
+        if (caseTypeFilter === null && listScope) {
+          const [civilN, crimN] = await Promise.all([
+            countPaymentInProgress(supabase, scope, listScope, 'civil'),
+            countPaymentInProgress(supabase, scope, null, 'criminal'),
+          ])
+          setPaymentCount(civilN + crimN)
+          return
+        }
+        setPaymentCount(await countPaymentInProgress(supabase, scope, listScope, caseTypeFilter))
+      })()
     }
     if (showNoncompliance) {
-      let q = supabase
-        .from('payment_noncompliance_requests')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'pending')
-      if (scope) q = q.eq('branch_id', scope)
-      void q.then(({ count, error }) => setPendingCount(error ? 0 : count ?? 0))
+      void (async () => {
+        let listDebtorIds: string[] | null = null
+        {
+          let dq = supabase.from('debtors').select('id')
+          if (scope) dq = dq.eq('branch_id', scope)
+          if (listScope) dq = dq.eq('branch_list_id', listScope)
+          if (caseTypeFilter) dq = dq.eq('case_type', caseTypeFilter)
+          if (listScope || caseTypeFilter) {
+            const { data: listDebtors, error: listErr } = await dq
+            if (listErr) {
+              setPendingCount(0)
+              return
+            }
+            listDebtorIds = (listDebtors ?? []).map(d => d.id)
+            if (!listDebtorIds.length) {
+              setPendingCount(0)
+              return
+            }
+          }
+        }
+        let q = supabase
+          .from('payment_noncompliance_requests')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending')
+        if (scope) q = q.eq('branch_id', scope)
+        if (listDebtorIds) q = q.in('debtor_id', listDebtorIds)
+        const { count, error } = await q
+        setPendingCount(error ? 0 : count ?? 0)
+      })()
     }
-  }, [branchId, viewAllBranches, showAwaiting, showPayment, showNoncompliance])
+  }, [branchId, viewAllBranches, listId, caseTypeFilter, showAwaiting, showPayment, showNoncompliance])
 
   useEffect(() => { void load() }, [load])
 
@@ -147,7 +223,7 @@ export default function PaymentOpsCards({ branchId, viewAllBranches }: Props) {
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-black text-[#231F20] text-base sm:text-lg">الأسماء التي تحت إسناد مهمة</h2>
-            <span className="hidden sm:inline text-sm text-[#454042] font-medium">مدينون بلا مهمة مطلوبة</span>
+            <span className="hidden sm:inline text-sm text-[#454042] font-medium">مدينون بانتظار إسناد المهمة</span>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             <ColorCard

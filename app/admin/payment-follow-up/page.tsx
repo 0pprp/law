@@ -19,14 +19,16 @@ import {
   type PaymentInProgressDebtor,
 } from '@/lib/payment-in-progress'
 import { fetchPendingNoncomplianceByDebtorIds } from '@/lib/payment-noncompliance'
+import { useCaseScope } from '@/hooks/use-case-scope'
 
 const PAGE_SIZE = 30
 const ALL_GOVS = ''
 
 export default function PaymentFollowUpPage() {
   const branchId = useBranchId()
-  const { viewAllBranches, setBranch, setViewAllBranches } = useBranch()
+  const { viewAllBranches, setBranch, setViewAllBranches, listId } = useBranch()
   const role = useAdminRole()
+  const { caseTypeFilter } = useCaseScope()
   const allowPay = canAddPayments(role)
   const followUpOnly = isPaymentFollowUp(role)
   const allowNoncompliance = canSubmitPaymentNoncomplianceRequest(role)
@@ -46,6 +48,7 @@ export default function PaymentFollowUpPage() {
 
   // مسؤول متابعة التسديد يرى كل المحافظات؛ الفلتر عبر BranchSelector / القائمة أدناه
   const scopeBranch = viewAllBranches ? null : branchId
+  const scopeListId = viewAllBranches ? null : listId
   const showBranchCol = viewAllBranches || followUpOnly
 
   useEffect(() => {
@@ -75,6 +78,8 @@ export default function PaymentFollowUpPage() {
       search: term,
       offset,
       limit: PAGE_SIZE,
+      branchListId: scopeListId,
+      caseType: caseTypeFilter,
     })
     setRows(prev => (append ? [...prev, ...res.rows] : res.rows))
     setTotal(res.total)
@@ -99,7 +104,7 @@ export default function PaymentFollowUpPage() {
 
     setLoading(false)
     setLoadingMore(false)
-  }, [branchId, viewAllBranches, scopeBranch, allowNoncompliance])
+  }, [branchId, viewAllBranches, scopeBranch, scopeListId, allowNoncompliance, caseTypeFilter])
 
   useEffect(() => { void load(search) }, [load])
 

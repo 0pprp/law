@@ -103,6 +103,7 @@ export interface PendingReviewTask {
     case_status: string | null
     case_type?: string | null
     branch_id: string | null
+    branch_list_id?: string | null
     latitude?: number | null
     longitude?: number | null
   } | null
@@ -127,6 +128,7 @@ export interface FetchPendingReviewOptions {
   lawyerId?: string | null
   caseType?: 'civil' | 'criminal' | null
   includeCompletionData?: boolean
+  branchListId?: string | null
 }
 
 export interface PaginatedPendingReviewResult {
@@ -139,6 +141,9 @@ const REVIEW_TASK_LIST_COLS =
 
 const REVIEW_TASK_DETAIL_COLS = `${REVIEW_TASK_LIST_COLS}, completion_data`
 
+/** طابور المراجعة عادة صغير — نجلب المهام ثم نفلتر المدين محلياً (بدون embed/URL عملاق). */
+const REVIEW_QUEUE_FETCH_CAP = 1000
+
 async function hydratePendingReviewTasks(
   supabase: SupabaseClient,
   branchId: string | null,
@@ -149,14 +154,13 @@ async function hydratePendingReviewTasks(
   const debtorIds = [...new Set(rawTasks.map(t => t.debtor_id as string))]
   let debtorsQ = supabase
     .from('debtors')
-    .select('id, full_name, phone, governorate, case_status, case_type, branch_id')
+    .select('id, full_name, phone, governorate, case_status, case_type, branch_id, branch_list_id')
     .in('id', debtorIds)
   if (branchId) debtorsQ = debtorsQ.eq('branch_id', branchId)
 
   const { data: debtors } = await debtorsQ
 
   const debtorMap = new Map((debtors ?? []).map(d => [d.id, d]))
-  // الفلاتر (إغلاق القضية) تُطبَّق في الاستعلام قبل count — هنا نربط البيانات فقط
   const branchTasks = rawTasks.filter(t => {
     const d = debtorMap.get(t.debtor_id as string)
     if (!d) return false
@@ -200,9 +204,23 @@ async function hydratePendingReviewTasks(
   })
 }
 
+function filterHydratedReviewTasks(
+  tasks: PendingReviewTask[],
+  options?: Pick<FetchPendingReviewOptions, 'caseType' | 'branchListId'>,
+): PendingReviewTask[] {
+  let out = tasks
+  if (options?.caseType) {
+    out = out.filter(t => (t.debtors?.case_type ?? 'civil') === options.caseType)
+  }
+  if (options?.branchListId) {
+    out = out.filter(t => t.debtors?.branch_list_id === options.branchListId)
+  }
+  return out
+}
+
 /**
  * Single source for dashboard «بانتظار المراجعة» + /admin/tasks/review.
- * الفلاتر (فرع + غير مغلقة) تُطبَّق قبل count حتى يطابق total النتائج.
+ * نجلب مهام الطابور أولاً (مجموعة صغيرة) ثم نفلتر القضايا المغلقة/النوع/القائمة بعد hydrate.
  */
 export async function fetchPendingReviewTasksPaginated(
   supabase: SupabaseClient,
@@ -213,38 +231,33 @@ export async function fetchPendingReviewTasksPaginated(
   const offset = options?.offset ?? 0
   const cols = options?.includeCompletionData ? REVIEW_TASK_DETAIL_COLS : REVIEW_TASK_LIST_COLS
 
-  // استبعاد قضايا مغلقة من العدّ والنتائج
-  let openDebtorsQ = supabase
-    .from('debtors')
-    .select('id')
-    .not('case_status', 'eq', 'closed')
-  if (branchId) openDebtorsQ = openDebtorsQ.eq('branch_id', branchId)
-  if (options?.caseType) openDebtorsQ = openDebtorsQ.eq('case_type', options.caseType)
-  const { data: openDebtors } = await openDebtorsQ
-  const openIds = (openDebtors ?? []).map(d => d.id)
-  if (!openIds.length) return { tasks: [], total: 0 }
-
   let q = supabase
     .from('tasks')
-    .select(cols, { count: 'exact' })
+    .select(cols)
     .in('task_status', [...REVIEW_QUEUE_STATUSES])
     .not('assigned_to', 'is', null)
-    .in('debtor_id', openIds)
     .order('completed_at', { ascending: true, nullsFirst: false })
-    .range(offset, offset + limit - 1)
+    .limit(REVIEW_QUEUE_FETCH_CAP)
 
   if (branchId) q = q.eq('branch_id', branchId)
   if (options?.lawyerId) q = q.eq('assigned_to', options.lawyerId)
 
-  const { data: rawTasks, count, error } = await q
+  const { data: rawTasks, error } = await q
   if (error) {
-    console.error('[fetchPendingReviewTasksPaginated]', error.message ?? error)
+    console.error('[fetchPendingReviewTasksPaginated]', error.message || error.code || error)
     return { tasks: [], total: 0 }
   }
 
-  const tasks = await hydratePendingReviewTasks(supabase, branchId, (rawTasks ?? []) as unknown as Record<string, unknown>[])
-  // total من الاستعلام بعد فلاتر الإغلاق/الفرع — يطابق النتائج
-  return { tasks, total: count ?? tasks.length }
+  const hydrated = await hydratePendingReviewTasks(
+    supabase,
+    branchId,
+    (rawTasks ?? []) as unknown as Record<string, unknown>[],
+  )
+  const filtered = filterHydratedReviewTasks(hydrated, options)
+  return {
+    tasks: filtered.slice(offset, offset + limit),
+    total: filtered.length,
+  }
 }
 
 export async function fetchPendingReviewTaskById(
@@ -289,29 +302,21 @@ export async function fetchPendingReviewTasks(
   return all
 }
 
-/** Hero metric — direct COUNT query, no full task fetch. branchId=null → كل الفروع. */
+/** Hero metric — same queue rules as review page. branchId=null → كل الفروع. */
 export async function fetchPendingReviewCount(
   supabase: SupabaseClient,
   branchId: string | null,
+  branchListId?: string | null,
+  caseType?: 'civil' | 'criminal' | null,
 ): Promise<number> {
-  let openDebtorsQ = supabase
-    .from('debtors')
-    .select('id')
-    .not('case_status', 'eq', 'closed')
-  if (branchId) openDebtorsQ = openDebtorsQ.eq('branch_id', branchId)
-  const { data: openDebtors } = await openDebtorsQ
-  const openIds = (openDebtors ?? []).map(d => d.id)
-  if (!openIds.length) return 0
-
-  let q = supabase
-    .from('tasks')
-    .select('id', { count: 'exact', head: true })
-    .in('task_status', [...REVIEW_QUEUE_STATUSES])
-    .not('assigned_to', 'is', null)
-    .in('debtor_id', openIds)
-  if (branchId) q = q.eq('branch_id', branchId)
-  const { count } = await q
-  return count ?? 0
+  const page = await fetchPendingReviewTasksPaginated(supabase, branchId, {
+    offset: 0,
+    limit: REVIEW_QUEUE_FETCH_CAP,
+    caseType: caseType ?? null,
+    branchListId: branchListId ?? null,
+    includeCompletionData: false,
+  })
+  return page.total
 }
 
 export interface UnassignedStageCount {
@@ -400,6 +405,8 @@ interface CurrentTaskMeta {
   unassigned: number
   assigned: number
   stageCounts: Map<string, number>
+  assignedStageCounts: Map<string, number>
+  overdueStageCounts: Map<string, number>
 }
 
 function debtorRowsToTaskRows(debtors: any[], branchId: string | null): CurrentBranchTaskRow[] {
@@ -508,10 +515,14 @@ async function scanCurrentTaskMeta(
   supabase: SupabaseClient,
   branchId: string | null,
   caseType?: 'civil' | 'criminal' | null,
+  branchListId?: string | null,
 ): Promise<CurrentTaskMeta> {
   let unassigned = 0
   let assigned = 0
   const stageCounts = new Map<string, number>()
+  const assignedStageCounts = new Map<string, number>()
+  const overdueStageCounts = new Map<string, number>()
+  const today = localTodayYmd()
   let offset = 0
 
   while (true) {
@@ -524,6 +535,7 @@ async function scanCurrentTaskMeta(
       .range(offset, offset + STATS_CHUNK_SIZE - 1)
     if (branchId) debtorsQ = debtorsQ.eq('branch_id', branchId)
     if (caseType) debtorsQ = debtorsQ.eq('case_type', caseType)
+    if (branchListId) debtorsQ = debtorsQ.eq('branch_list_id', branchListId)
 
     const { data: debtors, error } = await debtorsQ
 
@@ -537,7 +549,7 @@ async function scanCurrentTaskMeta(
     if (taskIds.length) {
       let tasksQ = supabase
         .from('tasks')
-        .select('id, assigned_to, task_definition_id, task_status')
+        .select('id, assigned_to, task_definition_id, task_status, due_date')
         .in('id', taskIds)
         .not('task_status', 'in', CURRENT_TASK_TERMINAL_FILTER)
       if (branchId) tasksQ = tasksQ.eq('branch_id', branchId)
@@ -548,17 +560,22 @@ async function scanCurrentTaskMeta(
         console.error('[scanCurrentTaskMeta:tasks]', tErr.message ?? tErr)
       } else {
         for (const task of tasks ?? []) {
+          const defId = task.task_definition_id as string | null
           if (taskLawyerId(task)) {
             assigned++
-          } else {
-            unassigned++
-            if (task.task_definition_id) {
-              stageCounts.set(
-                task.task_definition_id,
-                (stageCounts.get(task.task_definition_id) ?? 0) + 1,
-              )
+            if (defId) {
+              assignedStageCounts.set(defId, (assignedStageCounts.get(defId) ?? 0) + 1)
+              const due = task.due_date ? String(task.due_date).slice(0, 10) : ''
+              if (due && due < today) {
+                overdueStageCounts.set(defId, (overdueStageCounts.get(defId) ?? 0) + 1)
+              }
             }
+          } else if (defId) {
+            // غير مكلفة بتعريف مهمة → بطاقات المراحل
+            unassigned++
+            stageCounts.set(defId, (stageCounts.get(defId) ?? 0) + 1)
           }
+          // بلا task_definition_id → تُحسب ضمن «الأسماء التي تحت إسناد مهمة» لا هنا
         }
       }
     }
@@ -567,7 +584,7 @@ async function scanCurrentTaskMeta(
     offset += STATS_CHUNK_SIZE
   }
 
-  return { unassigned, assigned, stageCounts }
+  return { unassigned, assigned, stageCounts, assignedStageCounts, overdueStageCounts }
 }
 
 async function countCurrentTasksByAssignment(
@@ -748,54 +765,77 @@ export async function fetchCurrentTaskStats(
 export async function fetchDashboardData(
   supabase: SupabaseClient,
   branchId: string | null,
-  options?: { caseType?: 'civil' | 'criminal' | null },
-): Promise<{ stages: UnassignedStageCount[]; unassigned: number; assigned: number }> {
-  const meta = await scanCurrentTaskMeta(supabase, branchId, options?.caseType ?? null)
-  if (meta.unassigned === 0) {
-    return { stages: [], unassigned: 0, assigned: meta.assigned }
-  }
+  options?: { caseType?: 'civil' | 'criminal' | null; branchListId?: string | null },
+): Promise<{
+  stages: UnassignedStageCount[]
+  assignedStages: UnassignedStageCount[]
+  overdueStages: UnassignedStageCount[]
+  unassigned: number
+  assigned: number
+}> {
+  const meta = await scanCurrentTaskMeta(
+    supabase,
+    branchId,
+    options?.caseType ?? null,
+    options?.branchListId ?? null,
+  )
 
-  const defIds = [...meta.stageCounts.keys()]
-  const { data: defs } = defIds.length
-    ? await supabase.from('task_definitions').select('id, label, sort_order').in('id', defIds)
+  const allDefIds = [
+    ...new Set([
+      ...meta.stageCounts.keys(),
+      ...meta.assignedStageCounts.keys(),
+      ...meta.overdueStageCounts.keys(),
+    ]),
+  ]
+
+  const { data: defs } = allDefIds.length
+    ? await supabase.from('task_definitions').select('id, label, sort_order').in('id', allDefIds)
     : { data: [] as { id: string; label: string; sort_order: number }[] }
 
   const defMap = new Map((defs ?? []).map(d => [d.id, d]))
-  const stages: UnassignedStageCount[] = []
 
-  for (const [defId, count] of meta.stageCounts) {
-    if (count <= 0) continue
-    const def = defMap.get(defId)
-    stages.push({
-      id: defId,
-      label: def?.label ?? '—',
-      sortOrder: def?.sort_order ?? 999,
-      count,
-    })
-  }
-
-  // عند كل الفروع: اجمع المراحل بنفس الاسم حتى لا تتكرر صناديق الفلترة
-  if (!branchId && stages.length > 1) {
-    const byLabel = new Map<string, UnassignedStageCount>()
-    for (const s of stages) {
-      const key = s.label.trim().toLowerCase() || s.id
-      const prev = byLabel.get(key)
-      if (!prev) {
-        byLabel.set(key, { ...s })
-      } else {
-        prev.count += s.count
-        if (s.sortOrder < prev.sortOrder) prev.sortOrder = s.sortOrder
-      }
+  function buildStages(counts: Map<string, number>): UnassignedStageCount[] {
+    const stages: UnassignedStageCount[] = []
+    for (const [defId, count] of counts) {
+      if (count <= 0) continue
+      const def = defMap.get(defId)
+      stages.push({
+        id: defId,
+        label: def?.label ?? '—',
+        sortOrder: def?.sort_order ?? 999,
+        count,
+      })
     }
-    stages.length = 0
-    stages.push(...byLabel.values())
+
+    if (!branchId && stages.length > 1) {
+      const byLabel = new Map<string, UnassignedStageCount>()
+      for (const s of stages) {
+        const key = s.label.trim().toLowerCase() || s.id
+        const prev = byLabel.get(key)
+        if (!prev) {
+          byLabel.set(key, { ...s })
+        } else {
+          prev.count += s.count
+          if (s.sortOrder < prev.sortOrder) prev.sortOrder = s.sortOrder
+        }
+      }
+      stages.length = 0
+      stages.push(...byLabel.values())
+    }
+
+    stages.sort((a, b) => a.sortOrder - b.sortOrder)
+    return stages
   }
 
-  stages.sort((a, b) => a.sortOrder - b.sortOrder)
+  const stages = buildStages(meta.stageCounts)
+  const assignedStages = buildStages(meta.assignedStageCounts)
+  const overdueStages = buildStages(meta.overdueStageCounts)
 
   return {
     stages,
-    unassigned: meta.unassigned,
+    assignedStages,
+    overdueStages,
+    unassigned: stages.reduce((sum, s) => sum + s.count, 0),
     assigned: meta.assigned,
   }
 }
@@ -817,8 +857,9 @@ export async function fetchAssignedCurrentTasks(
 export async function fetchBranchLawyers(
   supabase: SupabaseClient,
   branchId: string | null,
+  options?: { caseType?: 'civil' | 'criminal' | null },
 ): Promise<{ id: string; full_name: string }[]> {
-  const { lawyers, error } = await fetchAssignmentLawyers(supabase, branchId)
+  const { lawyers, error } = await fetchAssignmentLawyers(supabase, branchId, options)
   if (error) {
     console.error('[fetchBranchLawyers]', error)
     return []
@@ -826,7 +867,7 @@ export async function fetchBranchLawyers(
   return lawyers
 }
 
-/** Validates that a normal lawyer is only assigned tasks from their branch. */
+/** Validates that a normal lawyer is only assigned tasks from their branch + matching case_type. */
 export async function validateLawyerTaskAssignment(
   supabase: SupabaseClient,
   lawyerId: string,
@@ -835,15 +876,22 @@ export async function validateLawyerTaskAssignment(
   if (!taskIds.length) return { ok: false, error: 'لا مهام محددة' }
 
   const [{ data: lawyer }, { data: tasks }] = await Promise.all([
-    supabase.from('profiles').select('role, branch_id, lawyer_type').eq('id', lawyerId).single(),
-    supabase.from('tasks').select('id, branch_id, task_type, task_definitions(task_type)').in('id', taskIds),
+    supabase
+      .from('profiles')
+      .select('role, branch_id, lawyer_type, case_type')
+      .eq('id', lawyerId)
+      .single(),
+    supabase
+      .from('tasks')
+      .select('id, branch_id, task_type, debtor_id, task_definitions(task_type), debtors!tasks_debtor_id_fkey(case_type)')
+      .in('id', taskIds),
   ])
 
   if (!lawyer) {
     return { ok: false, error: 'المستخدم غير موجود أو غير صالح' }
   }
 
-  // مندوب: فقط مهام إيجاد عنوان، ونفس فرعه
+  // مندوب: فقط مهام إيجاد عنوان، ونفس فرعه (مسار مدني)
   if (lawyer.role === 'delegate') {
     const delegateBranch = lawyer.branch_id
     if (!delegateBranch) {
@@ -860,12 +908,33 @@ export async function validateLawyerTaskAssignment(
       if (!isFindAddressTaskType(taskType)) {
         return { ok: false, error: 'يمكن تكليف المندوب بمهمة إيجاد عنوان فقط' }
       }
+      const debtorRaw = (t as { debtors?: { case_type?: string } | { case_type?: string }[] | null }).debtors
+      const debtorCt = Array.isArray(debtorRaw) ? debtorRaw[0]?.case_type : debtorRaw?.case_type
+      if (debtorCt === 'criminal') {
+        return { ok: false, error: 'لا يمكن تكليف مندوب بمهام مدين جزائي' }
+      }
     }
     return { ok: true, error: null }
   }
 
   if (lawyer.role !== 'lawyer') {
     return { ok: false, error: 'المحامي غير موجود أو غير صالح' }
+  }
+
+  const lawyerCaseType = (lawyer as { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil'
+
+  for (const t of tasks ?? []) {
+    const debtorRaw = (t as { debtors?: { case_type?: string } | { case_type?: string }[] | null }).debtors
+    const debtorCtRaw = Array.isArray(debtorRaw) ? debtorRaw[0]?.case_type : debtorRaw?.case_type
+    const debtorCaseType = debtorCtRaw === 'criminal' ? 'criminal' : 'civil'
+    if (debtorCaseType !== lawyerCaseType) {
+      return {
+        ok: false,
+        error: lawyerCaseType === 'criminal'
+          ? 'لا يمكن تكليف محامٍ جزائي بمهام مدين مدني'
+          : 'لا يمكن تكليف محامٍ مدني بمهام مدين جزائي',
+      }
+    }
   }
 
   if (isGeneralLawyerType(lawyer.lawyer_type)) {
@@ -910,7 +979,9 @@ function omitPayloadKeys(payload: Record<string, unknown>, keys: string[]) {
   return next
 }
 
-/** Apply assignment — always assignment_pending_acceptance (no silent skip to assigned). */
+/** Apply assignment — always assignment_pending_acceptance (no silent skip to assigned).
+ * يمنع التكليف المزدوج: يحدّث فقط المهام القابلة للتكليف.
+ */
 export async function assignTasksToLawyer(
   supabase: SupabaseClient,
   taskIds: string[],
@@ -919,6 +990,8 @@ export async function assignTasksToLawyer(
   releasedBy?: string,
 ): Promise<{ ok: boolean; error: string | null }> {
   if (!taskIds.length) return { ok: false, error: 'لا مهام محددة' }
+
+  const ASSIGNABLE = ['waiting_assignment', 'assignment_rejected', 'new', 'draft'] as const
 
   const full = buildPendingAssignmentPayload(lawyerId, dueDate) as Record<string, unknown>
   // Fallbacks only omit optional columns — never change required status flow
@@ -936,11 +1009,23 @@ export async function assignTasksToLawyer(
 
   let lastError: unknown = null
   for (const payload of payloads) {
-    const { error } = await supabase.from('tasks').update(payload as any).in('id', taskIds)
+    const { data: updated, error } = await supabase
+      .from('tasks')
+      .update(payload as any)
+      .in('id', taskIds)
+      .in('task_status', [...ASSIGNABLE])
+      .select('id')
+
     if (error) {
       lastError = error
       continue
     }
+
+    if (!updated?.length) {
+      lastError = { message: 'المهمة لم تعد قابلة للتكليف (ربما كُلّفت مسبقاً)' }
+      continue
+    }
+
     const { data: check } = await supabase
       .from('tasks')
       .select('id, assigned_to, task_status')
@@ -1305,4 +1390,178 @@ export async function rejectTaskAssignment(
     return { data: null, error: { message: 'لم يتم تحديث المهمة — ربما تغيّرت حالتها مسبقاً' } }
   }
   return { data, error: null }
+}
+
+/** حالات يمكن إرجاعها من «مكلفة» إلى «بانتظار التكليف» */
+export const UNASSIGNABLE_TASK_STATUSES = [
+  'assignment_pending_acceptance',
+  'assigned',
+  'in_progress',
+  'needs_revision',
+  'rejected',
+  'submitted',
+  'pending_review',
+] as const
+
+export type UnassignableTaskStatus = (typeof UNASSIGNABLE_TASK_STATUSES)[number]
+
+const UNASSIGN_BLOCKED_FEE = new Set([
+  'approved_pending_next',
+  'payable',
+  'released',
+  'paid',
+  'withdrawn',
+])
+
+function buildUnassignPayload(reason: string | null) {
+  const now = new Date().toISOString()
+  const trimmed = reason?.trim() || 'إلغاء تكليف من الإدارة'
+  return {
+    task_status: 'waiting_assignment' as TaskStatus,
+    assigned_to: null,
+    assigned_at: null,
+    assignment_expires_at: null,
+    accepted_at: null,
+    acceptance_method: null,
+    assignment_rejected_by: null,
+    due_date: null,
+    completed_at: null,
+    completion_data: null,
+    given_up_at: now,
+    give_up_reason: trimmed,
+  }
+}
+
+/**
+ * إلغاء تكليف مهام مكلفة → بانتظار التكليف.
+ * تُحذف من قائمة المحامي/المندوب (assigned_to = null) وتبقى current_task_id كما هي.
+ * لا يُسمح إن كانت الأتعاب في مسار الاعتماد/الصرف.
+ */
+export async function unassignTasksToWaiting(
+  supabase: SupabaseClient,
+  taskIds: string[],
+  options?: { reason?: string | null },
+): Promise<{ ok: boolean; error: string | null; updatedIds: string[] }> {
+  const uniqueIds = [...new Set(taskIds.map(String).filter(Boolean))]
+  if (!uniqueIds.length) return { ok: false, error: 'لا مهام محددة', updatedIds: [] }
+
+  let rows: {
+    id: string
+    task_status: string
+    assigned_to: string | null
+    fee_status?: string | null
+    delegate_fee_status?: string | null
+  }[] | null = null
+
+  {
+    const fullSel = await supabase
+      .from('tasks')
+      .select('id, task_status, assigned_to, fee_status, delegate_fee_status')
+      .in('id', uniqueIds)
+    if (fullSel.error && /fee_status|delegate_fee_status/i.test(fullSel.error.message ?? '')) {
+      const basic = await supabase
+        .from('tasks')
+        .select('id, task_status, assigned_to')
+        .in('id', uniqueIds)
+      if (basic.error) {
+        return { ok: false, error: basic.error.message || 'تعذر قراءة المهام', updatedIds: [] }
+      }
+      rows = basic.data as typeof rows
+    } else if (fullSel.error) {
+      return { ok: false, error: fullSel.error.message || 'تعذر قراءة المهام', updatedIds: [] }
+    } else {
+      rows = fullSel.data as typeof rows
+    }
+  }
+
+  const found = new Map((rows ?? []).map(r => [r.id as string, r]))
+  for (const id of uniqueIds) {
+    const row = found.get(id)
+    if (!row) {
+      return { ok: false, error: 'بعض المهام غير موجودة', updatedIds: [] }
+    }
+    if (!row.assigned_to) {
+      return { ok: false, error: 'بعض المهام غير مكلفة أصلاً', updatedIds: [] }
+    }
+    const status = String(row.task_status ?? '')
+    if (!(UNASSIGNABLE_TASK_STATUSES as readonly string[]).includes(status)) {
+      return {
+        ok: false,
+        error: status === 'approved' || status === 'completed'
+          ? 'لا يمكن إلغاء تكليف مهمة معتمدة أو مكتملة'
+          : `لا يمكن إلغاء تكليف مهمة بحالة «${status}»`,
+        updatedIds: [],
+      }
+    }
+    const fee = row.fee_status ? String(row.fee_status) : null
+    if (fee && UNASSIGN_BLOCKED_FEE.has(fee)) {
+      return {
+        ok: false,
+        error: 'لا يمكن إلغاء تكليف مهمة دخلت مسار احتساب/صرف الأتعاب',
+        updatedIds: [],
+      }
+    }
+    const dFee = row.delegate_fee_status ? String(row.delegate_fee_status) : null
+    if (dFee === 'available' || dFee === 'withdrawn') {
+      return {
+        ok: false,
+        error: 'لا يمكن إلغاء تكليف مهمة مندوب بعد احتساب أتعابه',
+        updatedIds: [],
+      }
+    }
+  }
+
+  const full = buildUnassignPayload(options?.reason ?? null) as Record<string, unknown>
+  const payloads: Record<string, unknown>[] = [
+    full,
+    omitPayloadKeys(full, ['accepted_at']),
+    omitPayloadKeys(full, ['accepted_at', 'acceptance_method']),
+    omitPayloadKeys(full, ['accepted_at', 'acceptance_method', 'assignment_rejected_by']),
+    omitPayloadKeys(full, ['accepted_at', 'acceptance_method', 'assignment_rejected_by', 'completion_data']),
+    omitPayloadKeys(full, [
+      'accepted_at',
+      'acceptance_method',
+      'assignment_rejected_by',
+      'completion_data',
+      'given_up_at',
+      'give_up_reason',
+    ]),
+    {
+      task_status: 'waiting_assignment',
+      assigned_to: null,
+      due_date: null,
+    },
+  ]
+
+  let lastError: unknown = null
+  for (const payload of payloads) {
+    const { data: updated, error } = await supabase
+      .from('tasks')
+      .update(payload as any)
+      .in('id', uniqueIds)
+      .in('task_status', [...UNASSIGNABLE_TASK_STATUSES])
+      .not('assigned_to', 'is', null)
+      .select('id')
+
+    if (error) {
+      lastError = error
+      continue
+    }
+
+    const updatedIds = (updated ?? []).map(r => r.id as string)
+    if (updatedIds.length !== uniqueIds.length) {
+      return {
+        ok: false,
+        error: 'تعذر إلغاء تكليف كل المهام — ربما تغيّرت حالتها. حدّث الصفحة وحاول مجدداً',
+        updatedIds,
+      }
+    }
+    return { ok: true, error: null, updatedIds }
+  }
+
+  return {
+    ok: false,
+    error: formatErrorMessage(lastError) || 'فشل إلغاء التكليف',
+    updatedIds: [],
+  }
 }

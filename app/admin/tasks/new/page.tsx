@@ -18,6 +18,8 @@ import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/
 import { DatePicker } from '@/components/ui/date-picker'
 import { cn } from '@/lib/utils'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useCaseScope } from '@/hooks/use-case-scope'
+import { assertDebtorSection, sectionForbiddenMessage } from '@/lib/case-scope'
 import { DEBTOR_TASK_SELECT, type DebtorSearchRow } from '@/lib/debtor-search'
 
 const ALL_TASK_TYPES: TaskType[] = [
@@ -33,6 +35,8 @@ export default function NewTaskPage() {
   const router = useRouter()
   const branchId = useBranchId()
   const readOnly = !useCanWrite()
+  const scope = useCaseScope()
+  const { caseTypeFilter } = scope
   const [lawyers, setLawyers] = useState<any[]>([])
   const [selectedDebtor, setSelectedDebtor] = useState<DebtorSearchRow | null>(null)
   const [showAllLawyers, setShowAllLawyers] = useState(false)
@@ -81,6 +85,10 @@ export default function NewTaskPage() {
       setError(ACTIVE_CASE_BLOCK_MSG)
       return
     }
+    if (debtor && !assertDebtorSection(scope, debtor.case_type)) {
+      setError(sectionForbiddenMessage())
+      return
+    }
 
     setSaving(true); setError('')
     const supabase = createClient()
@@ -124,6 +132,7 @@ export default function NewTaskPage() {
                 value={form.debtor_id}
                 onChange={handleDebtorChange}
                 branchId={branchId}
+                caseType={caseTypeFilter}
                 select={DEBTOR_TASK_SELECT}
                 disabled={!branchId}
               />

@@ -9,11 +9,12 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import { fmtDate } from '@/lib/utils'
-import { useBranchId } from '@/context/branch'
+import { useBranch, useBranchId } from '@/context/branch'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DateRangePicker } from '@/components/ui/date-range-picker'
+import { useCaseScope } from '@/hooks/use-case-scope'
 
 function formatSize(bytes: number | null) {
   if (!bytes) return '—'
@@ -40,6 +41,8 @@ const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm 
 
 export default function TaskFilesPage() {
   const branchId = useBranchId()
+  const { viewAllBranches, listId } = useBranch()
+  const { caseTypeFilter } = useCaseScope()
   const [files, setFiles] = useState<any[]>([])
   const [lawyers, setLawyers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -64,13 +67,28 @@ export default function TaskFilesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     const supabase = createClient()
+    const scopeListId = (!viewAllBranches && listId) ? listId : null
     let lq = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
     if (branchId) lq = (lq as any).eq('branch_id', branchId)
 
     let debtorIds: string[] | null = null
     if (debouncedSearch.trim()) {
-      debtorIds = await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId)
+      debtorIds = await resolveDebtorIdsBySearch(supabase, debouncedSearch, branchId, 200, scopeListId, caseTypeFilter)
       if (!debtorIds?.length) {
+        setFiles([])
+        const { data: l } = await lq
+        setLawyers(l ?? [])
+        setLoading(false)
+        return
+      }
+    } else if (scopeListId || caseTypeFilter) {
+      let dq = supabase.from('debtors').select('id')
+      if (scopeListId) dq = dq.eq('branch_list_id', scopeListId)
+      if (caseTypeFilter) dq = dq.eq('case_type', caseTypeFilter)
+      if (branchId) dq = dq.eq('branch_id', branchId)
+      const { data: listDebtors } = await dq
+      debtorIds = (listDebtors ?? []).map(d => d.id)
+      if (!debtorIds.length) {
         setFiles([])
         const { data: l } = await lq
         setLawyers(l ?? [])
@@ -79,7 +97,7 @@ export default function TaskFilesPage() {
       }
     }
 
-    let fq = supabase.from('task_attachments').select(`*, task:tasks!task_attachments_task_id_fkey(task_type, task_status, governorate, branch_id, assigned_to, debtor_id, debtor:debtors!tasks_debtor_id_fkey(full_name, governorate, phone, receipt_number), lawyer:profiles!tasks_assigned_to_fkey(id, full_name))`).order('created_at', { ascending: false }).limit(500)
+    let fq = supabase.from('task_attachments').select(`*, task:tasks!task_attachments_task_id_fkey(task_type, task_status, governorate, branch_id, assigned_to, debtor_id, debtor:debtors!tasks_debtor_id_fkey(full_name, governorate, phone, receipt_number, branch_list_id), lawyer:profiles!tasks_assigned_to_fkey(id, full_name))`).order('created_at', { ascending: false }).limit(500)
 
     const [{ data: f }, { data: l }] = await Promise.all([fq, lq])
     let fileRows = branchId
@@ -92,7 +110,7 @@ export default function TaskFilesPage() {
     setFiles(fileRows)
     setLawyers(l ?? [])
     setLoading(false)
-  }, [branchId, debouncedSearch])
+  }, [branchId, viewAllBranches, listId, debouncedSearch, caseTypeFilter])
 
   useEffect(() => { load() }, [load])
 

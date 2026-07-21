@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getBranchContext } from '@/lib/branch-context'
-import { REVIEW_QUEUE_STATUSES } from '@/lib/task-assignment'
-import { STAFF_ROLES } from '@/lib/permissions'
-import type { UserRole } from '@/lib/types'
+import { fetchPendingReviewCount } from '@/lib/task-assignment'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
+import { filterBySection } from '@/lib/case-scope'
 
 function groupPendingExpenses(rows: { expense_type: string | null }[]) {
   const map = new Map<string, number>()
@@ -19,53 +18,10 @@ function groupPendingExpenses(rows: { expense_type: string | null }[]) {
 
 const CACHE_HEADERS = { 'Cache-Control': 'private, max-age=30' }
 
-async function countPendingFeeReceipts(
-  admin: ReturnType<typeof createAdminClient>,
-  branchId: string,
-): Promise<number> {
-  const joined = await admin
-    .from('task_payment_receipts')
-    .select('id, lawyer:profiles!task_payment_receipts_lawyer_id_fkey!inner(branch_id)', { count: 'exact', head: true })
-    .eq('status', 'pending')
-    .eq('lawyer.branch_id', branchId)
-
-  if (!joined.error) return joined.count ?? 0
-
-  const { data: lawyers } = await admin
-    .from('profiles')
-    .select('id')
-    .eq('role', 'lawyer')
-    .eq('is_active', true)
-    .eq('branch_id', branchId)
-    .limit(100)
-
-  const ids = (lawyers ?? []).map(l => l.id)
-  if (!ids.length) return 0
-
-  const { count } = await admin
-    .from('task_payment_receipts')
-    .select('id', { count: 'exact', head: true })
-    .in('lawyer_id', ids)
-    .eq('status', 'pending')
-
-  return count ?? 0
-}
-
 export async function GET() {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'غير مصرح' }, { status: 401 })
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile || !STAFF_ROLES.includes(profile.role as UserRole)) {
-      return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
-    }
+    const auth = await requireStaffProfile()
+    if (auth.error) return auth.error
 
     const { branchId } = await getBranchContext()
     if (!branchId) {
@@ -79,60 +35,73 @@ export async function GET() {
     }
 
     const admin = createAdminClient()
+    const scopeCaseType = filterBySection(sessionCaseScope(auth.profile))
 
     // Align pendingReview with review page: assigned + open debtors only
-    let openDebtorsQ = admin
-      .from('debtors')
-      .select('id')
-      .eq('branch_id', branchId)
-      .not('case_status', 'eq', 'closed')
-    const { data: openDebtors } = await openDebtorsQ
-    const openIds = (openDebtors ?? []).map(d => d.id)
+    const reviewPromise = fetchPendingReviewCount(admin, branchId, null, scopeCaseType)
 
-    const reviewPromise = openIds.length
+    let lawyersQ = admin
+      .from('profiles')
+      .select('id')
+      .eq('role', 'lawyer')
+      .eq('is_active', true)
+      .eq('branch_id', branchId)
+    if (scopeCaseType) lawyersQ = lawyersQ.eq('case_type', scopeCaseType)
+    const { data: scopedLawyers } = await lawyersQ.limit(200)
+    const scopedLawyerIds = (scopedLawyers ?? []).map(l => l.id)
+
+    const payoutPromise = scopedLawyerIds.length
       ? admin
-          .from('tasks')
+          .from('lawyer_payout_requests')
           .select('id', { count: 'exact', head: true })
           .eq('branch_id', branchId)
-          .in('task_status', [...REVIEW_QUEUE_STATUSES])
-          .not('assigned_to', 'is', null)
-          .in('debtor_id', openIds)
+          .eq('status', 'pending')
+          .in('lawyer_id', scopedLawyerIds)
       : Promise.resolve({ count: 0 })
 
-    const [reviewRes, payoutRes, feeReceiptCount, expenseCountRes] = await Promise.all([
+    const feeReceiptPromise = scopedLawyerIds.length
+      ? admin
+          .from('task_payment_receipts')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending')
+          .in('lawyer_id', scopedLawyerIds)
+      : Promise.resolve({ count: 0 })
+
+    let expenseQ = admin
+      .from('expenses')
+      .select('id, debtor:debtors!inner(case_type)', { count: 'exact', head: true })
+      .eq('branch_id', branchId)
+      .eq('status', 'pending_approval')
+    if (scopeCaseType) expenseQ = expenseQ.eq('debtor.case_type', scopeCaseType)
+
+    const [reviewRes, payoutRes, feeReceiptRes, expenseCountRes] = await Promise.all([
       reviewPromise,
-      admin
-        .from('lawyer_payout_requests')
-        .select('id', { count: 'exact', head: true })
-        .eq('branch_id', branchId)
-        .eq('status', 'pending'),
-      countPendingFeeReceipts(admin, branchId),
-      admin
-        .from('expenses')
-        .select('id', { count: 'exact', head: true })
-        .eq('branch_id', branchId)
-        .eq('status', 'pending_approval'),
+      payoutPromise,
+      feeReceiptPromise,
+      expenseQ,
     ])
 
     const pendingExpenses = expenseCountRes.count ?? 0
     let pendingExpensesByType: { type: string; count: number }[] = []
 
     if (pendingExpenses > 0 && pendingExpenses <= 300) {
-      const { data: expenseRows } = await admin
+      let expenseRowsQ = admin
         .from('expenses')
-        .select('expense_type')
+        .select('expense_type, debtor:debtors!inner(case_type)')
         .eq('branch_id', branchId)
         .eq('status', 'pending_approval')
         .limit(300)
+      if (scopeCaseType) expenseRowsQ = expenseRowsQ.eq('debtor.case_type', scopeCaseType)
+      const { data: expenseRows } = await expenseRowsQ
       pendingExpensesByType = groupPendingExpenses(expenseRows ?? [])
     } else if (pendingExpenses > 300) {
       pendingExpensesByType = [{ type: 'صرفيات معلّقة', count: pendingExpenses }]
     }
 
     return NextResponse.json({
-      pendingReview: reviewRes.count ?? 0,
+      pendingReview: reviewRes,
       pendingPayoutRequests: payoutRes.count ?? 0,
-      pendingTaskFeeReceipts: feeReceiptCount,
+      pendingTaskFeeReceipts: feeReceiptRes.count ?? 0,
       pendingExpenses,
       pendingExpensesByType,
     }, { headers: CACHE_HEADERS })

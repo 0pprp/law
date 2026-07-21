@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { useBranchId } from '@/context/branch'
+import { useBranch, useBranchId } from '@/context/branch'
 import { useAdminRole } from '@/context/admin-role'
 import { canManageDelegateFees, canManageDelegates } from '@/lib/permissions'
 import {
@@ -41,6 +41,7 @@ const FEE_STATUS_FILTER_OPTIONS = [
 export default function DelegateReportPage() {
   const router = useRouter()
   const branchId = useBranchId()
+  const { viewAllBranches, listId } = useBranch()
   const role = useAdminRole()
   const canView = canManageDelegates(role)
   const canEdit = canManageDelegateFees(role)
@@ -57,10 +58,11 @@ export default function DelegateReportPage() {
     setLoading(true)
     setError('')
     const supabase = createClient()
-    const data = await fetchDelegateReport(supabase, branchId)
+    const scopeListId = (!viewAllBranches && listId) ? listId : null
+    const data = await fetchDelegateReport(supabase, branchId, scopeListId)
     setRows(data)
     setLoading(false)
-  }, [branchId, canView])
+  }, [branchId, viewAllBranches, listId, canView])
 
   useEffect(() => {
     if (!canView) {

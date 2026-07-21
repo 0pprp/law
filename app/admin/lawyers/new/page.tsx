@@ -9,7 +9,8 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { useAdminRole } from '@/context/admin-role'
-import { canCreateLawyerUser, isLegalManager } from '@/lib/permissions'
+import { canCreateLawyerUser, isLegalManager, isCriminalLegalManager, isAnyLegalManager } from '@/lib/permissions'
+import { CASE_TYPE_OPTIONS } from '@/lib/case-type'
 import { isMainBranchName } from '@/lib/branch-constants'
 import {
   OperationBranchSelect,
@@ -29,6 +30,7 @@ const ALL_ROLE_OPTIONS = [
   { value: 'lawyer', label: USER_ROLE_LABELS.lawyer },
   { value: 'accountant', label: USER_ROLE_LABELS.accountant },
   { value: 'viewer', label: USER_ROLE_LABELS.viewer },
+  { value: 'criminal_legal_manager', label: USER_ROLE_LABELS.criminal_legal_manager },
   { value: 'payment_follow_up', label: USER_ROLE_LABELS.payment_follow_up },
 ]
 
@@ -64,7 +66,9 @@ export default function NewLawyerPage() {
   } = useOperationBranch()
   const role = useAdminRole()
   const readOnly = !canCreateLawyerUser(role)
-  const legalOfficerMode = isLegalManager(role)
+  const legalOfficerMode = isAnyLegalManager(role)
+  const forceCivilLawyer = isLegalManager(role)
+  const forceCriminalLawyer = isCriminalLegalManager(role)
   const roleOptions = legalOfficerMode
     ? [{ value: 'lawyer', label: USER_ROLE_LABELS.lawyer }]
     : ALL_ROLE_OPTIONS
@@ -72,18 +76,20 @@ export default function NewLawyerPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
-  const [userRole, setUserRole] = useState<'lawyer' | 'accountant' | 'viewer' | 'payment_follow_up'>('lawyer')
+  const [userRole, setUserRole] = useState<'lawyer' | 'accountant' | 'viewer' | 'criminal_legal_manager' | 'payment_follow_up'>('lawyer')
 
   const [form, setForm] = useState({
     full_name: '', username: '', temporary_password: '',
     phone: '', identity_number: '', identity_category: '', is_active: true,
     lawyer_type: 'normal' as 'normal' | 'general',
     accountant_type: 'branch' as 'branch' | 'general',
+    case_type: (forceCriminalLawyer ? 'criminal' : 'civil') as 'civil' | 'criminal',
   })
 
   const isLawyer = userRole === 'lawyer'
   const isAccountantRole = userRole === 'accountant'
   const isViewerRole = userRole === 'viewer'
+  const isCriminalManagerRole = userRole === 'criminal_legal_manager'
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
 
@@ -136,6 +142,9 @@ export default function NewLawyerPage() {
         identity_category: isLawyer ? form.identity_category.trim() : undefined,
         lawyer_type: isLawyer ? form.lawyer_type : undefined,
         accountant_type: isAccountantRole ? form.accountant_type : undefined,
+        case_type: isLawyer
+          ? (forceCivilLawyer ? 'civil' : forceCriminalLawyer ? 'criminal' : form.case_type)
+          : undefined,
         branch_id: branchId,
         role: userRole,
       }),
@@ -159,10 +168,11 @@ export default function NewLawyerPage() {
       ? 'محاسب عام'
       : USER_ROLE_LABELS[userRole as UserRole]
     await logActivity({
-      action: userRole === 'accountant' ? 'create_accountant' : userRole === 'viewer' ? 'create_viewer' : 'create_lawyer',
+      action: userRole === 'accountant' ? 'create_accountant' : userRole === 'viewer' ? 'create_viewer' : userRole === 'criminal_legal_manager' ? 'create_criminal_legal_manager' : 'create_lawyer',
       entity_type: 'profile',
       entity_id: userId,
       description: `إنشاء مستخدم (${roleLabel}): ${form.full_name}`,
+      case_type: isLawyer ? (forceCivilLawyer ? 'civil' : forceCriminalLawyer ? 'criminal' : form.case_type) : null,
     }, createClient())
     router.push('/admin/lawyers')
   }
@@ -193,7 +203,11 @@ export default function NewLawyerPage() {
           <p className="text-xs text-[#767676] bg-[#F3F1F2] rounded-lg px-3 py-2">
             الفرع / المحافظة: <span className="font-bold text-[#231F20]">{branchName}</span>
             {legalOfficerMode && (
-              <span className="block mt-1 text-[#2C8780]">مسؤول القانونية يطلع على كل الفروع — يمكنه إضافة محامين فقط.</span>
+              <span className="block mt-1 text-[#2C8780]">
+                {forceCriminalLawyer
+                  ? 'مسؤول الجزائيات يضيف محامي جزائيات فقط.'
+                  : 'مسؤول الدعاوى المدنية يطلع على كل الفروع — يمكنه إضافة محامين مدنيين فقط.'}
+              </span>
             )}
             {userRole === 'accountant' && !legalOfficerMode && (
               <span className="block mt-1 text-[#2C8780]">
@@ -203,7 +217,10 @@ export default function NewLawyerPage() {
               </span>
             )}
             {isViewerRole && !legalOfficerMode && (
-              <span className="block mt-1 text-[#2C8780]">مسؤول القانونية: تكليف ومراجعة واعتماد الإنجازات والتقارير وإضافة محامين فقط — بدون حذف أو إعدادات.</span>
+              <span className="block mt-1 text-[#2C8780]">مسؤول الدعاوى المدنية: تكليف ومراجعة واعتماد الإنجازات والتقارير وإضافة محامين مدنيين فقط — بدون حذف أو إعدادات.</span>
+            )}
+            {isCriminalManagerRole && !legalOfficerMode && (
+              <span className="block mt-1 text-[#2C8780]">مسؤول الجزائيات: نطاق الدعاوى الجزائية فقط.</span>
             )}
           </p>
         ) : (
@@ -218,11 +235,25 @@ export default function NewLawyerPage() {
             <Field label="الدور" required>
               <PremiumSelect
                 value={userRole}
-                onChange={v => setUserRole(v as 'lawyer' | 'accountant' | 'viewer' | 'payment_follow_up')}
+                onChange={v => setUserRole(v as 'lawyer' | 'accountant' | 'viewer' | 'criminal_legal_manager' | 'payment_follow_up')}
                 options={roleOptions}
                 disabled={legalOfficerMode}
               />
             </Field>
+            {isLawyer && (
+              <Field
+                label="قسم المحامي"
+                required
+                hint={forceCivilLawyer || forceCriminalLawyer ? 'يُحدَّد تلقائيًا حسب دورك ولا يمكن تغييره لاحقًا من الواجهة' : 'يُثبَّت عند الإنشاء ولا يُغيَّر لاحقًا إلا بأداة إدارية'}
+              >
+                <PremiumSelect
+                  value={forceCivilLawyer ? 'civil' : forceCriminalLawyer ? 'criminal' : form.case_type}
+                  onChange={v => set('case_type', v)}
+                  options={CASE_TYPE_OPTIONS}
+                  disabled={forceCivilLawyer || forceCriminalLawyer}
+                />
+              </Field>
+            )}
             {isAccountantRole && (
               <Field label="نوع المحاسب" required hint="محاسب الفرع مقيّد بفرعه — المحاسب العام يرى كل الفروع">
                 <PremiumSelect
@@ -239,7 +270,7 @@ export default function NewLawyerPage() {
           <CardHeader title="بيانات الحساب" />
           <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label="الاسم الكامل" required>
-              <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={INP} placeholder={isLawyer ? 'اسم المحامي الكامل' : isViewerRole ? 'اسم مسؤول القانونية الكامل' : 'اسم المحاسب الكامل'} />
+              <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={INP} placeholder={isLawyer ? 'اسم المحامي الكامل' : isViewerRole ? 'اسم مسؤول الدعاوى المدنية الكامل' : isCriminalManagerRole ? 'اسم مسؤول الجزائيات الكامل' : 'اسم المحاسب الكامل'} />
             </Field>
             <Field label="اسم المستخدم" required hint="أحرف إنجليزية صغيرة، أرقام، نقطة، شرطة سفلية فقط — يُستخدم لتسجيل الدخول">
               <input type="text" value={form.username}
