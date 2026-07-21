@@ -1445,13 +1445,15 @@ export async function unassignTasksToWaiting(
   const uniqueIds = [...new Set(taskIds.map(String).filter(Boolean))]
   if (!uniqueIds.length) return { ok: false, error: 'لا مهام محددة', updatedIds: [] }
 
-  let rows: {
+  type UnassignTaskRow = {
     id: string
     task_status: string
     assigned_to: string | null
     fee_status?: string | null
     delegate_fee_status?: string | null
-  }[] | null = null
+  }
+
+  let rows: UnassignTaskRow[] | null = null
 
   {
     const fullSel = await supabase
@@ -1466,11 +1468,11 @@ export async function unassignTasksToWaiting(
       if (basic.error) {
         return { ok: false, error: basic.error.message || 'تعذر قراءة المهام', updatedIds: [] }
       }
-      rows = basic.data as typeof rows
+      rows = (basic.data ?? []) as UnassignTaskRow[]
     } else if (fullSel.error) {
       return { ok: false, error: fullSel.error.message || 'تعذر قراءة المهام', updatedIds: [] }
     } else {
-      rows = fullSel.data as typeof rows
+      rows = (fullSel.data ?? []) as UnassignTaskRow[]
     }
   }
 
