@@ -53,6 +53,8 @@ export interface CriminalParsedRow {
   first_witness: string
   second_witness: string
   documents_filename: string
+  /** ملاحظات بروفايل المدين (debtors.notes) */
+  notes: string
 }
 
 export interface CriminalPreviewRow extends CriminalParsedRow {
@@ -98,6 +100,7 @@ export type CriminalImportProgressPhase =
   | 'reading_zip'
   | 'validating'
   | 'importing'
+  | 'uploading_files'
   | 'done'
 
 export interface CriminalImportProgress {
@@ -208,6 +211,7 @@ export async function parseCriminalImportExcel(file: File | ArrayBuffer, fileNam
     const first_witness = sanitizeDisplayText(readField(mapped, 'first_witness'))
     const second_witness = sanitizeDisplayText(readField(mapped, 'second_witness'))
     const documents_filename = sanitizeDisplayText(readField(mapped, 'documents_filename'))
+    const notes = sanitizeDisplayText(readField(mapped, 'notes'))
     const contract_raw = sanitizeDisplayText(readField(mapped, 'contract_guarantor'))
     const incident_date_raw = readField(mapped, 'incident_date')
     const amount_raw = readField(mapped, 'amount_owed')
@@ -219,6 +223,7 @@ export async function parseCriminalImportExcel(file: File | ArrayBuffer, fileNam
       current_address,
       charge_type,
       documents_filename,
+      notes,
       cellToString(incident_date_raw),
       cellToString(amount_raw),
       contract_raw,
@@ -241,6 +246,7 @@ export async function parseCriminalImportExcel(file: File | ArrayBuffer, fileNam
       first_witness,
       second_witness,
       documents_filename,
+      notes,
     })
   })
 
@@ -516,7 +522,7 @@ export async function executeCriminalDebtorImport(
           lawyer_fees: 0,
           penalty_amount: 0,
           receipt_signed_legal_costs: false,
-          notes: null,
+          notes: row.notes?.trim() ? row.notes.trim() : null,
           created_by: opts.userId,
           branch_id: row.branchId,
           branch_list_id: null,
@@ -549,8 +555,8 @@ export async function executeCriminalDebtorImport(
         throw new Error(`فشل حفظ التفاصيل: ${detailsRes.error}`)
       }
 
-      // رفع PDF إن وُجد
-      if (row.pdfKey && row.pdfStatus === 'موجود') {
+      // رفع PDF إن وُجد على السيرفر (مسار قديم) — المسار الحالي يرفع من العميل بعد الإنشاء
+      if (row.pdfKey && row.pdfStatus === 'موجود' && opts.pdfByKey.size > 0) {
         if (usedPdf.has(row.pdfKey)) {
           await cleanupCriminalDebtor(admin, createdId, [])
           debtorId = null
@@ -583,6 +589,9 @@ export async function executeCriminalDebtorImport(
           usedPdf.add(row.pdfKey)
           pdfUpload = 'uploaded'
         }
+      } else if (row.pdfKey && row.pdfStatus === 'موجود') {
+        // سيُرفع من المتصفح بعد الاستجابة
+        pdfUpload = 'skipped'
       } else if (row.documents_filename) {
         pdfUpload = 'missing'
       }
@@ -652,9 +661,10 @@ export async function downloadCriminalImportTemplate(): Promise<void> {
     ['2. قيم العقد والكفيل المقبولة: نعم / لا / فقط عقد (أو yes / no / contract_only).'],
     ['3. تنسيق التاريخ: YYYY-MM-DD أو DD/MM/YYYY أو تاريخ Excel.'],
     ['4. اسم ملف المستمسكات يجب أن يطابق اسماً داخل ZIP (PDF فقط).'],
-    ['5. عريضة الدعوى لا تُستورد هنا — تُرفع لاحقاً من صفحة المدين.'],
-    ['6. لا تضع صفوف أمثلة حقيقية في ورقة البيانات.'],
-    ['7. كل السجلات تُنشأ كجزائي (case_type=criminal) وبدون قائمة فرع.'],
+    ['5. عمود الملاحظات اختياري — يُحفظ في بروفايل المدين.'],
+    ['6. عريضة الدعوى لا تُستورد هنا — تُرفع لاحقاً من صفحة المدين.'],
+    ['7. لا تضع صفوف أمثلة حقيقية في ورقة البيانات.'],
+    ['8. كل السجلات تُنشأ كجزائي (case_type=criminal) وبدون قائمة فرع.'],
   ])
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'المدينون الجزائيون')

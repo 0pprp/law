@@ -292,6 +292,11 @@ export function canAddPayments(role: string | null | undefined): boolean {
   return isAdmin(role) || isAccountant(role) || role === 'employee' || isPaymentFollowUp(role)
 }
 
+/** إضافة صرفيات من قائمة المدينين — مدير ومحاسب فقط */
+export function canAddDebtorExpenses(role: string | null | undefined): boolean {
+  return isAdmin(role) || isAccountant(role)
+}
+
 /** كارد جاري التسديد في لوحة التحكم — مدير ومسؤول الدعاوى المدنية (ليس الجزائي) */
 export function canViewPaymentInProgressCard(role: string | null | undefined): boolean {
   return isAdmin(role) || isLegalManager(role)

@@ -15,11 +15,12 @@ import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL } from '@/lib/ui-labels'
 import DebtorImportModal from '@/components/DebtorImportModal'
 import CriminalDebtorImportModal from '@/components/CriminalDebtorImportModal'
 import { useAdminRole } from '@/context/admin-role'
-import { canAddDebtor, canAssignTasks, canDelete, canEditDebtor, canImportDebtors, canImportCriminalDebtors, canMoveToPaymentInProgress, isAnyLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
+import { canAddDebtor, canAddDebtorExpenses, canAssignTasks, canDelete, canEditDebtor, canImportDebtors, canImportCriminalDebtors, canMoveToPaymentInProgress, isAnyLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { resolveCaseScope, filterBySection } from '@/lib/case-scope'
 import { appConfirm, appAlert } from '@/lib/app-dialog'
 import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
+import DebtorAddExpenseButton from '@/components/DebtorAddExpenseButton'
 import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, normalizeCaseType, type CaseType } from '@/lib/case-type'
@@ -60,6 +61,7 @@ export default function DebtorsPage() {
   const allowCriminalImport = canImportCriminalDebtors(role)
   const allowChangeTask = canAddDebtor(role) || canAssignTasks(role)
   const allowPaymentInProgress = canMoveToPaymentInProgress(role)
+  const allowAddExpense = canAddDebtorExpenses(role)
   const showEditLink = allowEdit || isAnyLegalManager(role)
   const showDeleteBtn = allowDelete
   const showAddBtn = allowAdd
@@ -484,6 +486,14 @@ export default function DebtorsPage() {
                       <TD>
                         <div className="flex items-center justify-center gap-2 flex-wrap">
                           <Link href={`/admin/debtors/${debtor.id}/account`} className="text-xs text-[#231F20] hover:text-[#2C8780] border border-[rgba(118,118,118,0.2)] hover:border-[#2C8780]/40 px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap">كشف الحساب</Link>
+                          {allowAddExpense && (
+                            <DebtorAddExpenseButton
+                              debtorId={debtor.id}
+                              debtorName={debtor.full_name}
+                              branchId={debtor.branch_id ?? branchId}
+                              compact
+                            />
+                          )}
                           {allowChangeTask && (
                             <ChangeDebtorTaskButton
                               debtorId={debtor.id}
@@ -552,6 +562,14 @@ export default function DebtorsPage() {
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <Link href={`/admin/debtors/${debtor.id}/account`} className="flex-1 text-center text-xs text-[#231F20] border border-[rgba(118,118,118,0.2)] px-3 py-1.5 rounded-lg">كشف الحساب</Link>
+                    {allowAddExpense && (
+                      <DebtorAddExpenseButton
+                        debtorId={debtor.id}
+                        debtorName={debtor.full_name}
+                        branchId={debtor.branch_id ?? branchId}
+                        compact
+                      />
+                    )}
                     {allowChangeTask && (
                       <ChangeDebtorTaskButton debtorId={debtor.id} branchId={debtor.branch_id ?? branchId} compact />
                     )}

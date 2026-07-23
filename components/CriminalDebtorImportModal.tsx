@@ -19,6 +19,7 @@ import {
   parseCriminalImportZipSafe,
   buildCriminalPdfLookup,
 } from '@/lib/criminal-import-zip'
+import { normalizePdfFileName } from '@/lib/criminal-import-normalize'
 import { useAdminRole } from '@/context/admin-role'
 
 type Step = 'upload' | 'preview' | 'importing' | 'done'
@@ -35,6 +36,7 @@ const PHASE_LABELS: Record<CriminalImportProgress['phase'], string> = {
   reading_zip: 'قراءة ZIP',
   validating: 'فحص البيانات',
   importing: 'استيراد السجلات',
+  uploading_files: 'رفع ملفات PDF',
   done: 'اكتمل',
 }
 
@@ -162,19 +164,33 @@ export default function CriminalDebtorImportModal({ open, onClose, onComplete }:
     setProgress({ phase: 'importing', current: 0, total: ready.length, message: 'جاري الاستيراد...' })
 
     try {
-      const form = new FormData()
-      form.append('excel', excelFile)
-      if (zipFile) form.append('zip', zipFile)
-      form.append('defaultBranchId', branchId)
-      form.append('importRunId', importRunId || crypto.randomUUID())
+      const runId = importRunId
+        || (typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`)
 
+      // JSON فقط — بدون إعادة رفع ZIP (كان يسبب فشل الاستيراد للمحاسب عند الملفات الكبيرة)
       const res = await fetch('/api/admin/debtors/import-criminal', {
         method: 'POST',
-        body: form,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          defaultBranchId: branchId,
+          importRunId: runId,
+          rows: preview,
+        }),
       })
-      const json = await res.json().catch(() => ({}))
+      const rawText = await res.text()
+      let json: Record<string, unknown> = {}
+      try {
+        json = rawText ? JSON.parse(rawText) as Record<string, unknown> : {}
+      } catch {
+        json = {}
+      }
       if (!res.ok) {
-        setError(typeof json.error === 'string' ? json.error : 'فشل الاستيراد')
+        const msg = typeof json.error === 'string'
+          ? json.error
+          : `فشل الاستيراد (رمز ${res.status})${rawText && rawText.length < 200 ? `: ${rawText}` : ''}`
+        setError(msg)
         setStep('preview')
         setSubmitting(false)
         setLoading(false)
@@ -182,7 +198,56 @@ export default function CriminalDebtorImportModal({ open, onClose, onComplete }:
         return
       }
 
-      const importResult = json as CriminalImportExecuteResult
+      const importResult = json as unknown as CriminalImportExecuteResult
+
+      // رفع PDF من ZIP بعد إنشاء المدينين (ملف بملف)
+      if (zipFile) {
+        const created = (importResult.rows ?? []).filter(
+          r => r.debtorId && (r.status === 'success' || r.status === 'success_with_warning'),
+        )
+        const needPdf = created.filter(r => r.pdfName)
+        if (needPdf.length) {
+          setProgress({
+            phase: 'uploading_files',
+            current: 0,
+            total: needPdf.length,
+            message: 'رفع ملفات المستمسكات...',
+          })
+          const zipRes = await parseCriminalImportZipSafe(zipFile)
+          if (zipRes.ok) {
+            const lookup = buildCriminalPdfLookup(zipRes.files)
+            for (let i = 0; i < needPdf.length; i++) {
+              const row = needPdf[i]
+              const key = row.pdfName ? normalizePdfFileName(row.pdfName) : ''
+              const pdf = key ? lookup.byKey.get(key) : undefined
+              if (pdf && row.debtorId) {
+                try {
+                  const copy = new Uint8Array(pdf.bytes)
+                  const file = new File([copy], pdf.originalName || 'documents.pdf', {
+                    type: 'application/pdf',
+                  })
+                  const fd = new FormData()
+                  fd.append('file', file)
+                  fd.append('kind', 'documents')
+                  await fetch(`/api/admin/debtors/${row.debtorId}/criminal-file`, {
+                    method: 'POST',
+                    body: fd,
+                  })
+                } catch {
+                  // يمكن الرفع لاحقاً من صفحة المدين
+                }
+              }
+              setProgress({
+                phase: 'uploading_files',
+                current: i + 1,
+                total: needPdf.length,
+                message: 'رفع ملفات المستمسكات...',
+              })
+            }
+          }
+        }
+      }
+
       setResult(importResult)
       setStep('done')
       setProgress({ phase: 'done', current: 1, total: 1, message: 'اكتمل' })
@@ -242,6 +307,7 @@ export default function CriminalDebtorImportModal({ open, onClose, onComplete }:
                 {' '}قيم العقد والكفيل: <span className="font-semibold">نعم / لا / فقط عقد</span>.
                 {' '}تنسيق التاريخ: YYYY-MM-DD أو DD/MM/YYYY.
                 {' '}اسم ملف المستمسكات يجب أن يطابق الموجود داخل ZIP (PDF فقط).
+                {' '}عمود <span className="font-semibold">الملاحظات</span> اختياري ويُحفظ في بروفايل المدين.
                 {' '}عريضة الدعوى <span className="font-semibold">لا تُستورد هنا</span> — تُرفع لاحقاً من صفحة المدين.
               </p>
 

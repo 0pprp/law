@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireMutationStaff, sessionCaseScope } from '@/lib/api-auth'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import {
   apiForbiddenResponse,
   canImportCriminalDebtors,
@@ -11,16 +11,10 @@ import { isMainBranchName } from '@/lib/branch-constants'
 import { logActivity } from '@/lib/activity-log'
 import { safeClientError, apiServerError } from '@/lib/safe-api-error'
 import {
-  parseCriminalImportExcel,
-  validateCriminalImportRows,
   executeCriminalDebtorImport,
   type CriminalImportExecuteResult,
+  type CriminalPreviewRow,
 } from '@/lib/criminal-debtor-import'
-import {
-  parseCriminalImportZipSafe,
-  buildCriminalPdfLookup,
-  type SafeZipPdf,
-} from '@/lib/criminal-import-zip'
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -65,8 +59,14 @@ async function saveRun(
   }
 }
 
+/**
+ * استيراد جزائي عبر JSON (مثل المدني).
+ * ملفات PDF تُرفع من المتصفح بعد الإنشاء عبر /api/admin/debtors/[id]/criminal-file
+ * لتجنب فشل رفع ZIP الكبير في طلب واحد.
+ */
 export async function POST(request: NextRequest) {
-  const auth = await requireMutationStaff()
+  // لا نستخدم requireMutationStaff حتى يعمل مسؤول الجزائيات أيضاً
+  const auth = await requireStaffProfile()
   if (auth.error) return auth.error
   if (!canImportCriminalDebtors(auth.profile?.role)) return apiForbiddenResponse()
 
@@ -75,26 +75,29 @@ export async function POST(request: NextRequest) {
     return apiForbiddenResponse()
   }
 
-  let form: FormData
+  let body: {
+    defaultBranchId?: string
+    importRunId?: string
+    rows?: CriminalPreviewRow[]
+  }
   try {
-    form = await request.formData()
+    body = await request.json()
   } catch {
     return safeClientError('طلب غير صالح', 400)
   }
 
-  const excel = form.get('excel')
-  const zip = form.get('zip')
-  const defaultBranchId = String(form.get('defaultBranchId') ?? '').trim() || null
-  const importRunId = String(form.get('importRunId') ?? '').trim()
+  const defaultBranchId = String(body.defaultBranchId ?? '').trim() || null
+  const importRunId = String(body.importRunId ?? '').trim()
+  const rows = Array.isArray(body.rows) ? body.rows : []
 
   if (!importRunId || !UUID_RE.test(importRunId)) {
     return safeClientError('معرف التشغيل مطلوب', 400)
   }
-  if (!(excel instanceof File) || excel.size === 0) {
-    return safeClientError('ملف Excel مطلوب', 400)
+  if (!defaultBranchId) {
+    return safeClientError('معرّف الفرع مطلوب', 400)
   }
-  if (zip != null && zip !== '' && !(zip instanceof File)) {
-    return safeClientError('ملف ZIP غير صالح', 400)
+  if (!canStaffWriteBranch(auth.profile, defaultBranchId)) {
+    return apiForbiddenResponse()
   }
 
   const admin = createAdminClient()
@@ -104,59 +107,49 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, ...existing })
   }
 
-  const { data: branchesData } = await admin.from('branches').select('id, name').order('name')
-  const branches = (branchesData ?? []).filter(b => !isMainBranchName(b.name))
-  const allowedBranches = branches.filter(b => canStaffWriteBranch(auth.profile, b.id))
-
-  let defaultBranchName: string | null = null
-  if (defaultBranchId) {
-    if (!canStaffWriteBranch(auth.profile, defaultBranchId)) return apiForbiddenResponse()
-    const b = allowedBranches.find(x => x.id === defaultBranchId)
-    if (!b) return safeClientError('الفرع الافتراضي غير صالح', 400)
-    defaultBranchName = b.name
+  const { data: branch } = await admin
+    .from('branches')
+    .select('id, name')
+    .eq('id', defaultBranchId)
+    .maybeSingle()
+  if (!branch || isMainBranchName(branch.name)) {
+    return safeClientError('الفرع الافتراضي غير صالح', 400)
   }
 
-  const parsed = await parseCriminalImportExcel(excel)
-  if (parsed.error) return safeClientError(parsed.error, 400)
-  if (!parsed.rows.length) return safeClientError('ملف Excel فارغ أو بلا صفوف بيانات', 400)
-
-  let pdfByKey = new Map<string, SafeZipPdf>()
-  let pdfDuplicates = new Set<string>()
-  let hasZip = false
-
-  if (zip instanceof File && zip.size > 0) {
-    hasZip = true
-    const zipRes = await parseCriminalImportZipSafe(zip)
-    if (!zipRes.ok) return safeClientError(zipRes.error, 400)
-    const lookup = buildCriminalPdfLookup(zipRes.files)
-    pdfByKey = lookup.byKey
-    pdfDuplicates = lookup.duplicates
-  }
-
-  const preview = validateCriminalImportRows(parsed.rows, {
-    branches: allowedBranches,
-    defaultBranchId,
-    defaultBranchName,
-    profile: auth.profile,
-    pdfByKey,
-    pdfDuplicates,
-    hasZip,
+  // أعد التحقق من صلاحية الفرع لكل صف صالح
+  const sanitized: CriminalPreviewRow[] = rows.map(r => {
+    if (!r?.valid) return r
+    const branchId = String(r.branchId ?? '').trim() || null
+    if (!branchId || !canStaffWriteBranch(auth.profile, branchId)) {
+      return {
+        ...r,
+        valid: false,
+        errors: [...(r.errors ?? []), 'لا صلاحية للاستيراد إلى هذا الفرع'],
+      }
+    }
+    return r
   })
+
+  const ready = sanitized.filter(r => r.valid)
+  if (!ready.length) {
+    return safeClientError('لا توجد صفوف صالحة للاستيراد', 400)
+  }
 
   try {
     await logActivity({
       action: 'import_criminal_debtors_start',
       entity_type: 'debtor',
-      entity_id: defaultBranchId || allowedBranches[0]?.id || auth.user!.id,
-      description: `بدء استيراد جزائي (${parsed.rows.length} صف) — ${importRunId.slice(0, 8)}`,
+      entity_id: defaultBranchId,
+      description: `بدء استيراد جزائي (${ready.length} صف) — ${importRunId.slice(0, 8)}`,
       case_type: 'criminal',
-      metadata: { import_run_id: importRunId, row_count: parsed.rows.length },
+      metadata: { import_run_id: importRunId, row_count: ready.length },
     }, auth.supabase)
 
-    const result = await executeCriminalDebtorImport(admin, preview, {
+    // بدون ZIP — رفع الملفات من العميل بعد الإنشاء
+    const result = await executeCriminalDebtorImport(admin, sanitized, {
       userId: auth.user!.id,
       profile: auth.profile!,
-      pdfByKey,
+      pdfByKey: new Map(),
       importRunId,
     })
 
@@ -165,7 +158,7 @@ export async function POST(request: NextRequest) {
     await logActivity({
       action: 'import_criminal_debtors',
       entity_type: 'debtor',
-      entity_id: defaultBranchId || allowedBranches[0]?.id || auth.user!.id,
+      entity_id: defaultBranchId,
       description: `استيراد جزائي: ${result.success} نجاح، ${result.successWithWarning} مع تحذير، ${result.failed} فشل`,
       case_type: 'criminal',
       metadata: {

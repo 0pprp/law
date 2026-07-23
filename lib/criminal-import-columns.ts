@@ -15,6 +15,7 @@ export const CRIMINAL_IMPORT_CANONICAL_HEADERS = [
   'اسم الشاهد الأول',
   'اسم الشاهد الثاني',
   'اسم ملف المستمسكات والعقد',
+  'الملاحظات',
 ] as const
 
 export type CriminalImportCanonicalHeader = (typeof CRIMINAL_IMPORT_CANONICAL_HEADERS)[number]
@@ -32,6 +33,7 @@ export type CriminalImportFieldKey =
   | 'first_witness'
   | 'second_witness'
   | 'documents_filename'
+  | 'notes'
 
 export const CRIMINAL_IMPORT_FIELD_BY_CANONICAL: Record<
   CriminalImportCanonicalHeader,
@@ -48,6 +50,7 @@ export const CRIMINAL_IMPORT_FIELD_BY_CANONICAL: Record<
   'اسم الشاهد الأول': 'first_witness',
   'اسم الشاهد الثاني': 'second_witness',
   'اسم ملف المستمسكات والعقد': 'documents_filename',
+  الملاحظات: 'notes',
 }
 
 /**
@@ -99,6 +102,12 @@ export const CRIMINAL_IMPORT_HEADER_SYNONYMS: Record<string, CriminalImportField
   'اسم ملف المستمسكات والعقد': 'documents_filename',
   'ملف المستمسكات والعقد': 'documents_filename',
   'اسم الملف': 'documents_filename',
+
+  // الملاحظات → debtors.notes (بروفايل المدين)
+  الملاحظات: 'notes',
+  ملاحظات: 'notes',
+  'ملاحظات المدين': 'notes',
+  notes: 'notes',
 }
 
 /** قيم العقد والكفيل المقبولة → التخزين الداخلي */
