@@ -222,7 +222,7 @@ export async function applyTaskTransition(
     task_type: nextDef?.task_type ?? null,
     task_status: 'waiting_assignment',
     assigned_to: null,
-    reward_amount: debtorCase === 'criminal' ? 0 : (nextDef?.fee_amount ?? 0),
+    reward_amount: nextDef?.fee_amount ?? 0,
     branch_id: branchId,
     created_by: userId,
   } as any).select('id').single()

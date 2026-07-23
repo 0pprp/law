@@ -24,6 +24,7 @@ import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressMo
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, normalizeCaseType, type CaseType } from '@/lib/case-type'
 import { CASE_STATUS_PAYMENT_IN_PROGRESS } from '@/lib/types'
+import { preserveScrollDuring } from '@/lib/preserve-scroll'
 
 const PAGE_SIZE = 50
 
@@ -88,7 +89,14 @@ export default function DebtorsPage() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Server-side fetch with optional search (via admin API لتجاوز قيود RLS على المحاسب العام)
-  const fetchDebtors = useCallback(async (searchTerm: string, listId: string | null, caseType: '' | CaseType = '', offset = 0, append = false) => {
+  const fetchDebtors = useCallback(async (
+    searchTerm: string,
+    listId: string | null,
+    caseType: '' | CaseType = '',
+    offset = 0,
+    append = false,
+    limitOverride?: number,
+  ) => {
     if (!branchId && !viewAllBranches) {
       setDebtors([])
       setTotal(0)
@@ -105,7 +113,7 @@ export default function DebtorsPage() {
     try {
       const params = new URLSearchParams({
         offset: String(offset),
-        limit: String(PAGE_SIZE),
+        limit: String(Math.max(1, limitOverride ?? PAGE_SIZE)),
       })
       if (viewAllBranches) params.set('viewAll', '1')
       else if (branchId) params.set('branchId', branchId)
@@ -154,8 +162,10 @@ export default function DebtorsPage() {
     }, 300)
   }
 
-  function loadMore() {
-    fetchDebtors(search, filterListId, filterCaseType, debtors.length, true)
+  function loadAllRemaining() {
+    const remaining = Math.max(0, total - debtors.length)
+    if (remaining <= 0 || loadingMore) return
+    fetchDebtors(search, filterListId, filterCaseType, debtors.length, true, remaining)
   }
 
   async function deleteDebtor(id: string, name: string) {
@@ -220,6 +230,7 @@ export default function DebtorsPage() {
   }
 
   async function handleMoveSuccess(summary?: { moved: number; failed: number }) {
+    const movedIds = new Set(selectedIds)
     setMoveModalOpen(false)
     setSelectedIds(new Set())
     if (summary) {
@@ -227,7 +238,15 @@ export default function DebtorsPage() {
       if (summary.failed > 0) parts.push(`تعذّر تحويل ${summary.failed}`)
       await appAlert({ title: 'تم', message: parts.join(' · '), variant: summary.failed > 0 ? 'warning' : 'success' })
     }
-    fetchDebtors(search, filterListId, filterCaseType)
+    preserveScrollDuring(() => {
+      if (summary && summary.failed > 0) {
+        // بعض المحددين فشلوا — أعد تحميل الصفحة الحالية دون الرجوع للبداية إن أمكن
+        void fetchDebtors(search, filterListId, filterCaseType, 0, false)
+        return
+      }
+      setDebtors(prev => prev.filter((d: { id: string }) => !movedIds.has(d.id)))
+      setTotal(t => Math.max(0, t - movedIds.size))
+    })
   }
 
   return (
@@ -573,9 +592,9 @@ export default function DebtorsPage() {
             عرض {debtors.length} من {total} مدين
           </p>
           {hasMore && (
-            <button onClick={loadMore} disabled={loadingMore}
+            <button onClick={loadAllRemaining} disabled={loadingMore}
               className="text-xs font-semibold text-[#2C8780] border border-[#2C8780]/30 hover:bg-[#2C8780]/5 px-4 py-2 rounded-lg transition-colors disabled:opacity-60">
-              {loadingMore ? 'جارٍ التحميل...' : `عرض المزيد (${total - debtors.length} متبقٍ)`}
+              {loadingMore ? 'جارٍ التحميل...' : `عرض الكل (${total - debtors.length} متبقٍ)`}
             </button>
           )}
         </div>

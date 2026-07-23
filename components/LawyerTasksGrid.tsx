@@ -21,6 +21,7 @@ import {
   type TaskDefinitionExpense,
 } from '@/lib/task-definition-expenses'
 import type { PendingTaskExpense } from '@/lib/persist-task-expenses'
+import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   assignment_pending_acceptance: 'warning',
@@ -148,15 +149,22 @@ export default function LawyerTasksGrid({
     if (!task) return null
 
     let debtorName: string | null = null
+    let debtorCaseType: string | null = null
     if (task.debtor_id) {
       const { data: debtor } = await supabase
         .from('debtors')
-        .select('full_name')
+        .select('full_name, case_type')
         .eq('id', task.debtor_id)
         .maybeSingle()
       debtorName = debtor?.full_name ?? null
+      debtorCaseType = debtor?.case_type ?? null
     }
-    const taskWithDebtor = { ...task, debtors: debtorName ? { full_name: debtorName } : null }
+    const taskWithDebtor = {
+      ...task,
+      debtors: debtorName || debtorCaseType
+        ? { full_name: debtorName, case_type: debtorCaseType }
+        : null,
+    }
 
     let fee = 0
     let reqFields: ReqField[] = []
@@ -172,7 +180,7 @@ export default function LawyerTasksGrid({
         .eq('id', task.task_definition_id)
         .maybeSingle()
       if (def) {
-        fee = Number(def.fee_amount ?? 0)
+        fee = visibleTaskFeeAmount(Number(def.fee_amount ?? 0), debtorCaseType, 'lawyer')
         reqFields = ((def as { task_required_fields?: ReqField[] }).task_required_fields ?? [])
           .sort((a, b) => a.sort_order - b.sort_order)
         defLabel = def.label ?? defLabel
@@ -344,7 +352,11 @@ export default function LawyerTasksGrid({
               {tasks.map((task: any) => {
                 const remaining = Number(task.debtors?.remaining_amount ?? 0)
                 const isOverdue = task.due_date && isTaskOverdue(task.due_date) && !['completed', 'closed', 'failed', 'approved'].includes(task.task_status)
-                const fee = Number(task.reward_amount ?? 0)
+                const fee = visibleTaskFeeAmount(
+                  task.reward_amount,
+                  task.debtors?.case_type,
+                  'lawyer',
+                )
                 const selectable = isBatchSelectable(task.task_status)
                 return (
                   <div

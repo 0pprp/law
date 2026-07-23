@@ -1,5 +1,6 @@
 import { TASK_FEE_MAP } from '@/lib/constants'
 import type { TaskType } from '@/lib/types'
+import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 /** إنجاز = مهمة اعتمدها الأدمن بعد تسليم المحامي */
 export const ACHIEVEMENT_STATUSES = ['approved', 'completed'] as const
@@ -14,6 +15,8 @@ export type AchievementTask = {
   created_at: string
   task_definition_id: string | null
   reward_amount?: number | null
+  /** نوع دعوى المدين — للتصفية الظاهرة لأتعاب الجزائي */
+  case_type?: string | null
   task_definitions?: { label: string } | null
 }
 
@@ -36,10 +39,13 @@ export function achievementLabel(task: AchievementTask): string {
   return task.task_definitions?.label ?? task.task_type ?? '—'
 }
 
-export function achievementFee(task: AchievementTask): number {
+export function achievementFee(
+  task: AchievementTask,
+  viewerRole?: string | null,
+): number {
   const reward = Number(task.reward_amount ?? 0)
-  if (reward > 0) return reward
-  return TASK_FEE_MAP[task.task_type as TaskType] ?? 0
+  const raw = reward > 0 ? reward : (TASK_FEE_MAP[task.task_type as TaskType] ?? 0)
+  return visibleTaskFeeAmount(raw, task.case_type, viewerRole)
 }
 
 export function filterAchievements(
@@ -76,14 +82,17 @@ export interface AchievementByLawyer {
   lastDate: string | null
 }
 
-export function buildAchievementByType(achievements: AchievementTask[]): AchievementByType[] {
+export function buildAchievementByType(
+  achievements: AchievementTask[],
+  viewerRole?: string | null,
+): AchievementByType[] {
   const map = new Map<string, AchievementByType>()
   for (const t of achievements) {
     const label = achievementLabel(t)
     const key = label.trim().toLowerCase() || (t.task_definition_id ?? t.task_type ?? t.id)
     const cur = map.get(key) ?? { key, label, count: 0, fees: 0 }
     cur.count++
-    cur.fees += achievementFee(t)
+    cur.fees += achievementFee(t, viewerRole)
     map.set(key, cur)
   }
   return Array.from(map.values()).sort((a, b) => b.count - a.count || b.fees - a.fees)
@@ -92,6 +101,7 @@ export function buildAchievementByType(achievements: AchievementTask[]): Achieve
 export function buildAchievementByLawyer(
   achievements: AchievementTask[],
   lawyers: { id: string; full_name: string; governorate?: string | null }[],
+  viewerRole?: string | null,
 ): AchievementByLawyer[] {
   const byLawyer = new Map<string, AchievementTask[]>()
   for (const t of achievements) {
@@ -105,9 +115,9 @@ export function buildAchievementByLawyer(
   return Array.from(byLawyer.entries())
     .map(([id, list]) => {
       const lawyer = lawyerMap.get(id)
-      const byType = buildAchievementByType(list)
+      const byType = buildAchievementByType(list, viewerRole)
       const top = byType[0]
-      const fees = list.reduce((s, t) => s + achievementFee(t), 0)
+      const fees = list.reduce((s, t) => s + achievementFee(t, viewerRole), 0)
       const last = list
         .map(t => achievementDate(t))
         .sort((a, b) => b.localeCompare(a))[0] ?? null

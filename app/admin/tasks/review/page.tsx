@@ -25,6 +25,7 @@ import { useCaseScope } from '@/hooks/use-case-scope'
 import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, normalizeCaseType, type CaseType } from '@/lib/case-type'
 import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
 import { appAlert } from '@/lib/app-dialog'
+import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number; branch_id?: string | null; case_type?: string | null }
 
@@ -213,11 +214,14 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
             <PremiumSelect
               value={nextTaskId}
               onChange={v => { setNextTaskId(v); setError('') }}
-              options={scopedDefs.map(def => ({
-                value: def.id,
-                label: def.label,
-                hint: def.fee_amount ? `${Number(def.fee_amount).toLocaleString('en-US')} د.ع أتعاب` : undefined,
-              }))}
+              options={scopedDefs.map(def => {
+                const visibleFee = visibleTaskFeeAmount(def.fee_amount, debtorCaseType, role)
+                return {
+                  value: def.id,
+                  label: def.label,
+                  hint: visibleFee ? `${visibleFee.toLocaleString('en-US')} د.ع أتعاب` : undefined,
+                }
+              })}
               placeholder="— اختر المهمة التالية —"
               headerTitle="المهمة اللاحقة"
               headerSubtitle={`${scopedDefs.length} مهمة متاحة`}
@@ -320,6 +324,12 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
 function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
   task: any; taskDefs: TaskDef[]; onClose: () => void; onDone: () => void; canReview?: boolean
 }) {
+  const role = useAdminRole()
+  const visibleReward = visibleTaskFeeAmount(
+    task.reward_amount,
+    task.debtors?.case_type,
+    role,
+  )
   const [stage, setStage] = useState<'view' | 'approve' | 'reject'>('view')
   const [rejectReason, setRejectReason] = useState('')
   const [saving, setSaving] = useState(false)
@@ -405,7 +415,7 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-[#F3F1F2] rounded-xl p-3">
                 <p className="text-xs text-[#767676] mb-1 font-semibold">الأتعاب</p>
-                <p className="text-base font-black text-[#2C8780]" dir="ltr">{fmtMoney(task.reward_amount)}</p>
+                <p className="text-base font-black text-[#2C8780]" dir="ltr">{fmtMoney(visibleReward)}</p>
               </div>
               <div className="bg-[#F3F1F2] rounded-xl p-3">
                 <p className="text-xs text-[#767676] mb-1 font-semibold">تاريخ الإنجاز</p>
@@ -853,7 +863,7 @@ export default function TaskReviewPage() {
                   <InfoRow label="المحكمة" value={courtName} />
                   <InfoRow label="المحافظة" value={task.debtors?.governorate} />
                   <InfoRow label="أُنجز في" value={task.completed_at ? fmtDate(task.completed_at.split('T')[0]) : undefined} />
-                  <InfoRow label="الأتعاب" value={fmtMoney(task.reward_amount)} accent />
+                  <InfoRow label="الأتعاب" value={fmtMoney(visibleTaskFeeAmount(task.reward_amount, task.debtors?.case_type, role))} accent />
 
                   {hasData && (
                     <div className="mt-2 bg-[#F3F1F2] rounded-lg px-3 py-2">

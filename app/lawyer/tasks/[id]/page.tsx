@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   assignment_pending_acceptance: 'warning',
@@ -100,7 +101,7 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
 
   const { data: debtor } = await supabase
     .from('debtors')
-    .select('full_name, phone, address, governorate, receipt_type, receipt_amount, remaining_amount, latitude, longitude, location_captured_at, branch_list:branch_lists(name)')
+    .select('full_name, phone, address, governorate, receipt_type, receipt_amount, remaining_amount, latitude, longitude, location_captured_at, case_type, branch_list:branch_lists(name)')
     .eq('id', task.debtor_id)
     .single()
 
@@ -198,7 +199,11 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
   const isLastDay = task.due_date && isTaskDueToday(task.due_date) && !isOverdue
   const awaitingAcceptance = status === 'assignment_pending_acceptance'
   const taskLabel = resolveTaskLabel(task.task_type, taskDefinition?.label)
-  const taskFee = Number(task.reward_amount ?? taskDefinition?.fee_amount ?? 0)
+  const taskFee = visibleTaskFeeAmount(
+    task.reward_amount ?? taskDefinition?.fee_amount ?? 0,
+    (debtor as { case_type?: string | null } | null)?.case_type,
+    'lawyer',
+  )
 
   return (
     <div className="max-w-lg mx-auto px-4 pt-4 pb-24 space-y-3">

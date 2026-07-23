@@ -16,12 +16,15 @@ import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debto
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DatePicker } from '@/components/ui/date-picker'
 import { useAdminRole } from '@/context/admin-role'
-import { canAssignTasks } from '@/lib/permissions'
+import { canAssignTasks, canMoveToPaymentInProgress } from '@/lib/permissions'
 import { executeTaskAssignment, executeTaskUnassign, validateTaskAssignmentInput } from '@/lib/client-task-assign'
 import { taskLawyerId } from '@/lib/task-assignment'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { isTaskOverdue, taskOverdueDays } from '@/lib/local-date'
 import BranchListBox from '@/components/BranchListBox'
+import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
+import { cacheInvalidatePrefix } from '@/lib/query-cache'
+import { preserveScrollDuring } from '@/lib/preserve-scroll'
 import { appConfirm } from '@/lib/app-dialog'
 
 type StageView = 'waiting' | 'assigned' | 'overdue'
@@ -242,6 +245,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const { viewAllBranches, listId: headerListId } = useBranch()
   const role = useAdminRole()
   const canAssign = canAssignTasks(role)
+  const allowPaymentInProgress = canMoveToPaymentInProgress(role)
   const { caseTypeFilter } = useCaseScope()
   const [stageLabel, setStageLabel] = useState('')
   const [stageCaseType, setStageCaseType] = useState<'civil' | 'criminal' | null>(null)
@@ -261,16 +265,20 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const [assigning, setAssigning] = useState(false)
   const [error, setError] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
+  const [moveModalOpen, setMoveModalOpen] = useState(false)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
     if (!branchId && !viewAllBranches) {
       setDebtors([])
       setLoading(false)
       return
     }
 
-    setLoading(true)
-    setSelected(new Set())
+    const soft = Boolean(opts?.soft)
+    if (!soft) {
+      setLoading(true)
+      setSelected(new Set())
+    }
     const supabase = createClient()
 
     const { data: def } = await supabase
@@ -491,15 +499,17 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       return
     }
 
-    setDebtors(prev => prev.filter(d => !taskIds.includes(d.taskId)))
-    setSelected(prev => {
-      const next = new Set(prev)
-      taskIds.forEach(id => next.delete(id))
-      return next
+    preserveScrollDuring(() => {
+      setDebtors(prev => prev.filter(d => !taskIds.includes(d.taskId)))
+      setSelected(prev => {
+        const next = new Set(prev)
+        taskIds.forEach(id => next.delete(id))
+        return next
+      })
+      setAssigning(false)
+      setSuccessMsg(`تم تكليف ${taskIds.length} مهمة بنجاح`)
+      cacheInvalidatePrefix('dashboard:v8:')
     })
-    setAssigning(false)
-    setBulkLawyerId('')
-    setSuccessMsg(`تم تكليف ${taskIds.length} مهمة بنجاح`)
   }
 
   async function unassignOne(taskId: string) {
@@ -523,17 +533,50 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       setError(result.error ?? 'فشل إلغاء التكليف')
       return
     }
-    setDebtors(prev => prev.filter(d => d.taskId !== taskId))
-    setSuccessMsg('تم إلغاء التكليف — عادت المهمة لغير المكلفة')
+    preserveScrollDuring(() => {
+      setDebtors(prev => prev.filter(d => d.taskId !== taskId))
+      setSuccessMsg('تم إلغاء التكليف — عادت المهمة لغير المكلفة')
+      cacheInvalidatePrefix('dashboard:v8:')
+    })
   }
 
   const selectedCount = selected.size
+  const selectedDebtorIds = useMemo(
+    () => debtors.filter(d => selected.has(d.taskId)).map(d => d.debtorId),
+    [debtors, selected],
+  )
+  const showMoveToPayment =
+    allowPaymentInProgress && view === 'waiting' && stageCaseType !== 'criminal'
   const initialListForBox = viewAllBranches ? '' : (headerListId ?? '')
   const allVisibleSelected =
     visibleCount > 0
     && debtors
       .filter(d => matchingIds === null || matchingIds.includes(d.debtorId))
       .every(d => selected.has(d.taskId))
+
+  function handleMoveSuccess(summary?: { moved: number; failed: number }) {
+    setMoveModalOpen(false)
+    const movedTaskIds = new Set(selected)
+    setSelected(new Set())
+    cacheInvalidatePrefix('dashboard:v8:')
+    if (summary) {
+      const parts = [`تم تحويل ${summary.moved} مدين إلى جاري التسديد`]
+      if (summary.failed > 0) parts.push(`تعذّر تحويل ${summary.failed}`)
+      setSuccessMsg(parts.join(' · '))
+      setError(summary.failed > 0 ? `تعذّر تحويل ${summary.failed} من المحددين` : '')
+    } else {
+      setSuccessMsg('تم التحويل إلى جاري التسديد')
+      setError('')
+    }
+    // حدّث القائمة محلياً دون إعادة تحميل كاملة (تحافظ على موضع التمرير)
+    preserveScrollDuring(() => {
+      if (summary && summary.failed > 0) {
+        void load({ soft: true })
+        return
+      }
+      setDebtors(prev => prev.filter(d => !movedTaskIds.has(d.taskId)))
+    })
+  }
 
   return (
     <div className="space-y-5">
@@ -607,6 +650,21 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
             >
               {assigning ? 'جارٍ التكليف...' : `تكليف المحددين${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
             </button>
+            {showMoveToPayment && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError('')
+                  setSuccessMsg('')
+                  setMoveModalOpen(true)
+                }}
+                disabled={assigning || selectedCount === 0}
+                className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg,#0f766e,#115e59)' }}
+              >
+                جاري التسديد{selectedCount > 0 ? ` (${selectedCount})` : ''}
+              </button>
+            )}
           </div>
           {!branchId && viewAllBranches && (
             <p className="text-[11px] text-orange-600 bg-orange-50 px-3 py-1.5 rounded-lg">
@@ -652,6 +710,15 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
             />
           ))}
         </div>
+      )}
+
+      {showMoveToPayment && (
+        <MoveToPaymentInProgressModal
+          open={moveModalOpen}
+          debtorIds={selectedDebtorIds}
+          onClose={() => setMoveModalOpen(false)}
+          onSuccess={handleMoveSuccess}
+        />
       )}
     </div>
   )

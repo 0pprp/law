@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'تعريف المهمة لا يطابق نوع دعوى المدين' }, { status: 400 })
   }
 
-  const fee = debtorCaseType === 'criminal' ? 0 : (Number(def.fee_amount) || 0)
+  const fee = Number(def.fee_amount) || 0
 
   if (!debtor.current_task_id) {
     const { data: created, error: createErr } = await admin

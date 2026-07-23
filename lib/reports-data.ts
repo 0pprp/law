@@ -176,7 +176,7 @@ async function fetchAchievementTasks(
     let q = supabase
       .from('tasks')
       .select(
-        'id, task_type, task_status, assigned_to, debtor_id, completed_at, created_at, task_definition_id, reward_amount, task_definitions(label)',
+        'id, task_type, task_status, assigned_to, debtor_id, completed_at, created_at, task_definition_id, reward_amount, task_definitions(label), debtors!tasks_debtor_id_fkey(case_type)',
       )
       .in('task_status', [...ACHIEVEMENT_STATUSES])
       .order('completed_at', { ascending: true, nullsFirst: false })
@@ -197,7 +197,16 @@ async function fetchAchievementTasks(
     }
     if (!data?.length) break
 
-    rows.push(...(data as unknown as AchievementTask[]))
+    for (const row of data as unknown as (AchievementTask & {
+      debtors?: { case_type?: string | null } | { case_type?: string | null }[] | null
+    })[]) {
+      const debtor = Array.isArray(row.debtors) ? row.debtors[0] : row.debtors
+      const { debtors: _d, ...rest } = row as AchievementTask & { debtors?: unknown }
+      rows.push({
+        ...rest,
+        case_type: debtor?.case_type ?? rest.case_type ?? null,
+      })
+    }
     if (data.length < CHUNK) break
     offset += CHUNK
   }

@@ -19,6 +19,7 @@ import { useAdminRole } from '@/context/admin-role'
 import { canAssignTasks } from '@/lib/permissions'
 import { UNASSIGNABLE_TASK_STATUSES } from '@/lib/task-assignment'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
+import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   draft: 'gray',
@@ -48,15 +49,17 @@ interface TaskDef {
 }
 
 // ─── Create Task Modal ─────────────────────────────────────────────────────────
-function CreateTaskModal({ debtorId, defs, courts, execDepts, onClose, onCreated }: {
+function CreateTaskModal({ debtorId, defs, courts, execDepts, caseType, onClose, onCreated }: {
   debtorId: string
   defs: TaskDef[]
   courts: Court[]
   execDepts: ExecutionDepartment[]
+  caseType?: 'civil' | 'criminal' | null
   onClose: () => void
   onCreated: () => void
 }) {
   const branchId = useBranchId()
+  const role = useAdminRole()
   const [taskType, setTaskType] = useState<TaskType | ''>('')
   const [dueDate, setDueDate] = useState('')
   const [courtId, setCourtId] = useState('')
@@ -66,6 +69,9 @@ function CreateTaskModal({ debtorId, defs, courts, execDepts, onClose, onCreated
   const [error, setError] = useState('')
 
   const selectedDef = defs.find(d => d.task_type === taskType)
+  const visibleFee = selectedDef
+    ? visibleTaskFeeAmount(selectedDef.fee_amount, caseType, role)
+    : 0
   const selectedCourt = courts.find(c => c.id === courtId)
   // Filter execution departments to those linked to the selected court (or all if no court)
   const filteredExecDepts = courtId
@@ -153,7 +159,7 @@ function CreateTaskModal({ debtorId, defs, courts, execDepts, onClose, onCreated
           {selectedDef && (
             <div className="bg-[#2C8780]/6 border border-[#2C8780]/20 rounded-xl px-3 py-2.5 text-xs text-[#231F20]">
               <span className="font-bold">الأتعاب:</span>{' '}
-              <span className="text-[#2C8780] font-black">{Number(selectedDef.fee_amount).toLocaleString('en-US')} د.ع</span>
+              <span className="text-[#2C8780] font-black">{visibleFee.toLocaleString('en-US')} د.ع</span>
             </div>
           )}
 
@@ -512,6 +518,7 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
           defs={defs}
           courts={courts}
           execDepts={execDepts}
+          caseType={debtorMeta?.case_type === 'criminal' ? 'criminal' : 'civil'}
           onClose={() => setShowCreate(false)}
           onCreated={load}
         />

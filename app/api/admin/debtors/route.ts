@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
   const search = searchParams.get('search')?.trim() || ''
   const caseType = searchParams.get('caseType')?.trim() || ''
   const offset = Math.max(0, Number(searchParams.get('offset') ?? 0) || 0)
-  const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') ?? 50) || 50))
+  const limit = Math.min(5000, Math.max(1, Number(searchParams.get('limit') ?? 50) || 50))
   const cols = searchParams.get('cols')?.trim() || DEFAULT_COLS
 
   if (viewAll) {
@@ -190,7 +190,7 @@ export async function POST(request: NextRequest) {
 
   type TaskDefRow = { id: string; fee_amount: number | null; task_type: string; case_type?: string }
   let taskDef: TaskDefRow | null = null
-  if (taskDefinitionId && !isCriminal) {
+  if (taskDefinitionId) {
     const { data: td, error: tdErr } = await admin
       .from('task_definitions')
       .select('id, fee_amount, task_type, case_type')
@@ -316,7 +316,7 @@ export async function POST(request: NextRequest) {
       task_definition_id: taskDefinitionId,
       task_type: taskDef.task_type,
       task_status: 'waiting_assignment',
-      reward_amount: isCriminal ? 0 : (taskDef.fee_amount ?? 0),
+      reward_amount: taskDef.fee_amount ?? 0,
       created_by: auth.user!.id,
       branch_id: branchId,
     })

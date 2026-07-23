@@ -20,6 +20,7 @@ import {
 } from '@/lib/reports-data'
 import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
 import { useCaseScope } from '@/hooks/use-case-scope'
+import { useAdminRole } from '@/context/admin-role'
 
 interface Filters {
   dateFrom: string
@@ -41,6 +42,7 @@ export default function ReportsPage() {
   const branchId = useBranchId()
   const { viewAllBranches, listId } = useBranch()
   const { caseTypeFilter: lockedCaseType } = useCaseScope()
+  const viewerRole = useAdminRole()
   const [snapshot, setSnapshot] = useState<ReportSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -102,13 +104,13 @@ export default function ReportsPage() {
   const lawyers = snapshot?.lawyers ?? []
 
   const achievementByType = useMemo(
-    () => buildAchievementByType(achievements),
-    [achievements],
+    () => buildAchievementByType(achievements, viewerRole),
+    [achievements, viewerRole],
   )
 
   const achievementByLawyer = useMemo(
-    () => buildAchievementByLawyer(achievements, lawyers),
-    [achievements, lawyers],
+    () => buildAchievementByLawyer(achievements, lawyers, viewerRole),
+    [achievements, lawyers, viewerRole],
   )
 
   const summary = useMemo(() => {
@@ -122,7 +124,7 @@ export default function ReportsPage() {
         openCount: 0,
       }
     }
-    const achievementFees = achievements.reduce((s, t) => s + achievementFee(t), 0)
+    const achievementFees = achievements.reduce((s, t) => s + achievementFee(t, viewerRole), 0)
     return {
       totalPayments: snapshot.totalPayments,
       totalExpenses: snapshot.totalExpenses,
@@ -131,7 +133,7 @@ export default function ReportsPage() {
       achievementCount: achievements.length,
       openCount: snapshot.openTaskCount,
     }
-  }, [snapshot, achievements])
+  }, [snapshot, achievements, viewerRole])
 
   const stageReports = useMemo(() => {
     if (!snapshot) {

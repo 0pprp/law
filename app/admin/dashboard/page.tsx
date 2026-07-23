@@ -5,9 +5,9 @@ import { createClient } from '@/lib/supabase/client'
 import { useBranch, useBranchId } from '@/context/branch'
 import Link from 'next/link'
 import { useAdminRole } from '@/context/admin-role'
-import { canAddDebtor, canReviewTasks, canViewLegalManagerWallet, isAccountant, isAdmin, isLegalManager } from '@/lib/permissions'
+import { canAddDebtor, canReviewTasks, isAccountant, isAdmin, isLegalManager } from '@/lib/permissions'
 import { resolveCaseScope, filterBySection } from '@/lib/case-scope'
-import { fetchLegalManagerWalletBalance, listActiveLegalManagers } from '@/lib/legal-manager-wallet'
+import { fetchLegalManagerWalletBalance } from '@/lib/legal-manager-wallet'
 import { fmtMoney } from '@/lib/utils'
 import { activityActionLabel } from '@/lib/activity-labels'
 import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
@@ -151,11 +151,11 @@ export default function DashboardPage() {
     : roleCt
   const allowAddDebtor = canAddDebtor(role)
   const showAddDebtorLink = allowAddDebtor
-  /** محفظة الأتعاب مدنية فقط — مسؤول القانونية المدنية */
+  /** محفظة الأتعاب مدنية فقط — مسؤول القانونية المدنية (ليس المدير) */
   const legalManagerView = isLegalManager(role)
-  const adminWalletView = canViewLegalManagerWallet(role)
   const accountantView = isAccountant(role)
-  const showReviewCard = !accountantView && canReviewTasks(role)
+  /** كارد مراجعة الإنجازات — مسؤولو الأقسام فقط؛ المدير يستخدم القائمة/الأزرار السريعة */
+  const showReviewCard = !accountantView && !isAdmin(role) && canReviewTasks(role)
   const showCivilStages = ct === null || ct === 'civil'
   const showCriminalStages = ct === null || ct === 'criminal'
   const showPaymentOps = ct !== 'criminal'
@@ -285,31 +285,17 @@ export default function DashboardPage() {
   useEffect(() => { loadData() }, [loadData])
 
   useEffect(() => {
-    if (!legalManagerView && !adminWalletView) return
+    if (!legalManagerView) return
     if (ct === 'criminal') {
       setLmWalletBalance(null)
       return
     }
     const supabase = createClient()
-    if (legalManagerView) {
-      supabase.auth.getUser().then(({ data: { user } }) => {
-        if (!user) return
-        fetchLegalManagerWalletBalance(supabase, user.id).then(setLmWalletBalance)
-      })
-      return
-    }
-    // المدير: رصيد مسؤول المدنية للفرع الحالي (أو أول مسؤول إن وُجد)
-    listActiveLegalManagers(supabase).then(async (managers) => {
-      const match = branchId
-        ? managers.find(m => m.branch_id === branchId) ?? managers[0]
-        : managers[0]
-      if (!match) {
-        setLmWalletBalance(null)
-        return
-      }
-      setLmWalletBalance(await fetchLegalManagerWalletBalance(supabase, match.id))
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      fetchLegalManagerWalletBalance(supabase, user.id).then(setLmWalletBalance)
     })
-  }, [legalManagerView, adminWalletView, branchId, ct])
+  }, [legalManagerView, ct])
 
   const {
     visibleItems: visibleActivity,
@@ -411,18 +397,6 @@ export default function DashboardPage() {
           valueColor="text-[#2C8780]"
           sub="لك نسبة 5% من أتعاب كل إنجاز معتمد (الدعاوى المدنية فقط)"
         />
-      )}
-
-      {adminWalletView && ct !== 'criminal' && (
-        <Link href="/admin/legal-manager-wallet" className="block">
-          <StatCard
-            label="محفظة مسؤول الدعاوى المدنية"
-            value={lmWalletBalance === null ? '—' : fmtMoney(lmWalletBalance)}
-            accent="teal"
-            valueColor="text-[#2C8780]"
-            sub="عرض وإدارة المحفظة — نسبة 5% من الإنجازات المعتمدة"
-          />
-        </Link>
       )}
 
       <PaymentOpsCards

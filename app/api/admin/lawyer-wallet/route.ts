@@ -62,9 +62,10 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      const viewerOpts = { viewerRole: profile.role }
       const [balances, txs] = await Promise.all([
-        fetchLawyerWalletBalances(admin, lawyerId),
-        fetchLawyerWalletTransactions(admin, lawyerId, 100),
+        fetchLawyerWalletBalances(admin, lawyerId, viewerOpts),
+        fetchLawyerWalletTransactions(admin, lawyerId, 100, undefined, viewerOpts),
       ])
       return NextResponse.json({ balances, txs })
     }
@@ -86,8 +87,9 @@ export async function GET(request: NextRequest) {
     const { data: lawyers } = await q.order('full_name')
     const ids = (lawyers ?? []).map(l => l.id)
 
+    const viewerOpts = { viewerRole: profile.role }
     const [feesMap, savingsMap] = await Promise.all([
-      fetchLawyerBalancesMap(admin, ids),
+      fetchLawyerBalancesMap(admin, ids, viewerOpts),
       fetchLawyerSavingsBalancesMap(admin, ids),
     ])
 

@@ -10,10 +10,11 @@ import { APPROVED_BRANCH_NAMES, filterSelectableBranches } from '@/lib/branch-co
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useAdminRole } from '@/context/admin-role'
-import { canAddBranchReferenceData, canModifyBranchReferenceData } from '@/lib/permissions'
+import { canAddBranchReferenceData, canModifyBranchReferenceData, isAdmin } from '@/lib/permissions'
 import BranchListsTab from '@/components/settings/BranchListsTab'
 import { formatMoney } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
+import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 async function settingsWrite(payload: Record<string, unknown>): Promise<{ ok: boolean; error?: string; row?: Record<string, unknown> }> {
   const res = await fetch('/api/admin/branch-settings', {
@@ -498,6 +499,8 @@ interface EditForm { label: string; fee: string; isActive: boolean; dynFields: D
 
 function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }) {
   const readOnly = !useCanWrite()
+  const role = useAdminRole()
+  const canEditCriminalFees = isAdmin(role)
   const branchId = useBranchId()
   const isCriminal = caseType === 'criminal'
   const [defs, setDefs] = useState<TaskDef[]>([])
@@ -509,6 +512,9 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
   const [addForm, setAddForm] = useState({ label: '', fee: '0', dynFields: [] as DynField[] })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+
+  const displayFee = (amount: number) =>
+    visibleTaskFeeAmount(amount, caseType, role)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -531,7 +537,7 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
     setEditing(def)
     setEditForm({
       label: def.label,
-      fee: isCriminal ? '0' : String(def.fee_amount),
+      fee: String(displayFee(def.fee_amount)),
       isActive: def.is_active,
       dynFields: existing.map(f => ({
         field_label: f.field_label || f.field_key,
@@ -560,6 +566,11 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
     if (badField !== undefined) { setErr('تحقق من أسماء الحقول'); return }
     setSaving(true); setErr('')
 
+    const feePayload =
+      isCriminal && !canEditCriminalFees
+        ? { /* لا تُمس قيمة الأتعاب الحقيقية لغير المدير */ }
+        : { fee_amount: Number(editForm.fee) || 0 }
+
     const upd = await settingsWrite({
       action: 'update',
       table: 'task_definitions',
@@ -567,7 +578,7 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
       branchId,
       row: {
         label: editForm.label.trim(),
-        fee_amount: isCriminal ? 0 : (Number(editForm.fee) || 0),
+        ...feePayload,
         is_active: editForm.isActive,
       },
     })
@@ -623,7 +634,7 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
       branchId,
       row: {
         label: addForm.label.trim(),
-        fee_amount: isCriminal ? 0 : (Number(addForm.fee) || 0),
+        fee_amount: isCriminal && !canEditCriminalFees ? 0 : (Number(addForm.fee) || 0),
         is_active: true,
         sort_order: maxOrder,
         branch_id: branchId,
@@ -703,7 +714,7 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
                 <tr key={def.id} className={`hover:bg-[#F8F7F8] transition-colors ${!def.is_active ? 'opacity-40' : ''}`}>
                   <td className="px-4 py-3 font-semibold text-[#231F20]">{def.label}</td>
                   <td className="px-4 py-3 text-[#2C8780] font-black tabular-nums text-left" dir="ltr">
-                    {formatMoney(Number(isCriminal ? 0 : def.fee_amount), { suffix: false })}
+                    {formatMoney(Number(displayFee(def.fee_amount)), { suffix: false })}
                   </td>
                   <td className="px-4 py-3 text-center">
                     {defFields(def).length === 0 ? (
@@ -744,13 +755,13 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
           </div>
           <div>
             <label className="block text-xs font-bold text-[#231F20] mb-1.5">الأتعاب (د.ع)</label>
-            {isCriminal ? (
+            {isCriminal && !canEditCriminalFees ? (
               <input value="0" readOnly className={`${INP} bg-[#F3F1F2] text-[#767676]`} dir="ltr" />
             ) : (
               <MoneyInput value={editForm.fee} onChange={v => setEditForm(f => ({ ...f, fee: v }))} className={INP} />
             )}
-            {isCriminal && (
-              <p className="text-[11px] text-[#767676] mt-1">أتعاب المهام الجزائية ثابتة على صفر</p>
+            {isCriminal && !canEditCriminalFees && (
+              <p className="text-[11px] text-[#767676] mt-1">أتعاب المهام الجزائية ظاهرة للمدير فقط</p>
             )}
           </div>
           <div className="flex items-center justify-between py-2.5 border-t border-b border-[rgba(118,118,118,0.08)]">
@@ -832,13 +843,13 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
           </div>
           <div>
             <label className="block text-xs font-bold text-[#231F20] mb-1.5">الأتعاب (د.ع)</label>
-            {isCriminal ? (
+            {isCriminal && !canEditCriminalFees ? (
               <input value="0" readOnly className={`${INP} bg-[#F3F1F2] text-[#767676]`} dir="ltr" />
             ) : (
               <MoneyInput value={addForm.fee} onChange={v => setAddForm(f => ({ ...f, fee: v }))} className={INP} />
             )}
-            {isCriminal && (
-              <p className="text-[11px] text-[#767676] mt-1">أتعاب المهام الجزائية ثابتة على صفر</p>
+            {isCriminal && !canEditCriminalFees && (
+              <p className="text-[11px] text-[#767676] mt-1">أتعاب المهام الجزائية ظاهرة للمدير فقط</p>
             )}
           </div>
 

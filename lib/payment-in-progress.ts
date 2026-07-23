@@ -26,7 +26,7 @@ export async function fetchPaymentInProgressDebtors(
   options?: FetchPaymentInProgressOptions,
 ): Promise<{ rows: PaymentInProgressDebtor[]; total: number; error: string | null }> {
   const offset = Math.max(0, options?.offset ?? 0)
-  const limit = Math.min(100, Math.max(1, options?.limit ?? 50))
+  const limit = Math.min(5000, Math.max(1, options?.limit ?? 50))
   const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
   const branchListId = options?.branchListId?.trim() || null
   const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null

@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { fetchActiveTaskDefinitions } from '@/lib/task-definitions'
+import { useAdminRole } from '@/context/admin-role'
+import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 interface Props {
   debtorId: string
@@ -31,6 +33,8 @@ export default function ChangeDebtorTaskButton({
   const [defs, setDefs] = useState<{ id: string; label: string; fee_amount: number }[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [activeLabel, setActiveLabel] = useState(currentLabel ?? '')
+  const [caseType, setCaseType] = useState<'civil' | 'criminal'>('civil')
+  const role = useAdminRole()
 
   useEffect(() => {
     setActiveLabel(currentLabel ?? '')
@@ -53,6 +57,7 @@ export default function ChangeDebtorTaskButton({
         .eq('id', debtorId)
         .maybeSingle()
       const caseType = debtorMeta?.case_type === 'criminal' ? 'criminal' : 'civil'
+      setCaseType(caseType)
 
       const list = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, fee_amount', { caseType })
       setDefs(list.map(d => ({
@@ -112,11 +117,14 @@ export default function ChangeDebtorTaskButton({
     }
   }
 
-  const options = defs.map(d => ({
-    value: d.id,
-    label: d.label,
-    hint: d.fee_amount > 0 ? `${d.fee_amount.toLocaleString('en-US')} د.ع` : undefined,
-  }))
+  const options = defs.map(d => {
+    const fee = visibleTaskFeeAmount(d.fee_amount, caseType, role)
+    return {
+      value: d.id,
+      label: d.label,
+      hint: fee > 0 ? `${fee.toLocaleString('en-US')} د.ع` : undefined,
+    }
+  })
 
   return (
     <>

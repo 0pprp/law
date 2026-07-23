@@ -43,14 +43,14 @@ function BranchPaymentBox({
   const load = useCallback(async () => {
     setLoading(true)
     const res = await fetchPaymentInProgressDebtors(createClient(), summary.branchId, {
-      limit: PAGE_SIZE,
+      limit: Math.max(summary.count, PAGE_SIZE),
       branchListId: listId || null,
       caseType: caseTypeFilter,
     })
     setRows(res.rows)
     setTotal(res.total)
     setLoading(false)
-  }, [summary.branchId, listId, caseTypeFilter])
+  }, [summary.branchId, summary.count, listId, caseTypeFilter])
 
   useEffect(() => { void load() }, [load])
 

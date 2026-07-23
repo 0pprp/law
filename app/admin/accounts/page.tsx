@@ -13,14 +13,17 @@ import { debtorSearchOrFilter, DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-se
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
+import { useAdminRole } from '@/context/admin-role'
+import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
-const ACCOUNT_COLS = 'id, full_name, governorate, phone, receipt_number, remaining_amount, penalty_amount, total_expenses, lawyer_fees, total_payments, required_amount'
+const ACCOUNT_COLS = 'id, full_name, governorate, phone, receipt_number, remaining_amount, penalty_amount, total_expenses, lawyer_fees, total_payments, required_amount, case_type'
 
 export default function AccountsPage() {
   const branchId = useBranchId()
   const { viewAllBranches, listId } = useBranch()
   const { caseTypeFilter: lockedCaseType } = useCaseScope()
+  const role = useAdminRole()
   const [filterCaseType, setFilterCaseType] = useState<'' | 'civil' | 'criminal'>(lockedCaseType ?? '')
   const effectiveCaseType = lockedCaseType ?? (filterCaseType || null)
   const [debtors, setDebtors] = useState<any[]>([])
@@ -195,7 +198,7 @@ export default function AccountsPage() {
                     </TD>
                     <TD><span className="text-xs text-[#767676] tabular-nums" dir="ltr">{fmtMoney(d.penalty_amount)}</span></TD>
                     <TD><span className="text-xs text-[#767676] tabular-nums" dir="ltr">{fmtMoney(d.total_expenses)}</span></TD>
-                    <TD><span className="text-xs text-[#2C8780] font-semibold tabular-nums" dir="ltr">{fmtMoney(d.lawyer_fees)}</span></TD>
+                    <TD><span className="text-xs text-[#2C8780] font-semibold tabular-nums" dir="ltr">{fmtMoney(visibleTaskFeeAmount(d.lawyer_fees, d.case_type, role))}</span></TD>
                     <TD><span className="font-semibold text-emerald-700 tabular-nums text-xs" dir="ltr">{fmtMoney(d.total_payments)}</span></TD>
                     <TD className="bg-[#2C8780]/5">
                       <span className="font-black text-[#2C8780] tabular-nums text-sm" dir="ltr">{fmtMoney(d.required_amount)}</span>

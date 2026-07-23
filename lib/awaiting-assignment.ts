@@ -189,7 +189,8 @@ export async function fetchAwaitingAssignmentDebtors(
   options?: FetchAwaitingAssignmentOptions,
 ): Promise<FetchAwaitingAssignmentResult> {
   const offset = Math.max(0, options?.offset ?? 0)
-  const limit = Math.min(100, Math.max(1, options?.limit ?? 50))
+  // حد أعلى مرتفع لزر «عرض الكل» — الصفحة الأولى تبقى صغيرة من الواجهة
+  const limit = Math.min(5000, Math.max(1, options?.limit ?? 50))
   const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
   const branchListId = options?.branchListId?.trim() || null
   const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null

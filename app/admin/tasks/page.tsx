@@ -18,7 +18,8 @@ import { fetchAssignmentLawyers, fetchBranchDelegates } from '@/lib/branch-profi
 import { isFindAddressTaskType } from '@/lib/delegate'
 import { formatErrorMessage } from '@/lib/format-error'
 import { ensureAutoAcceptAllAssignments, scheduleBranchMaintenance } from '@/lib/branch-maintenance'
-import { cacheGet, cacheSet, CACHE_TTL } from '@/lib/query-cache'
+import { cacheGet, cacheSet, cacheInvalidatePrefix, CACHE_TTL } from '@/lib/query-cache'
+import { preserveScrollDuring } from '@/lib/preserve-scroll'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -139,7 +140,7 @@ function TasksPageInner() {
   delegatesRef.current = delegates
   taskDefsRef.current = taskDefs
 
-  const load = useCallback(async (append = false, offsetOverride?: number) => {
+  const load = useCallback(async (append = false, offsetOverride?: number, limitOverride?: number) => {
     if (!append) {
       setSelected(new Set())
       setError('')
@@ -162,9 +163,10 @@ function TasksPageInner() {
     }
 
     const offset = offsetOverride ?? 0
+    const pageLimit = Math.max(1, limitOverride ?? CURRENT_TASK_PAGE_SIZE)
     const lawyerFilterId = taskView === 'waiting' ? filterLawyerId : ''
     // v2: استبعاد المهام المعتمدة/النهائية من قوائم التكليف
-    const cacheKey = `tasks:assign:v2:${branchId ?? 'all'}:${taskView}:${filterDef}:${filterListId}:${effectiveCaseType ?? 'all'}:${lawyerFilterId}:${debouncedSearch}:${offset}`
+    const cacheKey = `tasks:assign:v2:${branchId ?? 'all'}:${taskView}:${filterDef}:${filterListId}:${effectiveCaseType ?? 'all'}:${lawyerFilterId}:${debouncedSearch}:${offset}:${pageLimit}`
 
     if (!append) {
       const cached = cacheGet<TasksPageCache>(cacheKey)
@@ -246,7 +248,7 @@ function TasksPageInner() {
           caseType: effectiveCaseType,
           debtorIds,
           offset,
-          limit: CURRENT_TASK_PAGE_SIZE,
+          limit: pageLimit,
         }),
         append ? Promise.resolve(null) : fetchAssignmentLawyers(supabase, branchId, {
           caseType: effectiveCaseType,
@@ -322,9 +324,10 @@ function TasksPageInner() {
     load(false, 0)
   }, [branchId, viewAllBranches, taskView, filterDef, filterListId, effectiveCaseType, filterLawyerId, debouncedSearch, load])
 
-  function loadMore() {
+  function loadAllRemaining() {
     if (loadingMore || tasks.length >= total) return
-    load(true, pageOffset)
+    const remaining = total - tasks.length
+    load(true, pageOffset, remaining)
   }
 
   const waitingCount = unassignedTotal
@@ -428,13 +431,22 @@ function TasksPageInner() {
     }
 
     setAssigning(false)
-    setBulkLawyerId('')
-    setBulkDueDate('')
+    // أبقِ المحامي والتاريخ لتكليف دفعات متتالية دون الرجوع لأول القائمة
     setSingleAssignId(null)
     setSingleLawyerId('')
     setSelected(new Set())
-    setPageOffset(0)
-    await load(false, 0)
+    preserveScrollDuring(() => {
+      const n = ids.length
+      setTasks(prev => prev.filter(t => !ids.includes(t.id)))
+      setTotal(t => Math.max(0, t - n))
+      setPageOffset(prev => Math.max(0, prev - n))
+      if (taskView === 'waiting') {
+        setUnassignedTotal(t => Math.max(0, t - n))
+        setAssignedTotal(t => t + n)
+      }
+      cacheInvalidatePrefix('tasks:assign:')
+      cacheInvalidatePrefix('dashboard:v8:')
+    })
   }
 
   async function unassignTaskIds(ids: string[]) {
@@ -478,8 +490,17 @@ function TasksPageInner() {
 
     setAssigning(false)
     setSelected(new Set())
-    setPageOffset(0)
-    await load(false, 0)
+    preserveScrollDuring(() => {
+      const n = ids.length
+      setTasks(prev => prev.filter(t => !ids.includes(t.id)))
+      setTotal(t => Math.max(0, t - n))
+      setPageOffset(prev => Math.max(0, prev - n))
+      setAssignedTotal(t => Math.max(0, t - n))
+      setUnassignedTotal(t => t + n)
+      if (taskView === 'overdue') setOverdueTotal(t => Math.max(0, t - n))
+      cacheInvalidatePrefix('tasks:assign:')
+      cacheInvalidatePrefix('dashboard:v8:')
+    })
   }
 
   const hasFilters = search || filterDef || filterListId || effectiveCaseType || (isWaitingView && filterLawyerId)
@@ -885,11 +906,11 @@ function TasksPageInner() {
           <div className="p-4 border-t border-[rgba(118,118,118,0.1)] text-center">
             <button
               type="button"
-              onClick={loadMore}
+              onClick={loadAllRemaining}
               disabled={loadingMore}
               className="text-sm font-bold text-[#2C8780] hover:underline disabled:opacity-50"
             >
-              {loadingMore ? 'جارٍ التحميل...' : `تحميل المزيد (${tasks.length} / ${total})`}
+              {loadingMore ? 'جارٍ التحميل...' : `عرض الكل (${total - tasks.length} متبقٍ)`}
             </button>
           </div>
         )}

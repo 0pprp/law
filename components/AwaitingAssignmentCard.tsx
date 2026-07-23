@@ -16,6 +16,7 @@ import {
   type AwaitingBranchSummary,
 } from '@/lib/awaiting-assignment'
 import { useCaseScope } from '@/hooks/use-case-scope'
+import { preserveScrollDuring } from '@/lib/preserve-scroll'
 
 const PAGE_SIZE = 20
 
@@ -265,13 +266,13 @@ function BranchAwaitingBox({
     setRows(prev => prev.map(r => (r.id === notePatch.id ? { ...r, assignment_note: notePatch.note } : r)))
   }, [notePatch])
 
-  const load = useCallback(async (offset = 0, append = false) => {
+  const load = useCallback(async (offset = 0, append = false, fetchLimit?: number) => {
     if (append) setLoadingMore(true)
     else setLoading(true)
     const res = await fetchAwaitingAssignmentDebtors(createClient(), summary.branchId, {
       search,
       offset,
-      limit: PAGE_SIZE,
+      limit: fetchLimit ?? PAGE_SIZE,
       branchListId: listId || null,
       caseType: caseTypeFilter,
     })
@@ -289,6 +290,12 @@ function BranchAwaitingBox({
   }, [summary.branchId, search, listId, caseTypeFilter])
 
   useEffect(() => { void load(0, false) }, [load])
+
+  async function loadAll() {
+    const remaining = Math.max(0, total - rows.length)
+    if (remaining <= 0) return
+    await load(rows.length, true, remaining)
+  }
 
   // لا تعرض البوكس إن صارت القائمة فارغة بعد الفلتر (ما عدا أثناء التحميل الأول)
   if (!loading && total === 0 && !search && !listId) return null
@@ -342,8 +349,10 @@ function BranchAwaitingBox({
             noteMissing={noteMissing}
             onNote={onNote}
             onRemoved={id => {
-              setRows(prev => prev.filter(r => r.id !== id))
-              setTotal(prev => Math.max(0, prev - 1))
+              preserveScrollDuring(() => {
+                setRows(prev => prev.filter(r => r.id !== id))
+                setTotal(prev => Math.max(0, prev - 1))
+              })
               onAssigned?.()
             }}
           />
@@ -352,11 +361,11 @@ function BranchAwaitingBox({
             {rows.length < total && (
               <button
                 type="button"
-                onClick={() => void load(rows.length, true)}
+                onClick={() => void loadAll()}
                 disabled={loadingMore}
                 className="text-xs font-semibold text-[#2C8780] border border-[#2C8780]/30 hover:bg-[#2C8780]/5 px-4 py-2 rounded-lg transition-colors disabled:opacity-60"
               >
-                {loadingMore ? 'جارٍ التحميل...' : `عرض المزيد (${total - rows.length} متبقٍ)`}
+                {loadingMore ? 'جارٍ التحميل...' : `عرض الكل (${total - rows.length} متبقٍ)`}
               </button>
             )}
           </div>
@@ -391,25 +400,46 @@ export default function AwaitingAssignmentCard({
 
   const scopeBranchId = viewAllBranches ? null : branchId
 
-  const loadSummaries = useCallback(async (term: string) => {
+  const loadSummaries = useCallback(async (term: string, opts?: { soft?: boolean }) => {
     if (!branchId && !viewAllBranches) {
       setBranches([])
       setGrandTotal(0)
       setLoading(false)
       return
     }
-    setLoading(true)
+    const soft = Boolean(opts?.soft)
+    if (!soft) setLoading(true)
     const res = await fetchAwaitingAssignmentBranchSummaries(createClient(), scopeBranchId, {
       search: term,
       caseType: caseTypeFilter,
     })
     if (res.error) {
-      setError('فشل تحميل الفروع')
-      setBranches([])
-      setGrandTotal(0)
+      if (!soft) {
+        setError('فشل تحميل الفروع')
+        setBranches([])
+        setGrandTotal(0)
+      }
     } else {
       setError('')
-      setBranches(res.branches)
+      // تحديث العدادات دون تفريغ القائمة أثناء soft (يحافظ على «عرض المزيد» وموضع التمرير)
+      if (soft) {
+        setBranches(prev => {
+          const byId = new Map(res.branches.map(b => [b.branchId, b]))
+          const next = prev
+            .map(b => {
+              const fresh = byId.get(b.branchId)
+              return fresh ? { ...b, count: fresh.count } : b
+            })
+            .filter(b => b.count > 0 || byId.has(b.branchId))
+          // أضف فروعاً جديدة ظهرت
+          for (const b of res.branches) {
+            if (!next.some(x => x.branchId === b.branchId)) next.push(b)
+          }
+          return next.filter(b => (byId.get(b.branchId)?.count ?? 0) > 0 || term)
+        })
+      } else {
+        setBranches(res.branches)
+      }
       setGrandTotal(res.branches.reduce((s, b) => s + b.count, 0))
     }
     setLoading(false)
@@ -464,7 +494,7 @@ export default function AwaitingAssignmentCard({
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>
       )}
 
-      {loading ? (
+      {loading && branches.length === 0 ? (
         <div className="space-y-3">
           {[...Array(2)].map((_, i) => (
             <div key={i} className="h-40 bg-white rounded-2xl border animate-pulse" />
@@ -492,7 +522,9 @@ export default function AwaitingAssignmentCard({
               allowAssign={allowAssign}
               onAssigned={() => {
                 onAssigned?.()
-                void loadSummaries(debouncedSearch)
+                preserveScrollDuring(() => {
+                  void loadSummaries(debouncedSearch, { soft: true })
+                })
               }}
               onNote={setNoteFor}
               notePatch={notePatch}

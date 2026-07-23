@@ -17,6 +17,7 @@ import { normalizeTaskLabelKey } from '@/lib/task-label-normalize'
 import type { PendingTaskExpense } from '@/lib/persist-task-expenses'
 import { persistTaskExpenses } from '@/lib/persist-task-expenses'
 import { validateTaskCompletionFields } from '@/lib/task-completion-validation'
+import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 interface Attachment {
   id: string
@@ -579,7 +580,11 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
       setResolvedDefinitionId(data.id)
       setDefinitionLabel(data.label ?? task.task_label ?? null)
       setDisplayTaskType(data.task_type ?? task.task_type ?? null)
-      setFee(Number(data.fee_amount ?? 0))
+      setFee(visibleTaskFeeAmount(
+        Number((task as { reward_amount?: number | null }).reward_amount ?? data.fee_amount ?? 0),
+        (task as { debtors?: { case_type?: string | null } }).debtors?.case_type,
+        'lawyer',
+      ))
       setReqFields(
         (data.task_required_fields ?? []).sort((a, b) => a.sort_order - b.sort_order),
       )

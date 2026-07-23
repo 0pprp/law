@@ -24,9 +24,10 @@ export async function GET() {
     }
 
     const admin = createAdminClient()
+    const viewerOpts = { viewerRole: profile?.role ?? 'lawyer' }
     const [balances, feeTxs, savingsTxs] = await Promise.all([
-      fetchLawyerWalletBalances(admin, user.id),
-      fetchLawyerWalletTransactions(admin, user.id, 30, 'fees'),
+      fetchLawyerWalletBalances(admin, user.id, viewerOpts),
+      fetchLawyerWalletTransactions(admin, user.id, 30, 'fees', viewerOpts),
       fetchLawyerWalletTransactions(admin, user.id, 30, 'savings'),
     ])
 

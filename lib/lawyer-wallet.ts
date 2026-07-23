@@ -1,6 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WalletTransactionType, LawyerWalletKind } from '@/lib/types'
 import { formatMoney } from '@/lib/money-input'
+import {
+  canSeeCriminalTaskFees,
+  shouldCountFeesWalletTxForViewer,
+} from '@/lib/visible-task-fee'
 
 export type { LawyerWalletKind }
 
@@ -81,11 +85,13 @@ function sumAmounts(rows: { amount?: number | null }[] | null | undefined): numb
 /**
  * Fees balance — ONLY approved tasks (+) and fee payouts (−).
  * صرفيات never affect this balance.
+ * الجزائي: غير المدير لا يحتسب إيداعات أتعاب المهام الجزائية في الرصيد الظاهر.
  */
 export async function fetchLawyerWalletBalance(
   supabase: SupabaseClient,
   lawyerId: string,
   wallet: LawyerWalletKind = 'fees',
+  opts?: { viewerRole?: string | null },
 ): Promise<number> {
   if (wallet === 'savings') {
     return fetchLawyerDisbursementBalance(supabase, lawyerId)
@@ -93,7 +99,7 @@ export async function fetchLawyerWalletBalance(
   if (wallet === 'legal_manager') {
     return fetchLegalManagerDrawerBalance(supabase, lawyerId)
   }
-  return fetchLawyerFeesOnlyBalance(supabase, lawyerId)
+  return fetchLawyerFeesOnlyBalance(supabase, lawyerId, opts)
 }
 
 async function fetchLegalManagerDrawerBalance(
@@ -114,23 +120,64 @@ async function fetchLegalManagerDrawerBalance(
   return sumAmounts(data)
 }
 
+async function loadCriminalTaskIdsForRefs(
+  supabase: SupabaseClient,
+  referenceIds: string[],
+): Promise<Set<string>> {
+  const ids = [...new Set(referenceIds.map(String).filter(Boolean))]
+  if (!ids.length) return new Set()
+  const criminal = new Set<string>()
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200)
+    const { data: tasks } = await supabase
+      .from('tasks')
+      .select('id, debtor:debtors!tasks_debtor_id_fkey(case_type)')
+      .in('id', chunk)
+    for (const t of tasks ?? []) {
+      const debtor = Array.isArray(t.debtor) ? t.debtor[0] : t.debtor
+      const ct = (debtor as { case_type?: string } | null)?.case_type
+      if (ct === 'criminal') criminal.add(String(t.id))
+    }
+  }
+  return criminal
+}
+
+async function sumFeesRowsForViewer(
+  supabase: SupabaseClient,
+  rows: { amount?: number | null; type?: string | null; reference_id?: string | null }[],
+  viewerRole?: string | null,
+): Promise<number> {
+  if (!rows.length) return 0
+  if (canSeeCriminalTaskFees(viewerRole)) return sumAmounts(rows)
+  const refs = rows
+    .filter(r => r.type === 'approved_task_payment' && r.reference_id)
+    .map(r => String(r.reference_id))
+  const criminalTaskIds = await loadCriminalTaskIdsForRefs(supabase, refs)
+  return rows.reduce((s, r) => {
+    if (!shouldCountFeesWalletTxForViewer(viewerRole, r, criminalTaskIds)) return s
+    return s + (Number(r.amount ?? 0) || 0)
+  }, 0)
+}
+
 async function fetchLawyerFeesOnlyBalance(
   supabase: SupabaseClient,
   lawyerId: string,
+  opts?: { viewerRole?: string | null },
 ): Promise<number> {
+  const viewerRole = opts?.viewerRole
   const hasWallet = await probeWalletColumn(supabase)
 
   if (hasWallet) {
     const { data: feeRows, error: feeErr } = await supabase
       .from('lawyer_wallet_transactions')
-      .select('amount')
+      .select('amount, type, reference_id')
       .eq('lawyer_id', lawyerId)
       .eq('wallet', 'fees')
       .limit(5000)
 
-    const { data: legacyFeeRows, error: legacyErr } = await supabase
+    const { data: legacyFeeRows } = await supabase
       .from('lawyer_wallet_transactions')
-      .select('type, amount')
+      .select('type, amount, reference_id')
       .eq('lawyer_id', lawyerId)
       .is('wallet', null)
       .limit(5000)
@@ -138,32 +185,36 @@ async function fetchLawyerFeesOnlyBalance(
     if (feeErr) {
       if (isWalletSchemaCacheError(feeErr) || isMissingWalletColumnError(feeErr)) {
         walletColumnReady = false
-        return fetchLawyerFeesOnlyBalanceLegacy(supabase, lawyerId)
+        return fetchLawyerFeesOnlyBalanceLegacy(supabase, lawyerId, opts)
       }
     }
 
-    const walletSum = sumAmounts(feeRows)
-    const legacyFeeSum = sumAmounts(
+    const walletSum = await sumFeesRowsForViewer(supabase, feeRows ?? [], viewerRole)
+    const legacyFeeSum = await sumFeesRowsForViewer(
+      supabase,
       (legacyFeeRows ?? []).filter(r => rowMatchesWallet(r, 'fees')),
+      viewerRole,
     )
     const total = walletSum + legacyFeeSum
     if (total !== 0) return total
-    return fetchLawyerFeesOnlyBalanceLegacy(supabase, lawyerId)
+    return fetchLawyerFeesOnlyBalanceLegacy(supabase, lawyerId, opts)
   }
 
-  return fetchLawyerFeesOnlyBalanceLegacy(supabase, lawyerId)
+  return fetchLawyerFeesOnlyBalanceLegacy(supabase, lawyerId, opts)
 }
 
 async function fetchLawyerFeesOnlyBalanceLegacy(
   supabase: SupabaseClient,
   lawyerId: string,
+  opts?: { viewerRole?: string | null },
 ): Promise<number> {
   const { data: rows } = await supabase
     .from('lawyer_wallet_transactions')
-    .select('type, amount')
+    .select('type, amount, reference_id')
     .eq('lawyer_id', lawyerId)
     .limit(5000)
-  return sumAmounts((rows ?? []).filter(r => rowMatchesWallet(r, 'fees')))
+  const feeRows = (rows ?? []).filter(r => rowMatchesWallet(r, 'fees'))
+  return sumFeesRowsForViewer(supabase, feeRows, opts?.viewerRole)
 }
 
 /** Disbursements (صرفيات) balance — إيداع وسحب وخصم صرفيات المهام */
@@ -217,9 +268,10 @@ export interface LawyerWalletBalances {
 export async function fetchLawyerWalletBalances(
   supabase: SupabaseClient,
   lawyerId: string,
+  opts?: { viewerRole?: string | null },
 ): Promise<LawyerWalletBalances> {
   const [fees, savings] = await Promise.all([
-    fetchLawyerFeesOnlyBalance(supabase, lawyerId),
+    fetchLawyerFeesOnlyBalance(supabase, lawyerId, opts),
     fetchLawyerDisbursementBalance(supabase, lawyerId),
   ])
   return { fees, savings }
@@ -241,11 +293,12 @@ async function sumBalancesByLawyer(
 export async function fetchLawyerBalancesMap(
   supabase: SupabaseClient,
   lawyerIds: string[],
+  opts?: { viewerRole?: string | null },
 ): Promise<Map<string, number>> {
   const map = new Map<string, number>()
   if (!lawyerIds.length) return map
   await Promise.all(lawyerIds.map(async id => {
-    map.set(id, await fetchLawyerFeesOnlyBalance(supabase, id))
+    map.set(id, await fetchLawyerFeesOnlyBalance(supabase, id, opts))
   }))
   return map
 }
@@ -267,6 +320,7 @@ export async function fetchLawyerWalletTransactions(
   lawyerId: string,
   limit = 100,
   wallet?: LawyerWalletKind,
+  opts?: { viewerRole?: string | null },
 ): Promise<LawyerWalletRow[]> {
   const hasWallet = await probeWalletColumn(supabase)
 
@@ -282,7 +336,7 @@ export async function fetchLawyerWalletTransactions(
   const { data, error } = await q
   if (error && isMissingWalletColumnError(error)) {
     walletColumnReady = false
-    return fetchLawyerWalletTransactions(supabase, lawyerId, limit, wallet)
+    return fetchLawyerWalletTransactions(supabase, lawyerId, limit, wallet, opts)
   }
 
   let rows = (data ?? []) as LawyerWalletRow[]
@@ -291,6 +345,28 @@ export async function fetchLawyerWalletTransactions(
     rows = rows.filter(r => (r.wallet ?? legacyWalletForType(r.type)) === wallet)
   } else if (!hasWallet && wallet) {
     rows = rows.filter(r => rowMatchesWallet(r, wallet))
+  }
+
+  // محفظة الصرفيات: لا تُعدَّل. الأتعاب: إخفاء مبالغ المهام الجزائية لغير المدير.
+  if (wallet === 'fees' || wallet === undefined) {
+    const viewerRole = opts?.viewerRole
+    if (!canSeeCriminalTaskFees(viewerRole)) {
+      const feeLike = rows.filter(r =>
+        wallet === 'fees' ? true : rowMatchesWallet(r, 'fees'),
+      )
+      const refs = feeLike
+        .filter(r => r.type === 'approved_task_payment' && r.reference_id)
+        .map(r => String(r.reference_id))
+      const criminalTaskIds = await loadCriminalTaskIdsForRefs(supabase, refs)
+      rows = rows.map(r => {
+        const isFeesRow = wallet === 'fees' || rowMatchesWallet(r, 'fees')
+        if (!isFeesRow) return r
+        if (!shouldCountFeesWalletTxForViewer(viewerRole, r, criminalTaskIds)) {
+          return { ...r, amount: 0 }
+        }
+        return r
+      })
+    }
   }
 
   return rows.slice(0, limit).map(row => ({

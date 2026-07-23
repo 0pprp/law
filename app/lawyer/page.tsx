@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { isTaskOverdue } from '@/lib/local-date'
 import { lawyerTaskStatusLabel, isLawyerAchievedTask } from '@/lib/lawyer-task-display'
+import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   assignment_pending_acceptance: 'warning',
@@ -67,9 +68,9 @@ export default async function LawyerDashboardPage() {
   if (!user) redirect('/login')
 
   const [{ data: profile }, lawyerTasksRes, walletBalances, counts] = await Promise.all([
-    supabase.from('profiles').select('full_name, governorate, is_active, phone, lawyer_type').eq('id', user.id).single(),
+    supabase.from('profiles').select('full_name, governorate, is_active, phone, lawyer_type, role').eq('id', user.id).single(),
     fetchLawyerAssignedTasks(supabase, user.id, { limit: 50 }),
-    fetchLawyerWalletBalances(supabase, user.id),
+    fetchLawyerWalletBalances(supabase, user.id, { viewerRole: 'lawyer' }),
     fetchLawyerTaskStatusCounts(supabase, user.id),
   ])
 
@@ -184,7 +185,11 @@ export default async function LawyerDashboardPage() {
           <div className="px-3 pb-3 space-y-2">
             {latestTasks.map((task: any) => {
               const isOverdue = task.due_date && isTaskOverdue(task.due_date) && !['completed', 'closed', 'failed', 'approved'].includes(task.task_status)
-              const fee = Number(task.reward_amount ?? 0)
+              const fee = visibleTaskFeeAmount(
+                task.reward_amount,
+                task.debtors?.case_type,
+                profile?.role ?? 'lawyer',
+              )
               return (
                 <Link key={task.id} href={`/lawyer/tasks/${task.id}`} className="block">
                   <div className={`rounded-2xl border p-4 transition-colors active:bg-[#2C8780]/[0.03] ${isOverdue ? 'border-red-200 bg-red-50/40' : 'border-[rgba(118,118,118,0.1)] bg-[#F3F1F2]/50'}`}>
