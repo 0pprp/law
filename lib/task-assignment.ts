@@ -991,7 +991,7 @@ export async function assignTasksToLawyer(
 ): Promise<{ ok: boolean; error: string | null }> {
   if (!taskIds.length) return { ok: false, error: 'لا مهام محددة' }
 
-  const ASSIGNABLE = ['waiting_assignment', 'assignment_rejected', 'new', 'draft'] as const
+  const ASSIGNABLE = ['waiting_assignment', 'new', 'draft'] as const
 
   const full = buildPendingAssignmentPayload(lawyerId, dueDate) as Record<string, unknown>
   // Fallbacks only omit optional columns — never change required status flow
