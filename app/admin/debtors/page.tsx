@@ -41,7 +41,7 @@ function SkeletonRow({ withCheckbox }: { withCheckbox?: boolean }) {
   return (
     <TR>
       {withCheckbox && <TD><div className="h-4 w-4 bg-[rgba(118,118,118,0.1)] rounded animate-pulse" /></TD>}
-      {[1,2,3,4,5,6,7,8,9].map(i => (
+      {[1,2,3,4,5,6,7,8,9,10].map(i => (
         <TD key={i}><div className="h-4 bg-[rgba(118,118,118,0.1)] rounded animate-pulse" style={{ width: `${50 + (i * 13) % 40}%` }} /></TD>
       ))}
     </TR>
@@ -378,7 +378,7 @@ export default function DebtorsPage() {
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH><TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
-                    <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
+                    <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>الملاحظة</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
                   </tr>
                 </THead>
                 <TBody>{[...Array(8)].map((_, i) => <SkeletonRow key={i} withCheckbox={allowPaymentInProgress} />)}</TBody>
@@ -430,6 +430,7 @@ export default function DebtorsPage() {
                     <TH>{RECEIPT_TYPE_LABEL}</TH>
                     <TH>المبلغ المطلوب</TH>
                     <TH>المتبقي</TH>
+                    <TH>الملاحظة</TH>
                     <TH>تاريخ الإضافة</TH>
                     <TH className="text-center">الإجراءات</TH>
                   </tr>
@@ -480,6 +481,11 @@ export default function DebtorsPage() {
                       <TD>
                         <span className={`font-semibold tabular-nums ${Number(debtor.remaining_amount) > 0 ? 'text-red-600' : 'text-green-600'}`} dir="ltr">
                           {fmtMoney(debtor.remaining_amount)}
+                        </span>
+                      </TD>
+                      <TD>
+                        <span className="text-xs text-[#454042] whitespace-pre-wrap break-words max-w-[14rem] inline-block">
+                          {debtor.last_note || '—'}
                         </span>
                       </TD>
                       <TD><span className="text-xs" dir="ltr">{fmtDate(debtor.created_at)}</span></TD>
@@ -549,6 +555,9 @@ export default function DebtorsPage() {
                   </p>
                   {debtor.id_number && <p className="text-xs text-[#767676] font-mono mb-1" dir="ltr">{debtor.id_number}</p>}
                   <p className="text-xs text-[#767676] mb-1">القائمة: {debtorListName(debtor)}</p>
+                  <p className="text-xs text-[#454042] whitespace-pre-wrap break-words mb-2">
+                    الملاحظة: {debtor.last_note || '—'}
+                  </p>
                   {debtor.receipt_number && <p className="text-xs text-[#767676] font-mono mb-2" dir="ltr">{RECEIPT_NUMBER_LABEL}: {debtor.receipt_number}</p>}
                   <div className="grid grid-cols-2 gap-2 text-sm mb-3">
                     <div>

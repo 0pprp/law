@@ -1,0 +1,17 @@
+Lightweight reference snapshot (pre-migration)
+taken_at: 2026-07-26T19:55:44.434Z
+
+SELECT count(*) FROM debtors;
+count: 1554
+
+Awaiting (current_task_id IS NULL, not closed/pip): 951
+
+Columns present (PostgREST probe):
+id, full_name, branch_id, current_task_id, case_status, case_type, assignment_note, created_at
+
+Columns missing (confirmed):
+duplicate_flagged_at
+duplicate_flagged_by
+
+Note: Full information_schema listing requires SQL Editor / DATABASE_URL.
+This file is a lightweight local reference only (not a full DB backup).

@@ -339,6 +339,11 @@ const PAYMENT_FOLLOW_UP_HREFS = new Set([
   '/admin/payments',
 ])
 
+/** إدارة المهام (مدني/جزائي) — المدير فقط */
+export function canManageTaskManagement(role: string | null | undefined): boolean {
+  return isAdmin(role)
+}
+
 /**
  * القائمة:
  * - المدير: الكل
@@ -348,6 +353,9 @@ const PAYMENT_FOLLOW_UP_HREFS = new Set([
  * - مسؤول متابعة التسديد: لوحته والتسديدات فقط
  */
 export function isNavVisibleForRole(href: string, role: string | null | undefined): boolean {
+  if (href === '/admin/task-management' || href.startsWith('/admin/task-management/')) {
+    return canManageTaskManagement(role)
+  }
   if (href === '/admin/legal-manager-wallet') {
     return canViewLegalManagerWallet(role)
   }

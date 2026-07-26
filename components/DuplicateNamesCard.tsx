@@ -8,13 +8,16 @@ import { canAssignTasks, isAdmin, isLegalManager } from '@/lib/permissions'
 import { fmtDate } from '@/lib/utils'
 import { CASE_TYPE_LABELS } from '@/lib/case-type'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
+import AssignmentNoteModal from '@/components/AssignmentNoteModal'
 import BranchListBox from '@/components/BranchListBox'
 import {
-  fetchAwaitingAssignmentBranchSummaries,
-  fetchAwaitingAssignmentDebtors,
   type AwaitingAssignmentDebtor,
   type AwaitingBranchSummary,
 } from '@/lib/awaiting-assignment'
+import {
+  fetchDuplicateNamesBranchSummaries,
+  fetchDuplicateNamesDebtors,
+} from '@/lib/duplicate-names'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
 
@@ -30,117 +33,33 @@ interface Props {
   caseType?: 'civil' | 'criminal' | null
 }
 
-function NoteModal({
-  debtor,
-  onClose,
-  onSaved,
-}: {
-  debtor: AwaitingAssignmentDebtor
-  onClose: () => void
-  onSaved: (note: string | null) => void
-}) {
-  const [text, setText] = useState(debtor.assignment_note ?? '')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  async function save() {
-    if (saving) return
-    setSaving(true)
-    setError('')
-    try {
-      const res = await fetch('/api/admin/debtors/assignment-note', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ debtorId: debtor.id, note: text }),
-      })
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        setError(typeof json.error === 'string' ? json.error : 'فشل حفظ الملاحظة')
-        setSaving(false)
-        return
-      }
-      onSaved(typeof json.note === 'string' ? json.note : null)
-      onClose()
-    } catch {
-      setError('فشل الاتصال')
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/40" dir="rtl">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold text-[#231F20]">ملاحظة إسناد المهمة</h3>
-            <p className="text-xs text-[#767676] mt-1">{debtor.full_name}</p>
-          </div>
-          <button type="button" onClick={onClose} className="text-[#767676] hover:text-[#231F20] text-lg leading-none">×</button>
-        </div>
-        <textarea
-          value={text}
-          onChange={e => setText(e.target.value)}
-          rows={4}
-          maxLength={2000}
-          placeholder="سبب التأخير أو أي ملاحظة إدارية... (اتركها فارغة لمسح الملاحظة)"
-          className="w-full text-sm rounded-xl border border-[rgba(118,118,118,0.2)] px-3 py-2.5 focus:outline-none focus:border-[#2C8780] resize-none"
-        />
-        {error && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</p>
-        )}
-        <div className="flex gap-2 justify-end pt-1">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-xl border border-[rgba(118,118,118,0.2)]">
-            إلغاء
-          </button>
-          <button
-            type="button"
-            onClick={() => void save()}
-            disabled={saving}
-            className="px-4 py-2 text-sm rounded-xl text-white font-bold bg-[#2C8780] hover:bg-[#1D6365] disabled:opacity-50"
-          >
-            {saving ? '...' : 'حفظ الملاحظة'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function DebtorRowsTable({
   rows,
   allowNote,
   allowAssign,
-  allowMark,
+  allowUnmark,
   noteMissing,
   onNote,
   onRemoved,
-  selectedIds,
-  onToggle,
-  onToggleAll,
+  unmarkingId,
+  onUnmark,
 }: {
   rows: AwaitingAssignmentDebtor[]
   allowNote: boolean
   allowAssign: boolean
-  allowMark: boolean
+  allowUnmark: boolean
   noteMissing: boolean
   onNote: (r: AwaitingAssignmentDebtor) => void
   onRemoved: (id: string) => void
-  selectedIds: string[]
-  onToggle: (id: string) => void
-  onToggleAll: () => void
+  unmarkingId: string | null
+  onUnmark: (id: string) => void
 }) {
-  const allSelected = rows.length > 0 && rows.every(r => selectedIds.includes(r.id))
-  const someSelected = rows.some(r => selectedIds.includes(r.id))
-
   return (
     <>
-      <div className="hidden md:block overflow-x-auto">
-        <table className="w-full text-sm min-w-[640px]">
+      <div className="hidden md:block">
+        <table className="w-full text-sm">
           <thead>
             <tr className="text-right text-xs text-[#767676] border-b border-[rgba(118,118,118,0.1)]">
-              {allowMark && (
-                <th className="px-3 py-2.5 w-14 text-center font-semibold text-violet-700">تحديد</th>
-              )}
               <th className="px-4 py-2.5 font-semibold">الاسم</th>
               <th className="px-4 py-2.5 font-semibold">نوع الدعوى</th>
               <th className="px-4 py-2.5 font-semibold">القائمة</th>
@@ -148,46 +67,10 @@ function DebtorRowsTable({
               <th className="px-4 py-2.5 font-semibold">الملاحظة</th>
               <th className="px-4 py-2.5 font-semibold text-center">الإجراءات</th>
             </tr>
-            {allowMark && (
-              <tr className="bg-violet-50/40 border-b border-violet-100">
-                <th className="px-3 py-2 text-center">
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    ref={el => {
-                      if (el) el.indeterminate = someSelected && !allSelected
-                    }}
-                    onChange={onToggleAll}
-                    aria-label="تحديد الكل"
-                    className="accent-violet-600 w-5 h-5 cursor-pointer"
-                  />
-                </th>
-                <th colSpan={6} className="px-4 py-2 text-right text-[11px] font-medium text-violet-800">
-                  تحديد الكل المعروض — ثم «نقل للأسماء المكررة» أعلى الجدول
-                </th>
-              </tr>
-            )}
           </thead>
           <tbody className="divide-y divide-[rgba(118,118,118,0.06)]">
-            {rows.map(r => {
-              const checked = selectedIds.includes(r.id)
-              return (
-              <tr
-                key={r.id}
-                className={`transition-colors ${checked ? 'bg-violet-50/70' : 'hover:bg-[#FAFAFA]'}`}
-              >
-                {allowMark && (
-                  <td className="px-3 py-3 text-center align-middle">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => onToggle(r.id)}
-                      onClick={e => e.stopPropagation()}
-                      aria-label={`تحديد ${r.full_name}`}
-                      className="accent-violet-600 w-5 h-5 cursor-pointer"
-                    />
-                  </td>
-                )}
+            {rows.map(r => (
+              <tr key={r.id} className="hover:bg-[#FAFAFA] transition-colors">
                 <td className="px-4 py-3">
                   <Link
                     href={`/admin/debtors/${r.id}/account`}
@@ -230,50 +113,31 @@ function DebtorRowsTable({
                         onChanged={() => onRemoved(r.id)}
                       />
                     )}
+                    {allowUnmark && (
+                      <button
+                        type="button"
+                        onClick={() => onUnmark(r.id)}
+                        disabled={unmarkingId === r.id}
+                        className="text-xs text-amber-800 hover:text-amber-950 border border-amber-200 hover:bg-amber-50 px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50"
+                      >
+                        {unmarkingId === r.id ? '...' : 'تراجع'}
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
-              )
-            })}
+            ))}
           </tbody>
         </table>
       </div>
 
       <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
-        {allowMark && rows.length > 0 && (
-          <div className="px-4 py-2.5 flex items-center gap-2 border-b border-[rgba(118,118,118,0.08)] bg-violet-50/50">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              ref={el => {
-                if (el) el.indeterminate = someSelected && !allSelected
-              }}
-              onChange={onToggleAll}
-              aria-label="تحديد الكل"
-              className="accent-violet-600 w-4 h-4 cursor-pointer"
-            />
-            <span className="text-xs text-[#767676] font-semibold">تحديد الكل ({rows.length})</span>
-          </div>
-        )}
-        {rows.map(r => {
-          const checked = selectedIds.includes(r.id)
-          return (
-          <div key={r.id} className={`p-4 ${checked ? 'bg-violet-50/70' : ''}`}>
+        {rows.map(r => (
+          <div key={r.id} className="p-4">
             <div className="flex items-start justify-between gap-2 mb-1">
-              <div className="flex items-start gap-2.5 min-w-0">
-                {allowMark && (
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggle(r.id)}
-                    aria-label={`تحديد ${r.full_name}`}
-                    className="accent-violet-600 w-5 h-5 mt-0.5 shrink-0 cursor-pointer"
-                  />
-                )}
-                <Link href={`/admin/debtors/${r.id}/account`} className="font-semibold text-[#231F20]">
-                  {r.full_name}
-                </Link>
-              </div>
+              <Link href={`/admin/debtors/${r.id}/account`} className="font-semibold text-[#231F20]">
+                {r.full_name}
+              </Link>
               <span className="text-[10px] text-[#767676] shrink-0 tabular-nums" dir="ltr">{fmtDate(r.created_at)}</span>
             </div>
             <p className="text-xs text-[#767676] mb-1">{CASE_TYPE_LABELS[r.case_type]}</p>
@@ -300,24 +164,32 @@ function DebtorRowsTable({
                   onChanged={() => onRemoved(r.id)}
                 />
               )}
+              {allowUnmark && (
+                <button
+                  type="button"
+                  onClick={() => onUnmark(r.id)}
+                  disabled={unmarkingId === r.id}
+                  className="flex-1 text-center text-xs text-amber-800 border border-amber-200 px-3 py-1.5 rounded-lg disabled:opacity-50"
+                >
+                  {unmarkingId === r.id ? '...' : 'تراجع'}
+                </button>
+              )}
             </div>
           </div>
-          )
-        })}
+        ))}
       </div>
     </>
   )
 }
 
-/** بوكس فرع واحد — فلتر قوائمه + أسماء تحت إسناد مهمة */
-function BranchAwaitingBox({
+function BranchDuplicateBox({
   summary,
   search,
   caseTypeFilter,
   initialListId,
   allowNote,
   allowAssign,
-  allowMark,
+  allowUnmark,
   onAssigned,
   onNote,
   notePatch,
@@ -328,7 +200,7 @@ function BranchAwaitingBox({
   initialListId: string
   allowNote: boolean
   allowAssign: boolean
-  allowMark: boolean
+  allowUnmark: boolean
   onAssigned?: () => void
   onNote: (r: AwaitingAssignmentDebtor) => void
   notePatch?: { id: string; note: string | null } | null
@@ -340,9 +212,7 @@ function BranchAwaitingBox({
   const [loadingMore, setLoadingMore] = useState(false)
   const [noteMissing, setNoteMissing] = useState(false)
   const [error, setError] = useState('')
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [marking, setMarking] = useState(false)
-  const [markError, setMarkError] = useState('')
+  const [unmarkingId, setUnmarkingId] = useState<string | null>(null)
 
   useEffect(() => {
     setListId(initialListId)
@@ -356,7 +226,7 @@ function BranchAwaitingBox({
   const load = useCallback(async (offset = 0, append = false, fetchLimit?: number) => {
     if (append) setLoadingMore(true)
     else setLoading(true)
-    const res = await fetchAwaitingAssignmentDebtors(createClient(), summary.branchId, {
+    const res = await fetchDuplicateNamesDebtors(createClient(), summary.branchId, {
       search,
       offset,
       limit: fetchLimit ?? PAGE_SIZE,
@@ -364,26 +234,12 @@ function BranchAwaitingBox({
       caseType: caseTypeFilter,
     })
     if (res.error) {
-      setError('فشل تحميل الأسماء')
-      if (!append) {
-        setRows([])
-        setTotal(0)
-        setSelectedIds([])
-      }
+      setError(res.error.includes('عمود') ? res.error : 'فشل تحميل الأسماء')
+      if (!append) { setRows([]); setTotal(0) }
     } else {
       setError('')
       setNoteMissing(res.noteColumnMissing)
-      if (append) {
-        setRows(prev => {
-          const next = [...prev, ...res.rows]
-          const visible = new Set(next.map(r => r.id))
-          setSelectedIds(prevSel => prevSel.filter(id => visible.has(id)))
-          return next
-        })
-      } else {
-        setRows(res.rows)
-        setSelectedIds([])
-      }
+      setRows(prev => (append ? [...prev, ...res.rows] : res.rows))
       setTotal(res.total)
     }
     setLoading(false)
@@ -398,62 +254,43 @@ function BranchAwaitingBox({
     await load(rows.length, true, remaining)
   }
 
-  function toggleOne(id: string) {
-    setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]))
+  function removeRow(id: string) {
+    preserveScrollDuring(() => {
+      setRows(prev => prev.filter(r => r.id !== id))
+      setTotal(prev => Math.max(0, prev - 1))
+    })
+    onAssigned?.()
   }
 
-  function toggleAll() {
-    const allSelected = rows.length > 0 && rows.every(r => selectedIds.includes(r.id))
-    if (allSelected) setSelectedIds([])
-    else setSelectedIds(rows.map(r => r.id))
-  }
-
-  async function markSelected() {
-    const ids = [...selectedIds]
-    if (!ids.length || marking) return
-    setMarking(true)
-    setMarkError('')
+  async function handleUnmark(id: string) {
+    if (unmarkingId) return
+    setUnmarkingId(id)
+    setError('')
     try {
-      const res = await fetch('/api/admin/debtors/mark-duplicate', {
+      const res = await fetch('/api/admin/debtors/unmark-duplicate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ debtorIds: ids }),
+        body: JSON.stringify({ debtorIds: [id] }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setMarkError(typeof json.error === 'string' ? json.error : 'فشل نقل الأسماء المكررة')
-        setMarking(false)
+        setError(typeof json.error === 'string' ? json.error : 'فشل التراجع')
+        setUnmarkingId(null)
         return
       }
-      const updatedIds = new Set(
-        Array.isArray(json.updatedIds) ? json.updatedIds.map(String) : [],
-      )
-      if (!updatedIds.size) {
-        setMarkError(
-          Array.isArray(json.skippedIds) && json.skippedIds.length
-            ? 'لم يُنقل أي اسم — ربما خارج نطاق القسم أو مُحوَّل مسبقاً'
-            : 'لم يُنقل أي اسم',
-        )
-        setMarking(false)
-        return
-      }
-      preserveScrollDuring(() => {
-        setRows(prev => prev.filter(r => !updatedIds.has(r.id)))
-        setTotal(prev => Math.max(0, prev - updatedIds.size))
-        setSelectedIds([])
-      })
-      onAssigned?.()
-      if (Array.isArray(json.skippedIds) && json.skippedIds.length) {
-        setMarkError(`نُقل ${updatedIds.size} — وتُخطي ${json.skippedIds.length}`)
+      const updatedIds: string[] = Array.isArray(json.updatedIds) ? json.updatedIds.map(String) : []
+      if (updatedIds.includes(id) || Number(json.updatedCount) > 0) {
+        removeRow(id)
+      } else {
+        setError('لم يتم التراجع عن هذا الاسم')
       }
     } catch {
-      setMarkError('فشل الاتصال')
+      setError('فشل الاتصال')
     } finally {
-      setMarking(false)
+      setUnmarkingId(null)
     }
   }
 
-  // لا تعرض البوكس إن صارت القائمة فارغة بعد الفلتر (ما عدا أثناء التحميل الأول)
   if (!loading && total === 0 && !search && !listId) return null
   if (!loading && total === 0 && !search && listId) {
     return (
@@ -498,44 +335,16 @@ function BranchAwaitingBox({
         </div>
       ) : (
         <>
-          {allowMark && (
-            <div className="mx-4 mt-3 mb-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-violet-200 bg-violet-50/60 px-3 py-2.5">
-              <p className="text-xs text-[#454042] font-medium">
-                {selectedIds.length > 0
-                  ? `محدَّد: ${selectedIds.length} — جاهز للنقل`
-                  : 'حدّد اسماً أو أكثر من عمود ✓ ثم انقل'}
-              </p>
-              <button
-                type="button"
-                onClick={() => void markSelected()}
-                disabled={marking || selectedIds.length === 0}
-                className="text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-2 rounded-lg transition-colors"
-              >
-                {marking ? 'جارٍ النقل...' : `نقل للأسماء المكررة${selectedIds.length ? ` (${selectedIds.length})` : ''}`}
-              </button>
-            </div>
-          )}
-          {markError && (
-            <div className="mx-4 mt-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{markError}</div>
-          )}
           <DebtorRowsTable
             rows={rows}
             allowNote={allowNote}
             allowAssign={allowAssign}
-            allowMark={allowMark}
+            allowUnmark={allowUnmark}
             noteMissing={noteMissing}
             onNote={onNote}
-            selectedIds={selectedIds}
-            onToggle={toggleOne}
-            onToggleAll={toggleAll}
-            onRemoved={id => {
-              preserveScrollDuring(() => {
-                setRows(prev => prev.filter(r => r.id !== id))
-                setTotal(prev => Math.max(0, prev - 1))
-                setSelectedIds(prev => prev.filter(x => x !== id))
-              })
-              onAssigned?.()
-            }}
+            onRemoved={removeRow}
+            unmarkingId={unmarkingId}
+            onUnmark={id => void handleUnmark(id)}
           />
           <div className="flex items-center justify-between px-4 py-3 border-t border-[rgba(118,118,118,0.08)]">
             <p className="text-xs text-[#767676]">عرض {rows.length} من {total}</p>
@@ -556,8 +365,8 @@ function BranchAwaitingBox({
   )
 }
 
-/** كارد «الأسماء التي تحت إسناد مهمة» — بوكسات حسب الفرع + فلتر قوائم لكل فرع */
-export default function AwaitingAssignmentCard({
+/** كارد «الأسماء المكررة» — بوكسات حسب الفرع + فلتر قوائم لكل فرع */
+export default function DuplicateNamesCard({
   branchId,
   viewAllBranches,
   listId = null,
@@ -568,7 +377,7 @@ export default function AwaitingAssignmentCard({
   const role = useAdminRole()
   const allowNote = isAdmin(role) || isLegalManager(role)
   const allowAssign = canAssignTasks(role)
-  const allowMark = canAssignTasks(role)
+  const allowUnmark = canAssignTasks(role)
   const { caseTypeFilter: roleCaseType } = useCaseScope()
   const caseTypeFilter = caseType !== undefined ? caseType : roleCaseType
 
@@ -593,7 +402,7 @@ export default function AwaitingAssignmentCard({
     }
     const soft = Boolean(opts?.soft)
     if (!soft) setLoading(true)
-    const res = await fetchAwaitingAssignmentBranchSummaries(createClient(), scopeBranchId, {
+    const res = await fetchDuplicateNamesBranchSummaries(createClient(), scopeBranchId, {
       search: term,
       caseType: caseTypeFilter,
     })
@@ -605,7 +414,6 @@ export default function AwaitingAssignmentCard({
       }
     } else {
       setError('')
-      // تحديث العدادات دون تفريغ القائمة أثناء soft (يحافظ على «عرض المزيد» وموضع التمرير)
       if (soft) {
         setBranches(prev => {
           const byId = new Map(res.branches.map(b => [b.branchId, b]))
@@ -615,7 +423,6 @@ export default function AwaitingAssignmentCard({
               return fresh ? { ...b, count: fresh.count } : b
             })
             .filter(b => b.count > 0 || byId.has(b.branchId))
-          // أضف فروعاً جديدة ظهرت
           for (const b of res.branches) {
             if (!next.some(x => x.branchId === b.branchId)) next.push(b)
           }
@@ -646,12 +453,12 @@ export default function AwaitingAssignmentCard({
       {!hideHeader && (
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2.5">
-            <h2 className="font-black text-[#231F20] text-base sm:text-lg">الأسماء التي تحت إسناد مهمة</h2>
-            <span className="inline-flex items-center justify-center min-w-[1.75rem] h-7 px-2 rounded-full bg-amber-100 text-amber-800 text-sm font-black tabular-nums">
+            <h2 className="font-black text-[#231F20] text-base sm:text-lg">الأسماء المكررة</h2>
+            <span className="inline-flex items-center justify-center min-w-[1.75rem] h-7 px-2 rounded-full bg-violet-100 text-violet-800 text-sm font-black tabular-nums">
               {loading ? '—' : grandTotal}
             </span>
           </div>
-          <span className="hidden sm:inline text-sm text-[#454042] font-medium">مدينون بانتظار إسناد مهمة — الأقدم أولاً</span>
+          <span className="hidden sm:inline text-sm text-[#454042] font-medium">مدينون محوّلون من تحت إسناد مهمة</span>
         </div>
       )}
 
@@ -687,16 +494,16 @@ export default function AwaitingAssignmentCard({
       ) : branches.length === 0 ? (
         <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] px-4 py-10 text-center">
           <p className="text-sm font-semibold text-[#231F20]">
-            {debouncedSearch ? 'لا نتائج للبحث' : 'لا توجد أسماء تحت إسناد مهمة حالياً'}
+            {debouncedSearch ? 'لا نتائج للبحث' : 'لا توجد أسماء مكررة حالياً'}
           </p>
           <p className="text-xs text-[#767676] mt-1.5">
-            {debouncedSearch ? 'جرّب كلمات بحث مختلفة' : 'كل المدينين المفتوحين لديهم مهمة مطلوبة'}
+            {debouncedSearch ? 'جرّب كلمات بحث مختلفة' : 'لم يُحوَّل أي مدين من تحت إسناد مهمة بعد'}
           </p>
         </div>
       ) : (
         <div className="space-y-4">
           {branches.map(b => (
-            <BranchAwaitingBox
+            <BranchDuplicateBox
               key={b.branchId}
               summary={b}
               search={debouncedSearch}
@@ -704,7 +511,7 @@ export default function AwaitingAssignmentCard({
               initialListId={initialListForBox}
               allowNote={allowNote}
               allowAssign={allowAssign}
-              allowMark={allowMark}
+              allowUnmark={allowUnmark}
               onAssigned={() => {
                 onAssigned?.()
                 preserveScrollDuring(() => {
@@ -719,7 +526,7 @@ export default function AwaitingAssignmentCard({
       )}
 
       {noteFor && (
-        <NoteModal
+        <AssignmentNoteModal
           debtor={noteFor}
           onClose={() => setNoteFor(null)}
           onSaved={note => {

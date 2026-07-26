@@ -27,7 +27,7 @@ export default function BranchListBox({
   const { lists, loading: listsLoading } = useBranchLists(branchId)
 
   return (
-    <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
+    <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-visible">
       <div className="px-4 py-3.5 border-b border-[rgba(118,118,118,0.1)] flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <h3 className="font-black text-[#231F20] text-base truncate">{branchName}</h3>

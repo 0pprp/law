@@ -13,6 +13,7 @@ import {
   isPaymentFollowUpPathAllowed,
   canViewLegalManagerWallet,
   canManageDelegates,
+  canManageTaskManagement,
 } from '@/lib/permissions'
 import PermissionDenied from '@/components/PermissionDenied'
 
@@ -26,6 +27,10 @@ import PermissionDenied from '@/components/PermissionDenied'
 export default function AdminRouteGuard({ children }: { children: React.ReactNode }) {
   const role = useAdminRole()
   const pathname = usePathname()
+
+  if (pathname.startsWith('/admin/task-management') && !canManageTaskManagement(role)) {
+    return <PermissionDenied message="إدارة المهام: للمدير فقط." />
+  }
 
   if (isPaymentFollowUp(role) && !isPaymentFollowUpPathAllowed(pathname)) {
     return <PermissionDenied message="صلاحيات متابعة التسديد: لوحة جاري التسديد والتسديدات فقط." />

@@ -23,6 +23,7 @@ import {
 } from '@/lib/case-scope'
 import { upsertCriminalDebtorDetails } from '@/lib/criminal-debtor-details'
 import { cleanupFailedDebtorCreate } from '@/lib/debtor-hard-delete'
+import { attachLastNotes } from '@/lib/debtor-last-notes'
 
 /** مبلغ اختياري للجزائي: null/فارغ → 0؛ سالب → خطأ */
 function parseOptionalNonNegativeAmount(value: unknown): { ok: true; value: number } | { ok: false; error: string } {
@@ -43,7 +44,7 @@ function isValidOptionalDate(value: unknown): boolean {
 }
 
 const DEFAULT_COLS =
-  'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, case_type, branch_list_id, branch_id, branch_list:branch_lists(name)'
+  'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, case_type, branch_list_id, branch_id, notes, branch_list:branch_lists(name)'
 
 export async function GET(request: NextRequest) {
   const auth = await requireStaffProfile()
@@ -114,7 +115,7 @@ export async function GET(request: NextRequest) {
   const { data, count, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  let debtors = (data ?? []) as unknown as Array<Record<string, unknown> & { branch_id?: string | null }>
+  let debtors = (data ?? []) as unknown as Array<Record<string, unknown> & { id?: string; branch_id?: string | null; notes?: string | null }>
   if (viewAll && debtors.length) {
     const branchIds = [...new Set(
       debtors.map(d => d.branch_id).filter(Boolean),
@@ -127,6 +128,18 @@ export async function GET(request: NextRequest) {
         branch_name: d.branch_id ? nameMap.get(d.branch_id) ?? null : null,
       }))
     }
+  }
+
+  if (debtors.length) {
+    const withNotes = await attachLastNotes(
+      admin,
+      debtors.map(d => ({
+        ...d,
+        id: String(d.id ?? ''),
+        notes: (d.notes as string | null | undefined) ?? null,
+      })),
+    )
+    debtors = withNotes
   }
 
   return NextResponse.json({ debtors, total: count ?? 0 })

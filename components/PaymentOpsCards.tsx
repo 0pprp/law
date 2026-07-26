@@ -104,7 +104,7 @@ interface Props {
 
 /**
  * كاردات العمليات في اللوحة — بألوان مميزة للتفريق بالنظر:
- * بنفسجي: الأسماء تحت إسناد مهمة · أخضر مُزرق: جاري التسديد · برتقالي: طلبات عدم الالتزام
+ * بنفسجي: تحت إسناد مهمة · أخضر: جاري التسديد · برتقالي: عدم الالتزام
  */
 export default function PaymentOpsCards({
   branchId,
@@ -156,14 +156,14 @@ export default function PaymentOpsCards({
           setAwaitingCount(
             (civilRes.error ? 0 : civilRes.total) + (crimRes.error ? 0 : crimRes.total),
           )
-          return
+        } else {
+          const res = await fetchAwaitingAssignmentDebtors(supabase, scope, {
+            limit: 1,
+            branchListId: listScope,
+            caseType: caseTypeFilter,
+          })
+          setAwaitingCount(res.error ? 0 : res.total)
         }
-        const res = await fetchAwaitingAssignmentDebtors(supabase, scope, {
-          limit: 1,
-          branchListId: listScope,
-          caseType: caseTypeFilter,
-        })
-        setAwaitingCount(res.error ? 0 : res.total)
       })()
     }
     if (showPayment) {
@@ -220,25 +220,33 @@ export default function PaymentOpsCards({
   return (
     <div className="space-y-6">
       {showAwaiting && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-black text-[#231F20] text-base sm:text-lg">الأسماء التي تحت إسناد مهمة</h2>
-            <span className="hidden sm:inline text-sm text-[#454042] font-medium">مدينون بانتظار إسناد المهمة</span>
+        <>
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-black text-[#231F20] text-base sm:text-lg">الأسماء التي تحت إسناد مهمة</h2>
+              <span className="hidden sm:inline text-sm text-[#454042] font-medium">مدينون بانتظار إسناد المهمة</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              <ColorCard
+                label="تحت إسناد مهمة"
+                value={awaitingCount ?? '—'}
+                sub="مدين بانتظار إسناد المهمة"
+                href={
+                  caseTypeFilter === 'civil'
+                    ? '/admin/dashboard/awaiting-assignment?ct=civil'
+                    : caseTypeFilter === 'criminal'
+                      ? '/admin/dashboard/awaiting-assignment?ct=criminal'
+                      : '/admin/dashboard/awaiting-assignment'
+                }
+                buttonLabel="عرض الأسماء"
+                gradient="linear-gradient(135deg,#7c3aed,#6d28d9)"
+                softBg="linear-gradient(135deg,rgba(124,58,237,0.08),rgba(255,255,255,0.9))"
+                border="rgba(124,58,237,0.3)"
+                icon={<PersonPlusIcon />}
+              />
+            </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            <ColorCard
-              label="تحت إسناد مهمة"
-              value={awaitingCount ?? '—'}
-              sub="مدين بانتظار إسناد المهمة"
-              href="/admin/dashboard/awaiting-assignment"
-              buttonLabel="عرض الأسماء"
-              gradient="linear-gradient(135deg,#7c3aed,#6d28d9)"
-              softBg="linear-gradient(135deg,rgba(124,58,237,0.08),rgba(255,255,255,0.9))"
-              border="rgba(124,58,237,0.3)"
-              icon={<PersonPlusIcon />}
-            />
-          </div>
-        </div>
+        </>
       )}
 
       {(showPayment || showNoncompliance) && (

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { attachLastNotes } from '@/lib/debtor-last-notes'
 
 /**
  * «الأسماء التي تحت إسناد مهمة» — مدينون بانتظار تعيين مهمة مطلوبة:
@@ -14,9 +15,13 @@ export interface AwaitingAssignmentDebtor {
   branch_list_name: string | null
   created_at: string
   assignment_note: string | null
+  /** عرض آخر ملاحظة بروفايل: «الكاتب: النص...» */
+  last_note: string
   case_type: 'civil' | 'criminal'
   /** true إذا كان لديه مهمة حالية بلا تعريف — يحتاج استبدال/تعيين نوع */
   needs_task_definition?: boolean
+  /** وقت التحويل لكارد الأسماء المكررة — إن وُجد */
+  duplicate_flagged_at?: string | null
 }
 
 export interface FetchAwaitingAssignmentOptions {
@@ -38,7 +43,7 @@ export interface FetchAwaitingAssignmentResult {
 
 /** أعمدة المدين + اسم القائمة عبر علاقة PostgREST (بدون N+1) */
 const BASE_COLS =
-  'id, full_name, branch_id, branch_list_id, created_at, case_type, branch_list:branch_lists(name)'
+  'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, branch_list:branch_lists(name)'
 
 /** حالات نهائية لا تُحسب ضمن صفوف «تحت إسناد» للمهام اليتيمة */
 const TERMINAL_TASK_STATUSES = new Set([
@@ -51,6 +56,17 @@ const TERMINAL_TASK_STATUSES = new Set([
 
 function isMissingNoteColumnError(message: string | undefined | null): boolean {
   return !!message && message.includes('assignment_note')
+}
+
+function isMissingDuplicateColumnError(message: string | undefined | null): boolean {
+  return !!message && message.includes('duplicate_flagged_at')
+}
+
+/** يستثني المحوّلين للأسماء المكررة — يتجاهل الشرط إن العمود غير مطبّق بعد */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyNotDuplicateFilter(q: any, columnReady: boolean): any {
+  if (!columnReady) return q
+  return q.is('duplicate_flagged_at', null)
 }
 
 type BranchListEmbed = { name?: string | null } | { name?: string | null }[] | null | undefined
@@ -72,14 +88,17 @@ type RawDebtor = {
   created_at: string
   case_type?: string | null
   assignment_note?: string | null
+  notes?: string | null
   needs_task_definition?: boolean
+  duplicate_flagged_at?: string | null
 }
 
-function mapRows(
+async function mapRowsWithLastNotes(
+  supabase: SupabaseClient,
   raw: RawDebtor[],
   branchNames: Map<string, string>,
-): AwaitingAssignmentDebtor[] {
-  return raw.map(r => ({
+): Promise<AwaitingAssignmentDebtor[]> {
+  const mapped = raw.map(r => ({
     id: r.id,
     full_name: r.full_name ?? '—',
     branch_id: r.branch_id,
@@ -88,9 +107,14 @@ function mapRows(
     branch_list_name: resolveBranchListName(r.branch_list),
     created_at: r.created_at,
     assignment_note: r.assignment_note ?? null,
-    case_type: r.case_type === 'criminal' ? 'criminal' : 'civil',
+    last_note: '—' as string,
+    notes: r.notes ?? null,
+    case_type: (r.case_type === 'criminal' ? 'criminal' : 'civil') as 'civil' | 'criminal',
     needs_task_definition: Boolean(r.needs_task_definition),
+    duplicate_flagged_at: r.duplicate_flagged_at ?? null,
   }))
+  const withNotes = await attachLastNotes(supabase, mapped)
+  return withNotes.map(({ notes: _notes, ...rest }) => rest)
 }
 
 async function loadBranchNames(
@@ -120,6 +144,7 @@ async function fetchUntypedUnassignedDebtors(
   const STATS_CHUNK = 500
   const out: RawDebtor[] = []
   let noteColumnMissing = false
+  let duplicateColumnReady = true
   let offset = 0
 
   while (true) {
@@ -138,13 +163,22 @@ async function fetchUntypedUnassignedDebtors(
       if (branchListId) q = q.eq('branch_list_id', branchListId)
       if (caseType) q = q.eq('case_type', caseType)
       if (search) q = q.ilike('full_name', `%${search}%`)
+      q = applyNotDuplicateFilter(q, duplicateColumnReady)
       return q
     }
 
     let res = await build(colsWithNote)
+    if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+      duplicateColumnReady = false
+      res = await build(colsWithNote)
+    }
     if (res.error && isMissingNoteColumnError(res.error.message)) {
       noteColumnMissing = true
       res = await build(colsBase)
+      if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+        duplicateColumnReady = false
+        res = await build(colsBase)
+      }
     }
     if (res.error) return { rows: [], error: res.error.message, noteColumnMissing }
 
@@ -195,6 +229,8 @@ export async function fetchAwaitingAssignmentDebtors(
   const branchListId = options?.branchListId?.trim() || null
   const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
 
+  let duplicateColumnReady = true
+
   const buildNoTaskQuery = (cols: string) => {
     let q = supabase
       .from('debtors')
@@ -206,6 +242,7 @@ export async function fetchAwaitingAssignmentDebtors(
     if (branchListId) q = q.eq('branch_list_id', branchListId)
     if (caseType) q = q.eq('case_type', caseType)
     if (search) q = q.ilike('full_name', `%${search}%`)
+    q = applyNotDuplicateFilter(q, duplicateColumnReady)
     return q
   }
 
@@ -229,7 +266,21 @@ export async function fetchAwaitingAssignmentDebtors(
   if (branchListId) countQ = countQ.eq('branch_list_id', branchListId)
   if (caseType) countQ = countQ.eq('case_type', caseType)
   if (search) countQ = countQ.ilike('full_name', `%${search}%`)
-  const { count: noTaskTotal, error: countErr } = await countQ
+  countQ = applyNotDuplicateFilter(countQ, duplicateColumnReady)
+  let { count: noTaskTotal, error: countErr } = await countQ
+  if (countErr && isMissingDuplicateColumnError(countErr.message)) {
+    duplicateColumnReady = false
+    countQ = supabase
+      .from('debtors')
+      .select('id', { count: 'exact', head: true })
+      .is('current_task_id', null)
+      .or('case_status.is.null,and(case_status.neq.closed,case_status.neq.payment_in_progress)')
+    if (branchId) countQ = countQ.eq('branch_id', branchId)
+    if (branchListId) countQ = countQ.eq('branch_list_id', branchListId)
+    if (caseType) countQ = countQ.eq('case_type', caseType)
+    if (search) countQ = countQ.ilike('full_name', `%${search}%`)
+    ;({ count: noTaskTotal, error: countErr } = await countQ)
+  }
   if (countErr) {
     return { rows: [], total: 0, noteColumnMissing, error: countErr.message }
   }
@@ -246,9 +297,18 @@ export async function fetchAwaitingAssignmentDebtors(
     const noTaskOffset = Math.max(0, offset - untypedSorted.length)
     let res = await buildNoTaskQuery(`${BASE_COLS}, assignment_note`)
       .range(noTaskOffset, noTaskOffset + remaining - 1)
+    if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+      duplicateColumnReady = false
+      res = await buildNoTaskQuery(`${BASE_COLS}, assignment_note`)
+        .range(noTaskOffset, noTaskOffset + remaining - 1)
+    }
     if (res.error && isMissingNoteColumnError(res.error.message)) {
       noteColumnMissing = true
       res = await buildNoTaskQuery(BASE_COLS).range(noTaskOffset, noTaskOffset + remaining - 1)
+      if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+        duplicateColumnReady = false
+        res = await buildNoTaskQuery(BASE_COLS).range(noTaskOffset, noTaskOffset + remaining - 1)
+      }
     }
     if (res.error) {
       return { rows: [], total: 0, noteColumnMissing, error: res.error.message }
@@ -259,7 +319,7 @@ export async function fetchAwaitingAssignmentDebtors(
 
   const branchNames = await loadBranchNames(supabase, page)
   return {
-    rows: mapRows(page, branchNames),
+    rows: await mapRowsWithLastNotes(supabase, page, branchNames),
     total,
     noteColumnMissing,
     error: null,
@@ -284,6 +344,7 @@ export async function fetchAwaitingAssignmentBranchSummaries(
   const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
   const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
   const counts = new Map<string, number>()
+  let duplicateColumnReady = true
 
   const add = (id: string | null | undefined) => {
     if (!id) return
@@ -305,7 +366,22 @@ export async function fetchAwaitingAssignmentBranchSummaries(
       if (branchId) q = q.eq('branch_id', branchId)
       if (caseType) q = q.eq('case_type', caseType)
       if (search) q = q.ilike('full_name', `%${search}%`)
-      const { data, error } = await q
+      q = applyNotDuplicateFilter(q, duplicateColumnReady)
+      let { data, error } = await q
+      if (error && isMissingDuplicateColumnError(error.message)) {
+        duplicateColumnReady = false
+        q = supabase
+          .from('debtors')
+          .select('branch_id')
+          .is('current_task_id', null)
+          .or('case_status.is.null,and(case_status.neq.closed,case_status.neq.payment_in_progress)')
+          .order('id')
+          .range(offset, offset + CHUNK - 1)
+        if (branchId) q = q.eq('branch_id', branchId)
+        if (caseType) q = q.eq('case_type', caseType)
+        if (search) q = q.ilike('full_name', `%${search}%`)
+        ;({ data, error } = await q)
+      }
       if (error) return { branches: [], error: error.message }
       const rows = data ?? []
       for (const r of rows) add(r.branch_id as string | null)

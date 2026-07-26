@@ -460,6 +460,7 @@ async function cleanupDebtor(
   if (filePath) await supabase.storage.from('debtor-files').remove([filePath])
   await supabase.from('expenses').delete().eq('debtor_id', debtorId)
   await supabase.from('debtor_payments').delete().eq('debtor_id', debtorId)
+  await supabase.from('debtor_notes').delete().eq('debtor_id', debtorId)
   if (taskId) await supabase.from('tasks').delete().eq('id', taskId)
   await supabase.from('debtors').delete().eq('id', debtorId)
 }

@@ -427,6 +427,7 @@ async function cleanupCriminalDebtor(
     }
   }
   await deleteCriminalDebtorDetails(admin, debtorId)
+  await admin.from('debtor_notes').delete().eq('debtor_id', debtorId)
   await admin.from('debtors').delete().eq('id', debtorId)
 }
 
@@ -536,6 +537,18 @@ export async function executeCriminalDebtorImport(
       }
       const createdId = String(newDebtor.id)
       debtorId = createdId
+
+      const noteMsg = row.notes?.trim() || ''
+      if (noteMsg) {
+        const { error: noteErr } = await admin.from('debtor_notes').insert({
+          debtor_id: createdId,
+          user_id: opts.userId,
+          message: noteMsg,
+        })
+        if (noteErr) {
+          console.warn('[criminal-debtor-import] debtor_notes insert failed:', noteErr.message)
+        }
+      }
 
       const detailsRes = await upsertCriminalDebtorDetails(admin, createdId, {
         job_title: row.job_title || null,

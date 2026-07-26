@@ -125,6 +125,7 @@ export type TaskType =
   | 'salary_seizure' | 'first_registration' | 'file_closure'
   | 'find_address' | 'find_missing_address' | 'settlement' | 'negotiations'
   | 'criminal_lawsuit_request' | 'police_station_statement' | 'court_statement' | 'witness_statement'
+  | 'custom'
 export type ReceiptType = 'check' | 'bill_of_exchange' | 'trust' | 'contract' | 'other'
 
 export interface Profile {
@@ -174,6 +175,9 @@ export interface Debtor {
   notes: string | null
   /** ملاحظة كارد «الأسماء التي تحت إسناد مهمة» — تعديلها للمدير ومسؤول القانونية فقط */
   assignment_note?: string | null
+  /** وقت التحويل لكارد الأسماء المكررة — NULL = غير محوّل */
+  duplicate_flagged_at?: string | null
+  duplicate_flagged_by?: string | null
   /** نوع التسديد عند جاري التسديد */
   payment_type?: PaymentScheduleType | null
   /** مكان التسديد عند جاري التسديد */
@@ -364,8 +368,8 @@ export const TASK_TYPE_LABELS: Record<TaskType, string> = {
   department_correspondence: 'مفاتحة دوائر',
   newspaper_publication: 'نشر جريده',
   salary_seizure: 'حجز راتب',
-  first_registration: 'التسجيل أول من الأصالة',
-  file_closure: 'ختم الإضبارة',
+  first_registration: 'تسديد بالتنفيذ',
+  file_closure: 'ابطال',
   find_address: 'إيجاد عنوان المدين والإنذار',
   find_missing_address: 'إيجاد عنوان المفقود والإنذار',
   settlement: 'التسوية',
@@ -374,6 +378,7 @@ export const TASK_TYPE_LABELS: Record<TaskType, string> = {
   police_station_statement: 'تدوين أقوال في مركز الشرطة',
   court_statement: 'تدوين أقوال في المحكمة',
   witness_statement: 'تدوين أقوال الشهود',
+  custom: 'مهمة مخصصة',
 }
 
 export const RECEIPT_TYPE_LABELS: Record<ReceiptType, string> = {

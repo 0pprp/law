@@ -12,7 +12,16 @@ import { AdminRoleProvider } from '@/context/admin-role'
 import AdminRouteGuard from '@/components/AdminRouteGuard'
 import BranchSelector from '@/components/BranchSelector'
 import ListSelector from '@/components/ListSelector'
-import { isNavVisibleForRole, isAccountant, isViewer, isCriminalLegalManager, isAnyLegalManager, canAccessFinance, canManageFinance, accountantNotificationTotal } from '@/lib/permissions'
+import {
+  isNavVisibleForRole,
+  isAccountant,
+  isViewer,
+  isCriminalLegalManager,
+  isAnyLegalManager,
+  canAccessFinance,
+  canManageFinance,
+  accountantNotificationTotal,
+} from '@/lib/permissions'
 import {
   ADMIN_NOTIFICATIONS_REFRESH,
   fetchAdminNotificationCounts,
@@ -91,6 +100,9 @@ const sections = [
   {
     label: 'النظام',
     items: [
+      { label: 'إدارة المهام', href: '/admin/task-management', icon: (
+        <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+      )},
       { label: 'إعدادات الفرع', href: '/admin/settings', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
       )},

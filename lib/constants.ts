@@ -16,8 +16,8 @@ export const TASK_FEE_MAP: Record<TaskType, number> = {
   department_correspondence: 20000,
   newspaper_publication: 30000,
   salary_seizure: 40000,
-  first_registration: 50000,
-  file_closure: 20000,
+  first_registration: 0,
+  file_closure: 0,
   find_address: 10000,
   find_missing_address: 15000,
   settlement: 5000,
@@ -26,4 +26,5 @@ export const TASK_FEE_MAP: Record<TaskType, number> = {
   police_station_statement: 25000,
   court_statement: 25000,
   witness_statement: 25000,
+  custom: 0,
 }

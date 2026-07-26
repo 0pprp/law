@@ -1113,8 +1113,6 @@ function ExpenseTypesTab() {
 const TABS: { id: Tab; label: string }[] = [
   { id: 'courts',        label: 'المحاكم' },
   { id: 'exec-depts',    label: 'دوائر التنفيذ' },
-  { id: 'task-defs',     label: 'أنواع المهام' },
-  { id: 'criminal-task-defs', label: 'المهام الجزائية' },
   { id: 'expense-types', label: 'أنواع الصرفيات' },
   { id: 'branch-lists',  label: 'قوائم الفرع' },
 ]
@@ -1176,8 +1174,6 @@ export default function SettingsPage() {
       {/* Tab Content */}
       {tab === 'courts'        && <CourtsTab branches={branches} />}
       {tab === 'exec-depts'    && <ExecDeptsTab branches={branches} />}
-      {tab === 'task-defs'     && <TaskDefsTab caseType="civil" />}
-      {tab === 'criminal-task-defs' && <TaskDefsTab caseType="criminal" />}
       {tab === 'expense-types' && <ExpenseTypesTab />}
       {tab === 'branch-lists'  && <BranchListsTab />}
     </div>
