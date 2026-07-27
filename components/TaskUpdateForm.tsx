@@ -9,6 +9,7 @@ import { logActivity } from '@/lib/activity-log'
 import { DatePicker } from '@/components/ui/date-picker'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import TaskCompletionExpenseModal from '@/components/TaskCompletionExpenseModal'
+import HybridTaskSelectionModal, { type HybridSelectionResult } from '@/components/HybridTaskSelectionModal'
 import CenteredModalPortal from '@/components/ui/centered-modal-portal'
 import { getTaskExpenses, fetchExpensesViaDefinitionEmbed, normalizeExpenseRows, type TaskDefinitionExpense } from '@/lib/task-definition-expenses'
 import { fetchLawyerTaskExpenses, mergeExpenseSources } from '@/lib/fetch-lawyer-task-expenses'
@@ -18,6 +19,13 @@ import type { PendingTaskExpense } from '@/lib/persist-task-expenses'
 import { persistTaskExpenses } from '@/lib/persist-task-expenses'
 import { validateTaskCompletionFields } from '@/lib/task-completion-validation'
 import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
+import {
+  fetchHybridTaskLinks,
+  hybridFieldKey,
+  isMissingHybridSchema,
+  partitionCompletionDataByDefinition,
+  type HybridLinkInfo,
+} from '@/lib/hybrid-task-links'
 
 interface Attachment {
   id: string
@@ -44,7 +52,19 @@ interface Props {
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
 
 // ─── Completion Modal (dynamic) ────────────────────────────────────────────────
-export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSubmitted, skipRouterRefresh, taskLabel, pendingExpenses = [], expenseStepDone = false }: {
+export function LawyerTaskCompletionModal({
+  task,
+  reqFields,
+  fee,
+  onClose,
+  onSubmitted,
+  skipRouterRefresh,
+  taskLabel,
+  pendingExpenses = [],
+  expenseStepDone = false,
+  hybridParentDefinitionId = null,
+  hybridSelectedLinked = [],
+}: {
   task: Task & Record<string, any>
   reqFields: ReqField[]
   fee: number
@@ -54,8 +74,12 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
   taskLabel?: string
   pendingExpenses?: PendingTaskExpense[]
   expenseStepDone?: boolean
+  /** إن وُجدت مهام مرتبطة محددة — وضع هجين */
+  hybridParentDefinitionId?: string | null
+  hybridSelectedLinked?: HybridLinkInfo[]
 }) {
   const router = useRouter()
+  const isHybridSubmit = Boolean(hybridParentDefinitionId && hybridSelectedLinked.length > 0)
   const [values, setValues] = useState<Record<string, string>>(() => {
     const existing = task.completion_data
     if (!existing || typeof existing !== 'object' || Array.isArray(existing)) return {}
@@ -108,6 +132,70 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
     }
   }
 
+  async function insertLinkedHybridTasks(
+    supabase: ReturnType<typeof createClient>,
+    userId: string,
+    rawCompletion: Record<string, string>,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!hybridParentDefinitionId || !hybridSelectedLinked.length) return { ok: true }
+
+    const defIds = [
+      hybridParentDefinitionId,
+      ...hybridSelectedLinked.map(l => l.linked_definition_id),
+    ]
+    const partitioned = partitionCompletionDataByDefinition(rawCompletion, defIds)
+    const nowIso = new Date().toISOString()
+    const assignedTo = (task as { assigned_to?: string | null }).assigned_to ?? userId
+
+    for (const link of hybridSelectedLinked) {
+      const childCompletion = partitioned[link.linked_definition_id] ?? {}
+      const basePayload: Record<string, unknown> = {
+        debtor_id: task.debtor_id,
+        branch_id: (task as any).branch_id ?? null,
+        task_definition_id: link.linked_definition_id,
+        task_type: link.task_type ?? task.task_type ?? null,
+        assigned_to: assignedTo,
+        task_status: 'pending_review',
+        reward_amount: Number(link.fee_amount) || 0,
+        completion_data: childCompletion,
+        completed_at: nowIso,
+        created_by: userId,
+        lawyer_notes: childCompletion.note || null,
+        legal_result: childCompletion.legal_result || null,
+      }
+
+      const withParent = { ...basePayload, hybrid_parent_task_id: task.id }
+
+      let { error: insErr } = await supabase.from('tasks').insert(withParent as any)
+
+      if (insErr && isMissingHybridSchema(insErr.message)) {
+        // العمود غير موجود بعد — أعد المحاولة بدونه
+        ;({ error: insErr } = await supabase.from('tasks').insert(basePayload as any))
+      }
+
+      if (insErr) {
+        // fallback حالة submitted إن لم تُقبل pending_review
+        const msg = String(insErr.message ?? '')
+        if (msg.toLowerCase().includes('pending_review') || msg.toLowerCase().includes('invalid input value for enum')) {
+          const retryPayload = { ...withParent, task_status: 'submitted' }
+          let { error: retryErr } = await supabase.from('tasks').insert(retryPayload as any)
+          if (retryErr && isMissingHybridSchema(retryErr.message)) {
+            ;({ error: retryErr } = await supabase
+              .from('tasks')
+              .insert({ ...basePayload, task_status: 'submitted' } as any))
+          }
+          if (retryErr) {
+            return { ok: false, error: `فشل إنشاء المهمة المرتبطة «${link.label}»: ${retryErr.message}` }
+          }
+          continue
+        }
+        return { ok: false, error: `فشل إنشاء المهمة المرتبطة «${link.label}»: ${insErr.message}` }
+      }
+    }
+
+    return { ok: true }
+  }
+
   async function submit() {
     const err = validate()
     if (err) { setError(err); return }
@@ -156,15 +244,27 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
       }
     }
 
+    // للوضع الهجين: completion_data للأساسية = حقولها فقط
+    let parentCompletion = completionData
+    if (isHybridSubmit && hybridParentDefinitionId) {
+      const defIds = [
+        hybridParentDefinitionId,
+        ...hybridSelectedLinked.map(l => l.linked_definition_id),
+      ]
+      const partitioned = partitionCompletionDataByDefinition(completionData, defIds)
+      parentCompletion = partitioned[hybridParentDefinitionId] ?? {}
+      if (generalNotes.trim()) parentCompletion.general_notes = generalNotes.trim()
+    }
+
     const submitPayloads = [
       { task_status: 'submitted' as const },
       { task_status: 'pending_review' as const },
     ]
     let updateErr: { message?: string } | null = null
     const baseUpdate = {
-      lawyer_notes: values['note'] || task.lawyer_notes || null,
-      legal_result: values['legal_result'] || null,
-      completion_data: completionData,
+      lawyer_notes: parentCompletion['note'] || values['note'] || task.lawyer_notes || null,
+      legal_result: parentCompletion['legal_result'] || values['legal_result'] || null,
+      completion_data: parentCompletion,
       completed_at: new Date().toISOString(),
     }
     for (const statusPart of submitPayloads) {
@@ -181,11 +281,22 @@ export function LawyerTaskCompletionModal({ task, reqFields, fee, onClose, onSub
 
     if (updateErr) { setError(updateErr.message ?? 'خطأ في التحديث'); setSaving(false); return }
 
+    if (isHybridSubmit) {
+      const linkedResult = await insertLinkedHybridTasks(supabase, user.id, completionData)
+      if (!linkedResult.ok) {
+        setError(linkedResult.error ?? 'فشل إنشاء المهام المرتبطة')
+        setSaving(false)
+        return
+      }
+    }
+
     await logActivity({
       action: 'submit_task',
       entity_type: 'task',
       entity_id: task.id,
-      description: `إرسال المهمة للاعتماد — أتعاب: ${fee.toLocaleString('en-US')} د.ع`,
+      description: isHybridSubmit
+        ? `إرسال مهمة هجينة للاعتماد (+${hybridSelectedLinked.length} مرتبطة) — أتعاب: ${fee.toLocaleString('en-US')} د.ع`
+        : `إرسال المهمة للاعتماد — أتعاب: ${fee.toLocaleString('en-US')} د.ع`,
     }, supabase)
 
     onSubmitted()
@@ -477,10 +588,12 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
   const [uploadError, setUploadError] = useState('')
   const [showExpenseModal, setShowExpenseModal] = useState(false)
   const [showCompletion, setShowCompletion] = useState(false)
+  const [showHybridSelect, setShowHybridSelect] = useState(false)
   const [pendingExpenses, setPendingExpenses] = useState<PendingTaskExpense[]>([])
   const [expenseStepDone, setExpenseStepDone] = useState(false)
   const [expenseModalMode, setExpenseModalMode] = useState<'draft' | 'immediate'>('draft')
   const [reqFields, setReqFields] = useState<ReqField[]>([])
+  const [completionReqFields, setCompletionReqFields] = useState<ReqField[]>([])
   const [expenseDefs, setExpenseDefs] = useState<TaskDefinitionExpense[]>(expenseDefsProp)
   const [modalExpenseDefs, setModalExpenseDefs] = useState<TaskDefinitionExpense[]>([])
   const [expenseDefsReady, setExpenseDefsReady] = useState(true)
@@ -493,6 +606,9 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
     (task as any).task_definitions?.label ?? task.task_label ?? null,
   )
   const [displayTaskType, setDisplayTaskType] = useState<string | null>(task.task_type ?? null)
+  const [hybridLinks, setHybridLinks] = useState<HybridLinkInfo[]>([])
+  const [isHybrid, setIsHybrid] = useState(false)
+  const [hybridSelectedLinked, setHybridSelectedLinked] = useState<HybridLinkInfo[]>([])
 
   const canSubmit = ['assigned', 'in_progress', 'new', 'rejected', 'needs_info', 'needs_revision'].includes(task.task_status)
   const isSubmitted = task.task_status === 'submitted' || task.task_status === 'pending_review'
@@ -508,7 +624,6 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
   }, [expenseDefsProp, task.id])
 
   useEffect(() => {
-    const supabase = createClient()
     let cancelled = false
 
     async function loadDefinition() {
@@ -585,9 +700,9 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
         (task as { debtors?: { case_type?: string | null } }).debtors?.case_type,
         'lawyer',
       ))
-      setReqFields(
-        (data.task_required_fields ?? []).sort((a, b) => a.sort_order - b.sort_order),
-      )
+      const fields = (data.task_required_fields ?? []).sort((a, b) => a.sort_order - b.sort_order)
+      setReqFields(fields)
+      setCompletionReqFields(fields)
       const embedded = normalizeExpenseRows(data.task_definition_expenses)
       if (embedded.length > 0) {
         setExpenseDefs(embedded)
@@ -597,6 +712,26 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
     void loadDefinition()
     return () => { cancelled = true }
   }, [(task as any).task_definition_id, (task as any).branch_id, task.task_type, task.task_label, task.id])
+
+  // جلب حالة الهجين بعد معرفة التعريف
+  useEffect(() => {
+    let cancelled = false
+    const defId = resolvedDefinitionId ?? (task as any).task_definition_id as string | null
+    if (!defId) {
+      setIsHybrid(false)
+      setHybridLinks([])
+      return
+    }
+
+    void (async () => {
+      const result = await fetchHybridTaskLinks(defId)
+      if (cancelled) return
+      setIsHybrid(result.isHybrid)
+      setHybridLinks(result.links)
+    })()
+
+    return () => { cancelled = true }
+  }, [resolvedDefinitionId, (task as any).task_definition_id])
 
   const taskLabel = resolveTaskLabel(displayTaskType ?? task.task_type, definitionLabel)
 
@@ -627,6 +762,142 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
     return mergeExpenseSources(expenseDefsProp, expenseDefs)
   }
 
+  type DefBundle = {
+    id: string
+    label: string
+    fee_amount: number
+    task_type: string | null
+    fields: ReqField[]
+    expenses: TaskDefinitionExpense[]
+  }
+
+  async function loadDefinitionBundles(definitionIds: string[]): Promise<DefBundle[]> {
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from('task_definitions')
+      .select('id, label, fee_amount, task_type, task_required_fields(*), task_definition_expenses(id, task_definition_id, name, max_amount, sort_order)')
+      .in('id', definitionIds)
+
+    if (error || !data?.length) return []
+
+    const byId = new Map(data.map(d => [String(d.id), d]))
+    return definitionIds.map(id => {
+      const row = byId.get(id) as {
+        id: string
+        label?: string | null
+        fee_amount?: number | null
+        task_type?: string | null
+        task_required_fields?: ReqField[]
+        task_definition_expenses?: unknown
+      } | undefined
+      if (!row) {
+        return {
+          id,
+          label: 'مهمة',
+          fee_amount: 0,
+          task_type: null,
+          fields: [],
+          expenses: [],
+        }
+      }
+      return {
+        id: String(row.id),
+        label: String(row.label ?? 'مهمة'),
+        fee_amount: Number(row.fee_amount ?? 0),
+        task_type: row.task_type ?? null,
+        fields: (row.task_required_fields ?? []).sort((a, b) => a.sort_order - b.sort_order),
+        expenses: normalizeExpenseRows(row.task_definition_expenses),
+      }
+    })
+  }
+
+  function buildAggregatedFields(bundles: DefBundle[], multi: boolean): ReqField[] {
+    const out: ReqField[] = []
+    for (const bundle of bundles) {
+      for (const f of bundle.fields) {
+        const key = multi ? hybridFieldKey(bundle.id, f.field_key) : f.field_key
+        const baseLabel = f.field_label
+          ?? REQUIRED_FIELD_LABELS[f.field_type as RequiredField]
+          ?? f.field_type
+        out.push({
+          ...f,
+          id: multi ? `${bundle.id}:${f.id}` : f.id,
+          field_key: key,
+          field_label: multi ? `${bundle.label} — ${baseLabel}` : f.field_label,
+        })
+      }
+    }
+    return out
+  }
+
+  function buildAggregatedExpenses(bundles: DefBundle[], multi: boolean): TaskDefinitionExpense[] {
+    const out: TaskDefinitionExpense[] = []
+    for (const bundle of bundles) {
+      for (const exp of bundle.expenses) {
+        out.push({
+          ...exp,
+          // الإبقاء على id الحقيقي لـ persistTaskExpenses (FK)
+          name: multi ? `${bundle.label}: ${exp.name}` : exp.name,
+        })
+      }
+    }
+    return out
+  }
+
+  async function continueAfterHybridSelection(selection: HybridSelectionResult | null) {
+    const parentId = resolvedDefinitionId ?? (task as any).task_definition_id as string | null
+    const selectedLinked = selection?.selectedLinked ?? []
+    const selectedIds = selection?.selectedDefinitionIds
+      ?? (parentId ? [parentId] : [])
+
+    setShowHybridSelect(false)
+
+    try {
+      if (selectedLinked.length > 0 && parentId) {
+        const bundles = await loadDefinitionBundles(selectedIds)
+        const linkedUpdated: HybridLinkInfo[] = selectedLinked.map(l => {
+          const b = bundles.find(x => x.id === l.linked_definition_id)
+          return b
+            ? {
+                ...l,
+                task_type: b.task_type,
+                fee_amount: b.fee_amount || l.fee_amount,
+                label: b.label || l.label,
+              }
+            : l
+        })
+        setHybridSelectedLinked(linkedUpdated)
+
+        const fields = buildAggregatedFields(bundles, true)
+        const expenses = buildAggregatedExpenses(bundles, true)
+        setCompletionReqFields(fields)
+        setModalExpenseDefs(expenses)
+        setExpenseDefs(expenses)
+
+        if (expenses.length > 0) {
+          setShowExpenseModal(true)
+        } else {
+          setShowCompletion(true)
+        }
+        return
+      }
+
+      // سلوك عادي (غير هجين أو لم تُختر مرتبطة)
+      setHybridSelectedLinked([])
+      setCompletionReqFields(reqFields)
+      const expenses = await resolveExpensesForComplete()
+      setExpenseDefs(expenses)
+      setModalExpenseDefs(expenses)
+      if (expenses.length > 0) {
+        setShowExpenseModal(true)
+      } else {
+        setShowCompletion(true)
+      }
+    } finally {
+      setCompletingTask(false)
+    }
+  }
+
   async function handleCompleteClick() {
     setCompletingTask(true)
     setExpenseModalMode('draft')
@@ -634,12 +905,32 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
     setExpenseStepDone(false)
     setShowCompletion(false)
     setShowExpenseModal(false)
+    setShowHybridSelect(false)
     setModalExpenseDefs([])
+    setHybridSelectedLinked([])
+    setCompletionReqFields(reqFields)
 
     const taskDefId = resolvedDefinitionId ?? (task as any).task_definition_id as string | null
     const taskName = definitionLabel ?? task.task_label ?? null
 
     try {
+      // أعد جلب الروابط لحظة الإنجاز (آمن إن غابت الجداول)
+      let hybridNow = isHybrid
+      let linksNow = hybridLinks
+      if (taskDefId) {
+        const result = await fetchHybridTaskLinks(taskDefId)
+        hybridNow = result.isHybrid
+        linksNow = result.links
+        setIsHybrid(hybridNow)
+        setHybridLinks(linksNow)
+      }
+
+      if (hybridNow && linksNow.length > 0 && taskDefId) {
+        setShowHybridSelect(true)
+        setCompletingTask(false)
+        return
+      }
+
       const expenses = await resolveExpensesForComplete()
 
       console.log('[تم الإنجاز]', {
@@ -652,6 +943,7 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
 
       setExpenseDefs(expenses)
       setModalExpenseDefs(expenses)
+      setCompletionReqFields(reqFields)
 
       if (expenses.length > 0) {
         setShowExpenseModal(true)
@@ -799,6 +1091,20 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
         </button>
       )}
 
+      {showHybridSelect && (resolvedDefinitionId || (task as any).task_definition_id) && (
+        <HybridTaskSelectionModal
+          parentLabel={taskLabel}
+          parentFee={fee}
+          parentDefinitionId={String(resolvedDefinitionId ?? (task as any).task_definition_id)}
+          links={hybridLinks}
+          onClose={() => {
+            setShowHybridSelect(false)
+            setCompletingTask(false)
+          }}
+          onContinue={(result) => { void continueAfterHybridSelection(result) }}
+        />
+      )}
+
       {showExpenseModal && modalExpenseDefs.length > 0 && (
         <TaskCompletionExpenseModal
           task={{
@@ -807,7 +1113,7 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
             case_id: (task as any).case_id,
             branch_id: (task as any).branch_id,
           }}
-          taskLabel={taskLabel}
+          taskLabel={hybridSelectedLinked.length > 0 ? `${taskLabel} + مرتبطة` : taskLabel}
           expenseDefs={modalExpenseDefs}
           mode={expenseModalMode}
           onClose={() => setShowExpenseModal(false)}
@@ -825,14 +1131,20 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
         />
       )}
 
-      {showCompletion && !showExpenseModal && (
+      {showCompletion && !showExpenseModal && !showHybridSelect && (
         <LawyerTaskCompletionModal
           task={task}
-          reqFields={reqFields}
+          reqFields={completionReqFields.length ? completionReqFields : reqFields}
           fee={fee}
           taskLabel={taskLabel}
           pendingExpenses={pendingExpenses}
           expenseStepDone={expenseStepDone}
+          hybridParentDefinitionId={
+            hybridSelectedLinked.length > 0
+              ? (resolvedDefinitionId ?? (task as any).task_definition_id ?? null)
+              : null
+          }
+          hybridSelectedLinked={hybridSelectedLinked}
           onClose={() => setShowCompletion(false)}
           onSubmitted={() => router.refresh()}
         />

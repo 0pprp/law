@@ -26,6 +26,64 @@ import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, normalizeCaseType, type Cas
 import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
 import { appAlert } from '@/lib/app-dialog'
 import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
+import { isMissingHybridSchema } from '@/lib/hybrid-task-links'
+
+/** مؤشر بصري للمهام الهجينة — لا يغيّر منطق الاعتماد */
+function HybridTaskHint({
+  task,
+  onOpenParent,
+  light = false,
+}: {
+  task: {
+    hybrid_parent_task_id?: string | null
+    hybrid_linked_count?: number
+  }
+  onOpenParent?: (parentId: string) => void
+  light?: boolean
+}) {
+  const parentId = task.hybrid_parent_task_id ?? null
+  const linkedCount = Number(task.hybrid_linked_count ?? 0)
+  if (!parentId && linkedCount <= 0) return null
+
+  const badgeCls = light
+    ? 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/20 text-white border border-white/30'
+    : 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200'
+  const textCls = light ? 'text-white/80' : 'text-[#454042]'
+  const linkCls = light
+    ? 'text-[11px] font-bold text-white underline underline-offset-2'
+    : 'text-[11px] font-bold text-[#2C8780] hover:underline'
+
+  return (
+    <div className="mt-1.5 space-y-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {parentId ? (
+          <span className={badgeCls}>هجينة 🔗</span>
+        ) : null}
+        {linkedCount > 0 ? (
+          <span className={badgeCls}>أساسية 🔗</span>
+        ) : null}
+      </div>
+      {parentId ? (
+        <p className={`text-[11px] ${textCls}`}>
+          مرتبطة بإنجاز آخر
+          {onOpenParent ? (
+            <>
+              {' · '}
+              <button type="button" className={linkCls} onClick={() => onOpenParent(parentId)}>
+                فتح المهمة الأساسية
+              </button>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      {linkedCount > 0 ? (
+        <p className={`text-[11px] ${textCls}`}>
+          أنشأت {linkedCount} {linkedCount === 1 ? 'مهمة مرتبطة' : 'مهام مرتبطة'}
+        </p>
+      ) : null}
+    </div>
+  )
+}
 
 interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number; branch_id?: string | null; case_type?: string | null }
 
@@ -321,8 +379,9 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
 }
 
 /* ─── Review Modal ────────────────────────────────────────────────────── */
-function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
+function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true, onOpenParent }: {
   task: any; taskDefs: TaskDef[]; onClose: () => void; onDone: () => void; canReview?: boolean
+  onOpenParent?: (parentId: string) => void
 }) {
   const role = useAdminRole()
   const visibleReward = visibleTaskFeeAmount(
@@ -399,6 +458,7 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true }: {
           <div className="px-5 py-4 border-b border-[rgba(118,118,118,0.1)] flex items-center justify-between shrink-0">
             <div>
               <h2 className="font-bold text-[#231F20] text-base">{taskLabel}</h2>
+              <HybridTaskHint task={task} onOpenParent={onOpenParent} />
               <p className="text-sm text-[#767676] mt-0.5">
                 <span className="font-semibold">المدين:</span> {task.debtors?.full_name ?? '—'}
                 {' · '}
@@ -565,7 +625,7 @@ export default function TaskReviewPage() {
 
     if (append) setLoadingMore(true)
     else {
-      const cacheKey = `tasks:review:v8:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`
+      const cacheKey = `tasks:review:v9:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`
       const cached = cacheGet<{ tasks: any[]; lawyers: any[]; delegates: any[]; total: number }>(cacheKey)
       if (cached && !append) {
         setTasks(cached.tasks)
@@ -721,6 +781,77 @@ export default function TaskReviewPage() {
     setReviewing(full ? { ...full, _gpsKeys: task._gpsKeys, _fieldLabels: task._fieldLabels } : task)
   }
 
+  async function openHybridParent(parentId: string) {
+    const inList = tasks.find(t => t.id === parentId)
+    if (inList) {
+      await openReview(inList)
+      return
+    }
+    if (!branchId && !viewAllBranches) {
+      await appAlert({
+        title: 'المهمة الأساسية',
+        message: 'المهمة الأساسية غير ظاهرة في القائمة الحالية.',
+      })
+      return
+    }
+    const supabase = createClient()
+    try {
+      const inQueue = await fetchPendingReviewTaskById(supabase, branchId, parentId)
+      if (inQueue) {
+        setReviewing(inQueue)
+        return
+      }
+
+      // قد تكون الأساسية قد اعتُمدت مسبقاً — عرض فقط بدون اعتماد
+      const hybridSelect =
+        'id, task_type, task_status, due_date, assigned_at, completed_at, debtor_id, task_definition_id, branch_id, assigned_to, reward_amount, court_id, court_name, lawyer_notes, admin_notes, created_at, completion_data, hybrid_parent_task_id'
+      const plainSelect =
+        'id, task_type, task_status, due_date, assigned_at, completed_at, debtor_id, task_definition_id, branch_id, assigned_to, reward_amount, court_id, court_name, lawyer_notes, admin_notes, created_at, completion_data'
+
+      let { data, error } = await supabase.from('tasks').select(hybridSelect).eq('id', parentId).maybeSingle()
+      if (error && isMissingHybridSchema(error.message)) {
+        ;({ data, error } = await supabase.from('tasks').select(plainSelect).eq('id', parentId).maybeSingle())
+      }
+      if (error || !data) {
+        await appAlert({
+          title: 'المهمة الأساسية',
+          message: 'تعذر العثور على المهمة الأساسية أو أنها خارج نطاق الفرع الحالي.',
+        })
+        return
+      }
+
+      const { data: debtor } = await supabase
+        .from('debtors')
+        .select('id, full_name, phone, governorate, case_status, case_type, branch_id, branch_list_id')
+        .eq('id', data.debtor_id)
+        .maybeSingle()
+      const { data: def } = data.task_definition_id
+        ? await supabase.from('task_definitions').select('id, label').eq('id', data.task_definition_id).maybeSingle()
+        : { data: null }
+      const { data: lawyer } = data.assigned_to
+        ? await supabase.from('profiles').select('id, full_name, role').eq('id', data.assigned_to).maybeSingle()
+        : { data: null }
+
+      setReviewing({
+        ...data,
+        debtors: debtor,
+        lawyer: lawyer ? { id: lawyer.id, full_name: lawyer.full_name, role: lawyer.role ?? null } : null,
+        task_definitions: def ? { id: def.id, label: def.label } : null,
+        courts: null,
+        hybrid_linked_count: 0,
+        _readOnlyHybridParent: true,
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      await appAlert({
+        title: 'المهمة الأساسية',
+        message: isMissingHybridSchema(msg)
+          ? 'عمود الربط الهجين غير مطبّق بعد على قاعدة البيانات.'
+          : 'تعذر فتح المهمة الأساسية.',
+      })
+    }
+  }
+
   const hasMore = tasks.length < total
 
   return (
@@ -847,6 +978,11 @@ export default function TaskReviewPage() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-white font-bold text-sm leading-tight">{taskLabel}</p>
+                      <HybridTaskHint
+                        task={task}
+                        light
+                        onOpenParent={(parentId) => { void openHybridParent(parentId) }}
+                      />
                       <p className="text-white/70 text-xs mt-0.5 truncate">{task.debtors?.full_name ?? '—'}</p>
                       <p className="text-white/55 text-[11px] mt-0.5">
                         {CASE_TYPE_LABELS[normalizeCaseType(task.debtors?.case_type)]}
@@ -912,7 +1048,11 @@ export default function TaskReviewPage() {
         <ReviewModal
           task={reviewing}
           taskDefs={taskDefs}
-          canReview={canReview}
+          canReview={canReview && !reviewing._readOnlyHybridParent && ['submitted', 'pending_review'].includes(String(reviewing.task_status ?? ''))}
+          onOpenParent={(parentId) => {
+            setReviewing(null)
+            void openHybridParent(parentId)
+          }}
           onClose={() => {
             setReviewing(null)
             // قد يكون الإنجاز اعتُمد دون إنشاء المهمة التالية — حدّث قسم الانتظار

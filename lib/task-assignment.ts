@@ -95,6 +95,10 @@ export interface PendingReviewTask {
   admin_notes: string | null
   completion_data: Record<string, unknown> | null
   created_at: string
+  /** مهمة مرتبطة أُنشئت تلقائياً من إنجاز هجين */
+  hybrid_parent_task_id?: string | null
+  /** عدد المهام المرتبطة التي تشير لهذه المهمة كأساسية */
+  hybrid_linked_count?: number
   debtors: {
     id: string
     full_name: string
@@ -139,7 +143,73 @@ export interface PaginatedPendingReviewResult {
 const REVIEW_TASK_LIST_COLS =
   'id, task_type, task_status, due_date, assigned_at, completed_at, debtor_id, task_definition_id, branch_id, assigned_to, reward_amount, court_id, court_name, lawyer_notes, admin_notes, created_at'
 
+const REVIEW_TASK_LIST_COLS_HYBRID = `${REVIEW_TASK_LIST_COLS}, hybrid_parent_task_id`
+
 const REVIEW_TASK_DETAIL_COLS = `${REVIEW_TASK_LIST_COLS}, completion_data`
+const REVIEW_TASK_DETAIL_COLS_HYBRID = `${REVIEW_TASK_LIST_COLS_HYBRID}, completion_data`
+
+function isMissingHybridParentColumn(message: string | undefined | null): boolean {
+  const m = String(message ?? '').toLowerCase()
+  return (
+    m.includes('hybrid_parent_task_id')
+    || m.includes('does not exist')
+    || m.includes('could not find')
+    || m.includes('schema cache')
+    || m.includes('pgrst205')
+    || m.includes('pgrst204')
+    || m.includes('42703')
+  )
+}
+
+/** يُلحق عدّاد المهام المرتبطة (أب) — آمن إن غاب العمود */
+async function attachHybridLinkedCounts(
+  supabase: SupabaseClient,
+  tasks: PendingReviewTask[],
+): Promise<PendingReviewTask[]> {
+  if (!tasks.length) return tasks
+  const ids = tasks.map(t => t.id)
+  try {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('id, hybrid_parent_task_id')
+      .in('hybrid_parent_task_id', ids)
+
+    if (error) {
+      if (isMissingHybridParentColumn(error.message)) {
+        return tasks.map(t => ({
+          ...t,
+          hybrid_parent_task_id: t.hybrid_parent_task_id ?? null,
+          hybrid_linked_count: 0,
+        }))
+      }
+      console.warn('[attachHybridLinkedCounts]', error.message)
+      return tasks.map(t => ({ ...t, hybrid_linked_count: t.hybrid_linked_count ?? 0 }))
+    }
+
+    const counts = new Map<string, number>()
+    for (const row of data ?? []) {
+      const parentId = (row as { hybrid_parent_task_id?: string | null }).hybrid_parent_task_id
+      if (!parentId) continue
+      counts.set(parentId, (counts.get(parentId) ?? 0) + 1)
+    }
+
+    return tasks.map(t => ({
+      ...t,
+      hybrid_parent_task_id: t.hybrid_parent_task_id ?? null,
+      hybrid_linked_count: counts.get(t.id) ?? 0,
+    }))
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (!isMissingHybridParentColumn(msg)) {
+      console.warn('[attachHybridLinkedCounts]', msg)
+    }
+    return tasks.map(t => ({
+      ...t,
+      hybrid_parent_task_id: t.hybrid_parent_task_id ?? null,
+      hybrid_linked_count: 0,
+    }))
+  }
+}
 
 /** طابور المراجعة عادة صغير — نجلب المهام ثم نفلتر المدين محلياً (بدون embed/URL عملاق). */
 const REVIEW_QUEUE_FETCH_CAP = 1000
@@ -229,20 +299,42 @@ export async function fetchPendingReviewTasksPaginated(
 ): Promise<PaginatedPendingReviewResult> {
   const limit = options?.limit ?? REVIEW_TASK_PAGE_SIZE
   const offset = options?.offset ?? 0
-  const cols = options?.includeCompletionData ? REVIEW_TASK_DETAIL_COLS : REVIEW_TASK_LIST_COLS
+  const preferHybrid = true
+  const colsHybrid = options?.includeCompletionData ? REVIEW_TASK_DETAIL_COLS_HYBRID : REVIEW_TASK_LIST_COLS_HYBRID
+  const colsPlain = options?.includeCompletionData ? REVIEW_TASK_DETAIL_COLS : REVIEW_TASK_LIST_COLS
 
-  let q = supabase
-    .from('tasks')
-    .select(cols)
-    .in('task_status', [...REVIEW_QUEUE_STATUSES])
-    .not('assigned_to', 'is', null)
-    .order('completed_at', { ascending: true, nullsFirst: false })
-    .limit(REVIEW_QUEUE_FETCH_CAP)
+  async function runSelect(cols: string) {
+    let q = supabase
+      .from('tasks')
+      .select(cols)
+      .in('task_status', [...REVIEW_QUEUE_STATUSES])
+      .not('assigned_to', 'is', null)
+      .order('completed_at', { ascending: true, nullsFirst: false })
+      .limit(REVIEW_QUEUE_FETCH_CAP)
 
-  if (branchId) q = q.eq('branch_id', branchId)
-  if (options?.lawyerId) q = q.eq('assigned_to', options.lawyerId)
+    if (branchId) q = q.eq('branch_id', branchId)
+    if (options?.lawyerId) q = q.eq('assigned_to', options.lawyerId)
+    return q
+  }
 
-  const { data: rawTasks, error } = await q
+  let rawTasks: unknown[] | null = null
+  let error: { message?: string; code?: string } | null = null
+
+  if (preferHybrid) {
+    const res = await runSelect(colsHybrid)
+    rawTasks = res.data
+    error = res.error
+    if (error && isMissingHybridParentColumn(error.message)) {
+      const fallback = await runSelect(colsPlain)
+      rawTasks = fallback.data
+      error = fallback.error
+    }
+  } else {
+    const res = await runSelect(colsPlain)
+    rawTasks = res.data
+    error = res.error
+  }
+
   if (error) {
     console.error('[fetchPendingReviewTasksPaginated]', error.message || error.code || error)
     return { tasks: [], total: 0 }
@@ -253,7 +345,8 @@ export async function fetchPendingReviewTasksPaginated(
     branchId,
     (rawTasks ?? []) as unknown as Record<string, unknown>[],
   )
-  const filtered = filterHydratedReviewTasks(hydrated, options)
+  const withHybrid = await attachHybridLinkedCounts(supabase, hydrated)
+  const filtered = filterHydratedReviewTasks(withHybrid, options)
   return {
     tasks: filtered.slice(offset, offset + limit),
     total: filtered.length,
@@ -265,17 +358,26 @@ export async function fetchPendingReviewTaskById(
   branchId: string | null,
   taskId: string,
 ): Promise<PendingReviewTask | null> {
-  let q = supabase
-    .from('tasks')
-    .select(REVIEW_TASK_DETAIL_COLS)
-    .eq('id', taskId)
-    .in('task_status', [...REVIEW_QUEUE_STATUSES])
-  if (branchId) q = q.eq('branch_id', branchId)
-  const { data, error } = await q.maybeSingle()
+  async function run(cols: string) {
+    let q = supabase
+      .from('tasks')
+      .select(cols)
+      .eq('id', taskId)
+      .in('task_status', [...REVIEW_QUEUE_STATUSES])
+    if (branchId) q = q.eq('branch_id', branchId)
+    return q.maybeSingle()
+  }
 
+  let { data, error } = await run(REVIEW_TASK_DETAIL_COLS_HYBRID)
+  if (error && isMissingHybridParentColumn(error.message)) {
+    ;({ data, error } = await run(REVIEW_TASK_DETAIL_COLS))
+  }
   if (error || !data) return null
+
   const [task] = await hydratePendingReviewTasks(supabase, branchId, [data as unknown as Record<string, unknown>])
-  return task ?? null
+  if (!task) return null
+  const [withHybrid] = await attachHybridLinkedCounts(supabase, [task])
+  return withHybrid ?? task
 }
 
 export async function fetchPendingReviewTasks(

@@ -50,6 +50,28 @@ interface ReqField {
   sort_order: number
 }
 
+interface HybridLinkDraft {
+  linked_definition_id: string
+  label: string
+  fee_amount: number
+  is_optional: boolean
+}
+
+function isMissingHybridSchema(message: string | undefined | null): boolean {
+  const m = String(message ?? '').toLowerCase()
+  return (
+    m.includes('task_definition_links')
+    || m.includes('is_hybrid')
+    || m.includes('does not exist')
+    || m.includes('could not find')
+    || m.includes('schema cache')
+    || m.includes('pgrst205')
+    || m.includes('pgrst204')
+    || m.includes('42703')
+    || m.includes('42p01')
+  )
+}
+
 async function findIdsByLabel(
   supabase: ReturnType<typeof createClient>,
   label: string,
@@ -115,6 +137,8 @@ function EditModal({
   applyAll,
   allowedBranchIds,
   branchId,
+  sameBranchDefs,
+  allDefs,
   onClose,
   onSaved,
 }: {
@@ -124,6 +148,8 @@ function EditModal({
   applyAll: boolean
   allowedBranchIds: Set<string>
   branchId: string | null
+  sameBranchDefs: TaskDef[]
+  allDefs: TaskDef[]
   onClose: () => void
   onSaved: () => void
 }) {
@@ -136,8 +162,75 @@ function EditModal({
   const [activeFields, setActiveFields] = useState<Set<RequiredField>>(
     new Set(reqFields.map(f => f.field_type)),
   )
+  const [isHybrid, setIsHybrid] = useState(false)
+  const [hybridLinks, setHybridLinks] = useState<HybridLinkDraft[]>([])
+  const [hybridSchemaReady, setHybridSchemaReady] = useState(true)
+  const [hybridLoading, setHybridLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  const candidateDefs = useMemo(
+    () => sameBranchDefs.filter(d => d.id !== def.id).sort((a, b) => a.sort_order - b.sort_order || a.label.localeCompare(b.label, 'ar')),
+    [sameBranchDefs, def.id],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadHybrid() {
+      setHybridLoading(true)
+      const supabase = createClient()
+
+      let hybridFlag = false
+      try {
+        const { data, error } = await (supabase as any)
+          .from('task_definitions')
+          .select('is_hybrid')
+          .eq('id', def.id)
+          .maybeSingle()
+        if (error) throw error
+        hybridFlag = Boolean(data?.is_hybrid)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (!isMissingHybridSchema(msg)) {
+          console.warn('[civil EditModal] is_hybrid load:', msg)
+        }
+        hybridFlag = false
+        if (!cancelled) setHybridSchemaReady(false)
+      }
+
+      let links: HybridLinkDraft[] = []
+      try {
+        const res = await fetch(`/api/admin/task-definition-links?parent_id=${encodeURIComponent(def.id)}`)
+        const json = await res.json().catch(() => ({}))
+        if (!cancelled && json.schemaReady === false) setHybridSchemaReady(false)
+        if (Array.isArray(json.links)) {
+          links = (json.links as Array<{
+            linked_definition_id: string
+            label?: string
+            fee_amount?: number
+            is_optional?: boolean
+          }>).map(l => ({
+            linked_definition_id: String(l.linked_definition_id),
+            label: String(l.label ?? ''),
+            fee_amount: Number(l.fee_amount ?? 0),
+            is_optional: l.is_optional !== false,
+          }))
+        }
+      } catch {
+        if (!cancelled) setHybridSchemaReady(false)
+        links = []
+      }
+
+      if (cancelled) return
+      setIsHybrid(hybridFlag)
+      setHybridLinks(links)
+      setHybridLoading(false)
+    }
+
+    void loadHybrid()
+    return () => { cancelled = true }
+  }, [def.id])
 
   function toggleField(f: RequiredField) {
     setActiveFields(prev => {
@@ -148,9 +241,109 @@ function EditModal({
     })
   }
 
+  function toggleLinkedDef(candidate: TaskDef) {
+    setHybridLinks(prev => {
+      const exists = prev.some(l => l.linked_definition_id === candidate.id)
+      if (exists) return prev.filter(l => l.linked_definition_id !== candidate.id)
+      return [
+        ...prev,
+        {
+          linked_definition_id: candidate.id,
+          label: candidate.label,
+          fee_amount: candidate.fee_amount,
+          is_optional: true,
+        },
+      ]
+    })
+  }
+
+  function setLinkOptional(linkedId: string, isOptional: boolean) {
+    setHybridLinks(prev => prev.map(l => (
+      l.linked_definition_id === linkedId ? { ...l, is_optional: isOptional } : l
+    )))
+  }
+
+  function moveLink(linkedId: string, dir: -1 | 1) {
+    setHybridLinks(prev => {
+      const idx = prev.findIndex(l => l.linked_definition_id === linkedId)
+      if (idx < 0) return prev
+      const nextIdx = idx + dir
+      if (nextIdx < 0 || nextIdx >= prev.length) return prev
+      const copy = [...prev]
+      const tmp = copy[idx]
+      copy[idx] = copy[nextIdx]
+      copy[nextIdx] = tmp
+      return copy
+    })
+  }
+
+  async function saveHybridForParents(parentIds: string[]): Promise<string | null> {
+    try {
+      for (const parentId of parentIds) {
+        const parent = allDefs.find(d => d.id === parentId)
+        if (!parent) continue
+
+        let linksPayload: { linked_definition_id: string; is_optional: boolean; sort_order: number }[] = []
+
+        if (isHybrid) {
+          if (parentId === def.id) {
+            linksPayload = hybridLinks.map((l, idx) => ({
+              linked_definition_id: l.linked_definition_id,
+              is_optional: l.is_optional,
+              sort_order: idx,
+            }))
+          } else {
+            // عند التطبيق على كل الفروع: طابق الروابط بالاسم داخل فرع كل نسخة
+            const branchCandidates = allDefs.filter(d => d.branch_id === parent.branch_id && d.id !== parentId)
+            for (let idx = 0; idx < hybridLinks.length; idx++) {
+              const src = hybridLinks[idx]
+              const match = branchCandidates.find(d => d.label.trim() === src.label.trim())
+              if (!match) continue
+              linksPayload.push({
+                linked_definition_id: match.id,
+                is_optional: src.is_optional,
+                sort_order: linksPayload.length,
+              })
+            }
+          }
+        }
+
+        const res = await fetch('/api/admin/task-definition-links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            parent_definition_id: parentId,
+            is_hybrid: isHybrid,
+            links: isHybrid ? linksPayload : [],
+          }),
+        })
+        const json = await res.json().catch(() => ({}))
+        if (json.schemaReady === false) {
+          return typeof json.warning === 'string'
+            ? json.warning
+            : 'أعمدة/جداول المهمة الهجينة غير مطبّقة بعد على قاعدة البيانات — باقي التعديلات حُفظت'
+        }
+        if (!res.ok) {
+          return typeof json.error === 'string' ? json.error : 'فشل حفظ روابط المهمة الهجينة'
+        }
+      }
+      return null
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (isMissingHybridSchema(msg)) {
+        return 'أعمدة/جداول المهمة الهجينة غير مطبّقة بعد على قاعدة البيانات — باقي التعديلات حُفظت'
+      }
+      return msg || 'فشل حفظ المهمة الهجينة'
+    }
+  }
+
   async function save() {
     const newLabel = label.trim()
     if (!newLabel) { setError('اسم المهمة مطلوب'); return }
+    if (isHybrid && hybridLinks.length === 0) {
+      setError('فعّلت المهمة الهجينة — اختر مهمة مرتبطة واحدة على الأقل أو أوقف الخيار')
+      return
+    }
 
     setSaving(true)
     setError('')
@@ -181,9 +374,22 @@ function EditModal({
       expenseLines,
     )
 
+    const hybridErr = await saveHybridForParents(ids)
+    if (hybridErr) {
+      setError(hybridErr)
+      setSaving(false)
+      // باقي الحقول حُفظت — أغلق بعد عرض الرسالة إن كانت تحذيراً عن schema
+      if (hybridErr.includes('غير مطبّقة')) {
+        onSaved()
+      }
+      return
+    }
+
     onSaved()
     onClose()
   }
+
+  const selectedIds = new Set(hybridLinks.map(l => l.linked_definition_id))
 
   return (
     <div
@@ -247,11 +453,144 @@ function EditModal({
               })}
             </div>
           </div>
+
+          {/* المهمة الهجينة */}
+          <div className="border border-[rgba(118,118,118,0.15)] rounded-xl p-4 space-y-3 bg-[#F8F7F8]/80">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold text-[#231F20]">المهمة الهجينة</p>
+                <p className="text-[11px] text-[#767676] mt-0.5 leading-relaxed">
+                  عند الإنجاز يختار المحامي مهاماً مرتبطة تُنشأ وتُرسل تلقائياً
+                </p>
+              </div>
+              <label className="flex items-center gap-2 shrink-0 cursor-pointer">
+                <span className="text-[11px] font-semibold text-[#454042]">
+                  {isHybrid ? 'مفعّلة' : 'موقوفة'}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={isHybrid}
+                  disabled={hybridLoading}
+                  onChange={e => {
+                    const next = e.target.checked
+                    setIsHybrid(next)
+                    if (!next) setHybridLinks([])
+                  }}
+                  className="accent-[#2C8780] w-4 h-4"
+                />
+              </label>
+            </div>
+
+            {!hybridSchemaReady && (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                جداول المهمة الهجينة غير مطبّقة بعد — يمكنك ضبط الإعداد، والحفظ سيُنبهك إن تعذّر التخزين
+              </p>
+            )}
+
+            {isHybrid && (
+              <div className="space-y-3">
+                <p className="text-[11px] font-bold text-[#231F20]">المهام المرتبطة (نفس الفرع)</p>
+                {candidateDefs.length === 0 ? (
+                  <p className="text-xs text-[#767676] italic">لا توجد مهام أخرى في هذا الفرع</p>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {candidateDefs.map(c => {
+                      const checked = selectedIds.has(c.id)
+                      return (
+                        <label
+                          key={c.id}
+                          className={`flex items-start gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer ${
+                            checked
+                              ? 'bg-[#2C8780]/8 border-[#2C8780]/40'
+                              : 'border-[rgba(118,118,118,0.2)]'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleLinkedDef(c)}
+                            className="accent-[#2C8780] w-3.5 h-3.5 mt-0.5"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-semibold text-[#231F20]">{c.label}</span>
+                            <span className="block text-[10px] text-[#767676] tabular-nums mt-0.5" dir="ltr">
+                              {formatMoney(Number(c.fee_amount), { suffix: false })} د.ع
+                            </span>
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {hybridLinks.length > 0 && (
+                  <div className="space-y-2 pt-1 border-t border-[rgba(118,118,118,0.1)]">
+                    <p className="text-[11px] font-bold text-[#231F20]">ترتيب وطبيعة الارتباط</p>
+                    {hybridLinks.map((link, idx) => (
+                      <div
+                        key={link.linked_definition_id}
+                        className="flex items-center gap-2 bg-white border border-[rgba(118,118,118,0.15)] rounded-xl px-3 py-2"
+                      >
+                        <div className="flex flex-col gap-0.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => moveLink(link.linked_definition_id, -1)}
+                            disabled={idx === 0}
+                            className="w-6 h-5 text-[10px] rounded border border-[rgba(118,118,118,0.2)] disabled:opacity-30"
+                            aria-label="أعلى"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveLink(link.linked_definition_id, 1)}
+                            disabled={idx === hybridLinks.length - 1}
+                            className="w-6 h-5 text-[10px] rounded border border-[rgba(118,118,118,0.2)] disabled:opacity-30"
+                            aria-label="أسفل"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold text-[#231F20] truncate">{link.label}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <button
+                              type="button"
+                              onClick={() => setLinkOptional(link.linked_definition_id, true)}
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                link.is_optional
+                                  ? 'bg-sky-50 text-sky-700 border-sky-200'
+                                  : 'bg-white text-[#767676] border-[rgba(118,118,118,0.2)]'
+                              }`}
+                            >
+                              اختيارية
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setLinkOptional(link.linked_definition_id, false)}
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                !link.is_optional
+                                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                  : 'bg-white text-[#767676] border-[rgba(118,118,118,0.2)]'
+                              }`}
+                            >
+                              إلزامية
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
         </div>
         <div className="px-5 py-4 border-t border-[rgba(118,118,118,0.1)] flex gap-3 shrink-0 bg-[#F3F1F2]/50">
           <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-white border border-[rgba(118,118,118,0.2)] text-[#767676]">إلغاء</button>
-          <button type="button" onClick={() => void save()} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60" style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
+          <button type="button" onClick={() => void save()} disabled={saving || hybridLoading} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60" style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
             {saving ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}
           </button>
         </div>
@@ -657,6 +996,8 @@ export default function CivilTaskManagementPage() {
           applyAll={showAll}
           allowedBranchIds={allowedBranchIds}
           branchId={branchId}
+          sameBranchDefs={allDefs.filter(d => d.branch_id === editing.branch_id)}
+          allDefs={allDefs}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); void load() }}
         />
