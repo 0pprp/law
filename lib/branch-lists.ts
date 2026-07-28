@@ -18,6 +18,29 @@ export function sortBranchListsByName<T extends { name: string }>(lists: T[]): T
   return [...lists].sort((a, b) => a.name.localeCompare(b.name, 'ar'))
 }
 
+/** أسماء المحاكم الفريدة لقوائم الفرع (من branch_lists.court_name) */
+export async function fetchBranchCourtNames(
+  supabase: SupabaseClient,
+  branchId: string,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('branch_lists')
+    .select('court_name')
+    .eq('branch_id', branchId)
+
+  if (error) {
+    console.error('[fetchBranchCourtNames]', error.message)
+    return []
+  }
+
+  const names = new Set<string>()
+  for (const row of data ?? []) {
+    const name = typeof row.court_name === 'string' ? row.court_name.trim() : ''
+    if (name) names.add(name)
+  }
+  return [...names].sort((a, b) => a.localeCompare(b, 'ar'))
+}
+
 export async function fetchBranchLists(
   supabase: SupabaseClient,
   branchId: string,

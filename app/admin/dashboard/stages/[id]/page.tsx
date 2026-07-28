@@ -21,11 +21,12 @@ import { executeTaskAssignment, executeTaskUnassign, validateTaskAssignmentInput
 import { taskLawyerId } from '@/lib/task-assignment'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { isTaskOverdue, taskOverdueDays } from '@/lib/local-date'
-import BranchListBox from '@/components/BranchListBox'
 import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
 import { cacheInvalidatePrefix } from '@/lib/query-cache'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
 import { appConfirm } from '@/lib/app-dialog'
+import { resolveCourtName, resolveExecutionOffice } from '@/lib/awaiting-assignment'
+import { fetchBranchCourtNames } from '@/lib/branch-lists'
 
 type StageView = 'waiting' | 'assigned' | 'overdue'
 
@@ -46,6 +47,8 @@ interface StageDebtor {
   branchName: string | null
   branchListId: string | null
   branchListName: string | null
+  courtName: string | null
+  executionOffice: string | null
 }
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
@@ -80,6 +83,128 @@ function viewSubtitle(view: StageView, count: number) {
 
 interface Lawyer { id: string; full_name: string }
 
+const NO_COURT_KEY = '__none__'
+const NO_COURT_LABEL = 'بدون محكمة'
+
+function DebtorStageRow({
+  d,
+  view,
+  canAssign,
+  selected,
+  onToggle,
+  onAssignOne,
+  onUnassignOne,
+  assigning,
+  bulkLawyerId,
+  bulkDueDate,
+}: {
+  d: StageDebtor
+  view: StageView
+  canAssign: boolean
+  selected: Set<string>
+  onToggle: (taskId: string) => void
+  onAssignOne: (taskId: string) => void
+  onUnassignOne: (taskId: string) => void
+  assigning: boolean
+  bulkLawyerId: string
+  bulkDueDate: string
+}) {
+  const isWaiting = view === 'waiting'
+  return (
+    <div className="flex items-center gap-3 px-4 py-4 hover:bg-[#F8F7F8] transition-colors">
+      {canAssign && isWaiting && (
+        <input
+          type="checkbox"
+          checked={selected.has(d.taskId)}
+          onChange={() => onToggle(d.taskId)}
+          className="w-4 h-4 accent-[#2C8780] shrink-0"
+        />
+      )}
+      <div className="w-9 h-9 rounded-xl bg-[#2C8780]/10 flex items-center justify-center shrink-0">
+        <span className="text-[#2C8780] font-black text-sm">{d.debtorName.charAt(0)}</span>
+      </div>
+      <div className="flex-1 min-w-0">
+        <Link
+          href={`/admin/debtors/${d.debtorId}/account`}
+          className="text-sm font-bold text-[#231F20] hover:text-[#2C8780] transition-colors"
+        >
+          {d.debtorName}
+        </Link>
+        {(d.courtName || d.executionOffice) && (
+          <div className="mt-1 text-sm font-semibold text-[#1D6365]">
+            {[
+              d.courtName ? `🏛 المحكمة: ${d.courtName}` : null,
+              d.executionOffice ? `⚖️ التنفيذ: ${d.executionOffice}` : null,
+            ]
+              .filter(Boolean)
+              .join('   |   ')}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+          {d.phone && <span className="text-[11px] text-[#767676]" dir="ltr">{d.phone}</span>}
+          {d.branchListName && (
+            <span className="text-[11px] text-[#767676]">القائمة: {d.branchListName}</span>
+          )}
+          {d.receiptType && (
+            <span className="text-[11px] text-[#767676]">
+              {RECEIPT_TYPE_LABELS[d.receiptType] ?? d.receiptType}
+            </span>
+          )}
+          {d.receiptNumber && <span className="text-[11px] text-[#767676]" dir="ltr">{d.receiptNumber}</span>}
+          {d.taskCreatedAt && (
+            <span className="text-[11px] text-[#767676]" dir="ltr">
+              أنشئت: {fmtDate(d.taskCreatedAt.split('T')[0])}
+            </span>
+          )}
+          {d.dueDate && (
+            <span className="text-[11px] text-[#767676]" dir="ltr">
+              الاستحقاق: {fmtDate(d.dueDate)}
+            </span>
+          )}
+          {view === 'overdue' && d.dueDate && (
+            <span className="text-[11px] font-bold text-orange-600" dir="ltr">
+              تأخير {taskOverdueDays(d.dueDate)} يوم
+            </span>
+          )}
+          {d.lawyerName && (
+            <span className="text-[11px] text-[#2C8780] font-semibold">
+              {assigneePersonLabel(d.lawyerRole)}: {d.lawyerName}
+            </span>
+          )}
+        </div>
+      </div>
+      {d.remaining > 0 && (
+        <span className="text-xs font-bold text-[#2C8780] tabular-nums shrink-0" dir="ltr">
+          {fmtMoney(d.remaining)}
+        </span>
+      )}
+      <StatusBadge status={d.taskStatus} />
+      {canAssign && isWaiting && (
+        <button
+          type="button"
+          onClick={() => onAssignOne(d.taskId)}
+          disabled={assigning || !bulkLawyerId || !bulkDueDate}
+          title={!bulkLawyerId ? 'اختر محامياً من الأعلى أولاً' : !bulkDueDate ? 'حدد تاريخ نهاية التكليف' : 'تكليف'}
+          className="text-[11px] font-bold text-white px-3 py-1.5 rounded-lg shrink-0 hover:opacity-90 disabled:opacity-40"
+          style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+        >
+          تكليف
+        </button>
+      )}
+      {canAssign && (view === 'assigned' || view === 'overdue') && (
+        <button
+          type="button"
+          onClick={() => onUnassignOne(d.taskId)}
+          disabled={assigning}
+          className="text-[11px] font-bold text-orange-700 bg-orange-50 border border-orange-200 px-2.5 py-1 rounded-lg shrink-0 disabled:opacity-50"
+        >
+          إلغاء التكليف
+        </button>
+      )}
+    </div>
+  )
+}
+
 function BranchStageBox({
   branchId,
   branchName,
@@ -93,7 +218,6 @@ function BranchStageBox({
   assigning,
   bulkLawyerId,
   bulkDueDate,
-  initialListId,
   matchingIds,
 }: {
   branchId: string
@@ -108,121 +232,129 @@ function BranchStageBox({
   assigning: boolean
   bulkLawyerId: string
   bulkDueDate: string
-  initialListId: string
   matchingIds: string[] | null
 }) {
-  const [listId, setListId] = useState(initialListId)
-  useEffect(() => { setListId(initialListId) }, [initialListId, branchId])
+  const [courtFilter, setCourtFilter] = useState('')
+  const [branchCourts, setBranchCourts] = useState<string[]>([])
+  const [courtsLoading, setCourtsLoading] = useState(true)
 
-  const filtered = rows.filter(d => {
-    if (matchingIds !== null && !matchingIds.includes(d.debtorId)) return false
-    if (listId && d.branchListId !== listId) return false
-    return true
-  })
+  useEffect(() => {
+    setCourtFilter('')
+    if (!branchId) {
+      setBranchCourts([])
+      setCourtsLoading(false)
+      return
+    }
+    let cancelled = false
+    setCourtsLoading(true)
+    fetchBranchCourtNames(createClient(), branchId).then(names => {
+      if (!cancelled) {
+        setBranchCourts(names)
+        setCourtsLoading(false)
+      }
+    })
+    return () => { cancelled = true }
+  }, [branchId])
 
-  if (filtered.length === 0 && !listId) return null
+  const filtered = useMemo(() => {
+    return rows.filter(d => {
+      if (matchingIds !== null && !matchingIds.includes(d.debtorId)) return false
+      if (courtFilter && (d.courtName ?? '') !== courtFilter) return false
+      return true
+    })
+  }, [rows, matchingIds, courtFilter])
+
+  const courtSections = useMemo(() => {
+    const map = new Map<string, { key: string; title: string; rows: StageDebtor[] }>()
+    for (const d of filtered) {
+      const name = d.courtName?.trim() || ''
+      const key = name || NO_COURT_KEY
+      const title = name || NO_COURT_LABEL
+      const prev = map.get(key)
+      if (prev) prev.rows.push(d)
+      else map.set(key, { key, title, rows: [d] })
+    }
+    return [...map.values()].sort((a, b) => {
+      if (a.key === NO_COURT_KEY) return 1
+      if (b.key === NO_COURT_KEY) return -1
+      return a.title.localeCompare(b.title, 'ar')
+    })
+  }, [filtered])
+
+  const courtOptions = useMemo(() => {
+    const fromRows = new Set(branchCourts)
+    for (const d of rows) {
+      const name = d.courtName?.trim()
+      if (name) fromRows.add(name)
+    }
+    return [...fromRows].sort((a, b) => a.localeCompare(b, 'ar'))
+  }, [branchCourts, rows])
+
+  if (filtered.length === 0 && !courtFilter) return null
 
   return (
-    <BranchListBox
-      branchId={branchId}
-      branchName={branchName}
-      count={filtered.length}
-      listId={listId}
-      onListChange={setListId}
-    >
+    <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-visible">
+      <div className="px-4 py-3.5 border-b border-[rgba(118,118,118,0.1)] flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <h3 className="font-black text-[#231F20] text-base truncate">{branchName}</h3>
+          <span className="inline-flex items-center justify-center min-w-[1.75rem] h-7 px-2 rounded-full bg-[#2C8780]/12 text-[#1D6365] text-sm font-black tabular-nums shrink-0">
+            {filtered.length}
+          </span>
+        </div>
+        <div className="w-full sm:w-64 shrink-0">
+          <PremiumSelect
+            value={courtFilter}
+            onChange={setCourtFilter}
+            options={[
+              { value: '', label: 'كل المحاكم' },
+              ...courtOptions.map(c => ({ value: c, label: c })),
+            ]}
+            placeholder="كل المحاكم"
+            fieldLabel={`محاكم ${branchName}`}
+            headerTitle={`محاكم ${branchName}`}
+            searchPlaceholder="بحث بالمحكمة..."
+            searchable
+            disabled={courtsLoading}
+          />
+        </div>
+      </div>
+
       {filtered.length === 0 ? (
-        <div className="px-4 py-8 text-center text-sm text-[#767676]">لا أسماء في هذه القائمة</div>
+        <div className="px-4 py-8 text-center text-sm text-[#767676]">لا أسماء في هذه المحكمة</div>
       ) : (
-        <div className="divide-y divide-[rgba(118,118,118,0.07)]">
-          {filtered.map(d => {
-            const isWaiting = view === 'waiting'
-            return (
-              <div key={d.taskId} className="flex items-center gap-3 px-4 py-4 hover:bg-[#F8F7F8] transition-colors">
-                {canAssign && isWaiting && (
-                  <input
-                    type="checkbox"
-                    checked={selected.has(d.taskId)}
-                    onChange={() => onToggle(d.taskId)}
-                    className="w-4 h-4 accent-[#2C8780] shrink-0"
-                  />
-                )}
-                <div className="w-9 h-9 rounded-xl bg-[#2C8780]/10 flex items-center justify-center shrink-0">
-                  <span className="text-[#2C8780] font-black text-sm">{d.debtorName.charAt(0)}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <Link
-                    href={`/admin/debtors/${d.debtorId}/account`}
-                    className="text-sm font-bold text-[#231F20] hover:text-[#2C8780] transition-colors"
-                  >
-                    {d.debtorName}
-                  </Link>
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-                    {d.phone && <span className="text-[11px] text-[#767676]" dir="ltr">{d.phone}</span>}
-                    {d.branchListName && (
-                      <span className="text-[11px] text-[#767676]">القائمة: {d.branchListName}</span>
-                    )}
-                    {d.receiptType && (
-                      <span className="text-[11px] text-[#767676]">
-                        {RECEIPT_TYPE_LABELS[d.receiptType] ?? d.receiptType}
-                      </span>
-                    )}
-                    {d.receiptNumber && <span className="text-[11px] text-[#767676]" dir="ltr">{d.receiptNumber}</span>}
-                    {d.taskCreatedAt && (
-                      <span className="text-[11px] text-[#767676]" dir="ltr">
-                        أنشئت: {fmtDate(d.taskCreatedAt.split('T')[0])}
-                      </span>
-                    )}
-                    {d.dueDate && (
-                      <span className="text-[11px] text-[#767676]" dir="ltr">
-                        الاستحقاق: {fmtDate(d.dueDate)}
-                      </span>
-                    )}
-                    {view === 'overdue' && d.dueDate && (
-                      <span className="text-[11px] font-bold text-orange-600" dir="ltr">
-                        تأخير {taskOverdueDays(d.dueDate)} يوم
-                      </span>
-                    )}
-                    {d.lawyerName && (
-                      <span className="text-[11px] text-[#2C8780] font-semibold">
-                        {assigneePersonLabel(d.lawyerRole)}: {d.lawyerName}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {d.remaining > 0 && (
-                  <span className="text-xs font-bold text-[#2C8780] tabular-nums shrink-0" dir="ltr">
-                    {fmtMoney(d.remaining)}
-                  </span>
-                )}
-                <StatusBadge status={d.taskStatus} />
-                {canAssign && isWaiting && (
-                  <button
-                    type="button"
-                    onClick={() => onAssignOne(d.taskId)}
-                    disabled={assigning || !bulkLawyerId || !bulkDueDate}
-                    title={!bulkLawyerId ? 'اختر محامياً من الأعلى أولاً' : !bulkDueDate ? 'حدد تاريخ نهاية التكليف' : 'تكليف'}
-                    className="text-[11px] font-bold text-white px-3 py-1.5 rounded-lg shrink-0 hover:opacity-90 disabled:opacity-40"
-                    style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
-                  >
-                    تكليف
-                  </button>
-                )}
-                {canAssign && (view === 'assigned' || view === 'overdue') && (
-                  <button
-                    type="button"
-                    onClick={() => onUnassignOne(d.taskId)}
-                    disabled={assigning}
-                    className="text-[11px] font-bold text-orange-700 bg-orange-50 border border-orange-200 px-2.5 py-1 rounded-lg shrink-0 disabled:opacity-50"
-                  >
-                    إلغاء التكليف
-                  </button>
-                )}
+        <div className="divide-y divide-[rgba(118,118,118,0.12)]">
+          {courtSections.map(section => (
+            <div key={section.key}>
+              <div className="px-4 py-2.5 bg-[#F8F7F8] border-b border-[rgba(118,118,118,0.08)] flex items-center gap-2">
+                <h4 className="text-sm font-black text-[#1D6365] truncate">
+                  🏛 {section.title}
+                </h4>
+                <span className="text-[11px] font-bold text-[#767676] tabular-nums shrink-0">
+                  ({section.rows.length})
+                </span>
               </div>
-            )
-          })}
+              <div className="divide-y divide-[rgba(118,118,118,0.07)]">
+                {section.rows.map(d => (
+                  <DebtorStageRow
+                    key={d.taskId}
+                    d={d}
+                    view={view}
+                    canAssign={canAssign}
+                    selected={selected}
+                    onToggle={onToggle}
+                    onAssignOne={onAssignOne}
+                    onUnassignOne={onUnassignOne}
+                    assigning={assigning}
+                    bulkLawyerId={bulkLawyerId}
+                    bulkDueDate={bulkDueDate}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
-    </BranchListBox>
+    </div>
   )
 }
 
@@ -242,7 +374,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     rawView === 'assigned' || rawView === 'overdue' ? rawView : 'waiting'
 
   const branchId = useBranchId()
-  const { viewAllBranches, listId: headerListId } = useBranch()
+  const { viewAllBranches } = useBranch()
   const role = useAdminRole()
   const canAssign = canAssignTasks(role)
   const allowPaymentInProgress = canMoveToPaymentInProgress(role)
@@ -311,7 +443,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       .select(`
         id, full_name, phone, receipt_type, receipt_number, branch_id, branch_list_id,
         remaining_amount, case_status, case_type, current_task_id,
-        branch_list:branch_lists(name),
+        branch_list:branch_lists(name, court_name, execution_office),
         current_task:tasks!current_task_id(
           id, task_status, assigned_to, created_at, due_date, task_definition_id, branch_id,
           lawyer:profiles!tasks_assigned_to_fkey(full_name, role)
@@ -369,6 +501,8 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
           branchName: bId ? branchNames.get(bId) ?? 'فرع' : 'بدون فرع',
           branchListId: d.branch_list_id ?? null,
           branchListName: bl?.name?.trim() ?? null,
+          courtName: resolveCourtName(d.branch_list),
+          executionOffice: resolveExecutionOffice(d.branch_list),
         }
       })
 
@@ -547,7 +681,6 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   )
   const showMoveToPayment =
     allowPaymentInProgress && view === 'waiting' && stageCaseType !== 'criminal'
-  const initialListForBox = viewAllBranches ? '' : (headerListId ?? '')
   const allVisibleSelected =
     visibleCount > 0
     && debtors
@@ -705,7 +838,6 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
               assigning={assigning}
               bulkLawyerId={bulkLawyerId}
               bulkDueDate={bulkDueDate}
-              initialListId={initialListForBox}
               matchingIds={matchingIds}
             />
           ))}

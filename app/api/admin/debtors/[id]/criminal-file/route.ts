@@ -14,6 +14,7 @@ import {
   type CriminalFileKind,
 } from '@/lib/criminal-debtor-files'
 import { fetchCriminalDebtorDetails, upsertCriminalDebtorDetails } from '@/lib/criminal-debtor-details'
+import { uploadToR2, deleteFromR2, r2ObjectKey, getR2UrlFor } from '@/lib/r2-storage'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -64,12 +65,15 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       : existing?.documents_contract_file_path ?? null
 
   const newPath = buildCriminalFilePath(debtorId, kind)
+  const r2Key = r2ObjectKey('debtor-files', newPath)
 
-  const { error: uploadErr } = await admin.storage
-    .from('debtor-files')
-    .upload(newPath, buffer, { contentType: 'application/pdf', upsert: false })
-
-  if (uploadErr) {
+  try {
+    await uploadToR2(buffer, r2Key, 'application/pdf')
+  } catch (uploadErr) {
+    // السابق (Supabase Storage) — مُعلّق حتى التأكد من R2:
+    // const { error: uploadErr } = await admin.storage
+    //   .from('debtor-files')
+    //   .upload(newPath, buffer, { contentType: 'application/pdf', upsert: false })
     return apiServerError('criminal-file:upload', uploadErr, 'فشل رفع الملف')
   }
 
@@ -84,12 +88,14 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   })
 
   if (detailsRes.error) {
-    await admin.storage.from('debtor-files').remove([newPath])
+    await deleteFromR2(r2Key).catch(() => null)
+    // السابق: await admin.storage.from('debtor-files').remove([newPath])
     return apiServerError('criminal-file:db', detailsRes.error, 'فشل حفظ مسار الملف')
   }
 
   if (oldPath && isSafeStoragePath(oldPath) && oldPath !== newPath) {
-    await admin.storage.from('debtor-files').remove([oldPath]).catch(() => null)
+    await deleteFromR2(r2ObjectKey('debtor-files', oldPath)).catch(() => null)
+    // السابق: await admin.storage.from('debtor-files').remove([oldPath]).catch(() => null)
   }
 
   await logActivity({
@@ -135,13 +141,14 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: 'الملف غير موجود', missing: true }, { status: 404 })
   }
 
-  const { data, error } = await admin.storage
-    .from('debtor-files')
-    .createSignedUrl(filePath, 60 * 10)
+  // السابق (Supabase signed URL) — مُعلّق حتى التأكد من R2:
+  // const { data, error } = await admin.storage
+  //   .from('debtor-files')
+  //   .createSignedUrl(filePath, 60 * 10)
+  // if (error || !data?.signedUrl) {
+  //   return apiServerError('criminal-file:signed', error, 'تعذر إنشاء رابط الملف')
+  // }
+  // return NextResponse.json({ url: data.signedUrl, filePath })
 
-  if (error || !data?.signedUrl) {
-    return apiServerError('criminal-file:signed', error, 'تعذر إنشاء رابط الملف')
-  }
-
-  return NextResponse.json({ url: data.signedUrl, filePath })
+  return NextResponse.json({ url: getR2UrlFor('debtor-files', filePath), filePath })
 }

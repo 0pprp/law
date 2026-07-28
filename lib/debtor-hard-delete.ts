@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { fetchCriminalDebtorDetails } from '@/lib/criminal-debtor-details'
+import { deleteManyFromR2, r2ObjectKey } from '@/lib/r2-storage'
 
 export type DebtorDeleteBlockReason =
   | 'payments'
@@ -73,7 +74,8 @@ export async function cleanupFailedDebtorCreate(
       details?.petition_file_path,
     ].filter((p): p is string => Boolean(p && p.trim()))
     if (paths.length) {
-      await admin.storage.from('debtor-files').remove(paths).catch(() => null)
+      await deleteManyFromR2(paths.map(p => r2ObjectKey('debtor-files', p))).catch(() => null)
+      // السابق: await admin.storage.from('debtor-files').remove(paths).catch(() => null)
     }
   }
 

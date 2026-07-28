@@ -1,13 +1,6 @@
 'use client'
 
-import {
-  CONTRACT_GUARANTOR_STATUSES,
-  CONTRACT_GUARANTOR_STATUS_LABELS,
-  type ContractGuarantorStatus,
-} from '@/lib/criminal-debtor-details'
 import { FormField, formInputClass } from '@/components/ui/form-flow'
-import { PremiumSelect } from '@/components/ui/premium-select'
-import MoneyInput from '@/components/ui/money-input'
 import { DatePicker } from '@/components/ui/date-picker'
 
 export type CriminalDetailsFormState = {
@@ -15,7 +8,8 @@ export type CriminalDetailsFormState = {
   current_address: string
   incident_date: string
   charge_type: string
-  contract_guarantor_status: '' | ContractGuarantorStatus
+  /** نص حر */
+  contract_guarantor_status: string
   first_witness_name: string
   second_witness_name: string
   amount_owed: string
@@ -32,24 +26,20 @@ export const EMPTY_CRIMINAL_DETAILS: CriminalDetailsFormState = {
   amount_owed: '',
 }
 
-const STATUS_OPTIONS = CONTRACT_GUARANTOR_STATUSES.map(v => ({
-  value: v,
-  label: CONTRACT_GUARANTOR_STATUS_LABELS[v],
-}))
-
 export function criminalDetailsPayload(form: CriminalDetailsFormState) {
   return {
     job_title: form.job_title.trim() || null,
     current_address: form.current_address.trim() || null,
     incident_date: form.incident_date.trim() || null,
     charge_type: form.charge_type.trim() || null,
-    contract_guarantor_status: form.contract_guarantor_status || null,
+    amount_owed: form.amount_owed.trim() || null,
+    contract_guarantor_status: form.contract_guarantor_status.trim() || null,
     first_witness_name: form.first_witness_name.trim() || null,
     second_witness_name: form.second_witness_name.trim() || null,
   }
 }
 
-/** تحقق عميل: اسم+فرع إلزاميان؛ تاريخ صحيح؛ مبلغ null أو موجب */
+/** تحقق عميل: اسم+فرع إلزاميان؛ تاريخ صحيح إن وُجد */
 export function validateCriminalClientForm(
   fullName: string,
   branchId: string | null | undefined,
@@ -61,16 +51,6 @@ export function validateCriminalClientForm(
     if (!/^\d{4}-\d{2}-\d{2}$/.test(form.incident_date.trim())) {
       return 'تاريخ الواقعة غير صالح'
     }
-  }
-  if (form.amount_owed.trim()) {
-    const n = Number(form.amount_owed.replace(/,/g, ''))
-    if (!Number.isFinite(n) || n < 0) return 'المبلغ يجب أن يكون رقماً موجباً أو فارغاً'
-  }
-  if (
-    form.contract_guarantor_status
-    && !(CONTRACT_GUARANTOR_STATUSES as readonly string[]).includes(form.contract_guarantor_status)
-  ) {
-    return 'حالة العقد والكفيل غير صالحة'
   }
   return null
 }
@@ -131,21 +111,22 @@ export function CriminalDebtorFields({
       </FormField>
       {showAmount && (
         <FormField label="المبلغ الذي بذمته">
-          <MoneyInput
+          <input
+            className={formInputClass}
             value={form.amount_owed}
             disabled={disabled}
-            onChange={v => onChange('amount_owed', v)}
-            className={formInputClass}
-            placeholder="اختياري"
+            onChange={e => onChange('amount_owed', e.target.value)}
+            placeholder="اختياري — نص حر"
           />
         </FormField>
       )}
       <FormField label="هل لديه عقد وكفيل">
-        <PremiumSelect
+        <input
+          className={formInputClass}
           value={form.contract_guarantor_status}
           disabled={disabled}
-          onChange={v => onChange('contract_guarantor_status', v)}
-          options={[{ value: '', label: '— اختياري —' }, ...STATUS_OPTIONS]}
+          onChange={e => onChange('contract_guarantor_status', e.target.value)}
+          placeholder="اختياري — نص حر"
         />
       </FormField>
       <FormField label="اسم الشاهد الأول">

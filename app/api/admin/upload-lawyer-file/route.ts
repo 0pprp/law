@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { logActivity } from '@/lib/activity-log'
 import { requireLawyerInScope } from '@/lib/section-guard'
+import { uploadToR2, deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
 
 const MAX_BYTES = 15 * 1024 * 1024
 const ALLOWED_TYPES = new Set([
@@ -63,12 +64,16 @@ export async function POST(request: NextRequest) {
   const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${mimeExt}`
   const filePath = `${lawyerId}/${safeName}`
 
-  const { error: uploadErr } = await admin.storage
-    .from('lawyer-files')
-    .upload(filePath, buffer, { contentType: file.type, upsert: false })
-
-  if (uploadErr) {
-    return NextResponse.json({ error: uploadErr.message }, { status: 500 })
+  const r2Key = r2ObjectKey('lawyer-files', filePath)
+  try {
+    await uploadToR2(buffer, r2Key, file.type)
+  } catch (uploadErr) {
+    // السابق (Supabase Storage) — مُعلّق حتى التأكد من R2:
+    // const { error: uploadErr } = await admin.storage
+    //   .from('lawyer-files')
+    //   .upload(filePath, buffer, { contentType: file.type, upsert: false })
+    const msg = uploadErr instanceof Error ? uploadErr.message : 'فشل رفع الملف'
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 
   const { data: row, error: insertErr } = await admin
@@ -86,7 +91,8 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (insertErr) {
-    await admin.storage.from('lawyer-files').remove([filePath])
+    await deleteFromR2(r2Key).catch(() => null)
+    // السابق: await admin.storage.from('lawyer-files').remove([filePath])
     return NextResponse.json({ error: insertErr.message }, { status: 500 })
   }
 

@@ -451,7 +451,7 @@ export default function DashboardPage() {
       )}
 
       {showCivilStages && (
-        <div>
+        <div className="bg-yellow-100 border border-yellow-300 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-black text-[#231F20] text-base sm:text-lg">القضايا المدنية غير المكلفة</h2>
             <span className="text-sm text-[#454042] font-medium">المهام المكلفة لا تظهر هنا</span>
@@ -467,7 +467,7 @@ export default function DashboardPage() {
       )}
 
       {showCivilStages && (
-        <div>
+        <div className="bg-green-100 border border-green-300 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-black text-[#231F20] text-base sm:text-lg">القضايا المدنية المكلفة</h2>
             <span className="text-sm text-[#454042] font-medium">حسب نوع المهمة</span>
@@ -487,7 +487,7 @@ export default function DashboardPage() {
       )}
 
       {showCivilStages && (
-        <div>
+        <div className="bg-red-100 border border-red-300 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-black text-[#231F20] text-base sm:text-lg">القضايا المدنية المكلفة المتأخرة</h2>
             <span className="text-sm text-[#454042] font-medium">تجاوزت تاريخ الاستحقاق</span>
@@ -507,7 +507,7 @@ export default function DashboardPage() {
       )}
 
       {showCriminalStages && (
-        <div>
+        <div className="bg-yellow-100 border border-yellow-300 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-black text-[#231F20] text-base sm:text-lg">القضايا الجزائية غير المكلفة</h2>
             <span className="text-sm text-[#454042] font-medium">نفس سير التكليف الحالي</span>
@@ -523,7 +523,7 @@ export default function DashboardPage() {
       )}
 
       {showCriminalStages && (
-        <div>
+        <div className="bg-green-100 border border-green-300 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-black text-[#231F20] text-base sm:text-lg">القضايا الجزائية المكلفة</h2>
             <span className="text-sm text-[#454042] font-medium">حسب نوع المهمة</span>
@@ -543,7 +543,7 @@ export default function DashboardPage() {
       )}
 
       {showCriminalStages && (
-        <div>
+        <div className="bg-red-100 border border-red-300 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-black text-[#231F20] text-base sm:text-lg">القضايا الجزائية المكلفة المتأخرة</h2>
             <span className="text-sm text-[#454042] font-medium">تجاوزت تاريخ الاستحقاق</span>

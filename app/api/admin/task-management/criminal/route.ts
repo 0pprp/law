@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireStaffProfile } from '@/lib/api-auth'
-import { canManageTaskManagement, apiForbiddenResponse } from '@/lib/permissions'
+import { canManageTaskManagement, apiForbiddenResponse, isAdmin } from '@/lib/permissions'
 import { filterSelectableBranches } from '@/lib/branch-constants'
+import { criminalTaskDefColumns, stripActualFeeAmount } from '@/lib/criminal-task-def-columns'
 import { REQUIRED_FIELD_LABELS, type RequiredField } from '@/lib/types'
 
 type ExpenseLine = { name: string; max_amount: number }
@@ -59,6 +60,34 @@ async function requireAdmin() {
   return { auth }
 }
 
+/** قائمة تعريفات المهام الجزائية — actual_fee_amount للمدير فقط */
+export async function GET(request: NextRequest) {
+  const auth = await requireStaffProfile()
+  if (auth.error) return auth.error
+
+  const adminUser = isAdmin(auth.profile?.role)
+  const url = new URL(request.url)
+  const branchId = url.searchParams.get('branchId')?.trim() || null
+  const activeOnly = url.searchParams.get('activeOnly') !== '0'
+
+  const admin = createAdminClient()
+  let q = admin
+    .from('criminal_case_task_definitions')
+    .select(criminalTaskDefColumns(adminUser))
+    .order('sort_order')
+
+  if (activeOnly) q = q.eq('is_active', true)
+  if (branchId) q = q.eq('branch_id', branchId)
+
+  const { data, error } = await q
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  const rows = (data ?? []) as unknown as Record<string, unknown>[]
+  return NextResponse.json({
+    definitions: adminUser ? rows : rows.map(stripActualFeeAmount),
+  })
+}
+
 /** إنشاء مهمة جزائية لفرع واحد أو لكل الفروع المعتمدة */
 export async function POST(request: NextRequest) {
   const gate = await requireAdmin()
@@ -72,7 +101,8 @@ export async function POST(request: NextRequest) {
   }
 
   const label = String(body.label ?? '').trim()
-  const feeAmount = Number(body.fee_amount) || 0
+  // fee_amount يبقى 0 دائماً — لا يُلمس من الواجهة
+  const actualFeeAmount = Number(body.actual_fee_amount) || 0
   const branchId = body.branchId ? String(body.branchId) : null
   const applyAll = Boolean(body.applyAllBranches)
   const fields = Array.isArray(body.fields) ? normalizeFields(body.fields) : []
@@ -108,7 +138,8 @@ export async function POST(request: NextRequest) {
       .insert({
         branch_id: bid,
         label,
-        fee_amount: feeAmount,
+        fee_amount: 0,
+        actual_fee_amount: actualFeeAmount,
         sort_order: 0,
         is_active: true,
       })
@@ -173,7 +204,6 @@ export async function PATCH(request: NextRequest) {
   if (!id) return NextResponse.json({ error: 'معرّف المهمة مطلوب' }, { status: 400 })
 
   const label = String(body.label ?? '').trim()
-  const feeAmount = Number(body.fee_amount) || 0
   const fields = Array.isArray(body.fields) ? normalizeFields(body.fields) : []
   const expenses = Array.isArray(body.expenses) ? (body.expenses as ExpenseLine[]) : []
   const isActive = body.is_active === undefined ? undefined : Boolean(body.is_active)
@@ -182,7 +212,10 @@ export async function PATCH(request: NextRequest) {
 
   const patch: Record<string, unknown> = {}
   if (label) patch.label = label
-  if (body.fee_amount !== undefined) patch.fee_amount = feeAmount
+  // fee_amount لا يُلمس أبداً — يبقى 0
+  if (body.actual_fee_amount !== undefined) {
+    patch.actual_fee_amount = Number(body.actual_fee_amount) || 0
+  }
   if (isActive !== undefined) patch.is_active = isActive
 
   if (Object.keys(patch).length) {

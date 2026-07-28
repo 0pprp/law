@@ -21,6 +21,7 @@ import {
 import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { useAdminRole } from '@/context/admin-role'
+import { isAdmin } from '@/lib/permissions'
 
 interface Filters {
   dateFrom: string
@@ -43,9 +44,17 @@ export default function ReportsPage() {
   const { viewAllBranches, listId } = useBranch()
   const { caseTypeFilter: lockedCaseType } = useCaseScope()
   const viewerRole = useAdminRole()
+  const showCriminalActualFees = isAdmin(viewerRole)
   const [snapshot, setSnapshot] = useState<ReportSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  const [criminalActualRows, setCriminalActualRows] = useState<{
+    label: string
+    count: number
+    actualFee: number
+    total: number
+  }[]>([])
+  const [criminalActualGrandTotal, setCriminalActualGrandTotal] = useState(0)
   const [draft, setDraft] = useState<Filters>({
     ...EMPTY,
     caseType: lockedCaseType ?? '',
@@ -65,6 +74,8 @@ export default function ReportsPage() {
     // branchId=null مع viewAll = كل الفروع؛ بدون viewAll وبدون فرع = لا تحميل
     if (!branchId && !viewAllBranches) {
       setSnapshot(null)
+      setCriminalActualRows([])
+      setCriminalActualGrandTotal(0)
       setLoading(false)
       setLoadError('')
       return
@@ -80,7 +91,7 @@ export default function ReportsPage() {
       branchListId: (!viewAllBranches && listId) ? listId : undefined,
     }
 
-    fetchReportSnapshot(createClient(), branchId, filters)
+    const mainPromise = fetchReportSnapshot(createClient(), branchId, filters)
       .then(data => {
         if (!cancelled) {
           setSnapshot(data)
@@ -93,12 +104,48 @@ export default function ReportsPage() {
           setLoadError('تعذر تحميل التقارير — حاول مرة أخرى')
         }
       })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+
+    const actualFeesPromise = showCriminalActualFees
+      ? (() => {
+          const params = new URLSearchParams()
+          if (branchId) params.set('branchId', branchId)
+          if (applied.dateFrom) params.set('dateFrom', applied.dateFrom)
+          if (applied.dateTo) params.set('dateTo', applied.dateTo)
+          return fetch(`/api/admin/reports/criminal-actual-fees?${params}`)
+            .then(async res => {
+              if (!res.ok) throw new Error('actual fees')
+              return res.json() as Promise<{
+                rows: { label: string; count: number; actualFee: number; total: number }[]
+                grandTotal: number
+              }>
+            })
+            .then(json => {
+              if (!cancelled) {
+                setCriminalActualRows(json.rows ?? [])
+                setCriminalActualGrandTotal(Number(json.grandTotal) || 0)
+              }
+            })
+            .catch(e => {
+              console.error('[reports] criminal actual fees:', e)
+              if (!cancelled) {
+                setCriminalActualRows([])
+                setCriminalActualGrandTotal(0)
+              }
+            })
+        })()
+      : Promise.resolve().then(() => {
+          if (!cancelled) {
+            setCriminalActualRows([])
+            setCriminalActualGrandTotal(0)
+          }
+        })
+
+    Promise.all([mainPromise, actualFeesPromise]).finally(() => {
+      if (!cancelled) setLoading(false)
+    })
 
     return () => { cancelled = true }
-  }, [branchId, viewAllBranches, applied, listId, lockedCaseType])
+  }, [branchId, viewAllBranches, applied, listId, lockedCaseType, showCriminalActualFees])
 
   const achievements = snapshot?.achievements ?? []
   const lawyers = snapshot?.lawyers ?? []
@@ -435,6 +482,54 @@ export default function ReportsPage() {
               </div>
             )}
           </div>
+
+          {showCriminalActualFees && (
+            <div>
+              <p className="text-xs font-bold text-[#767676] uppercase tracking-wider mb-1">تقرير الأتعاب الجزائية الفعلية</p>
+              <p className="text-xs text-[#767676] mb-3">إنجازات المهام الجزائية المعتمدة × الأتعاب الفعلية — للمدير فقط</p>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                <StatCard label="أنواع المهام" value={fmtNum(criminalActualRows.length)} accent="teal" />
+                <StatCard
+                  label="إجمالي الإنجازات"
+                  value={fmtNum(criminalActualRows.reduce((s, r) => s + r.count, 0))}
+                  accent="blue"
+                />
+                <StatCard label="الإجمالي الفعلي" value={fmtMoney(criminalActualGrandTotal)} accent="green" />
+              </div>
+
+              {criminalActualRows.length > 0 ? (
+                <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
+                  <Table>
+                    <THead>
+                      <tr>
+                        <TH>#</TH>
+                        <TH>اسم المهمة</TH>
+                        <TH>عدد الإنجازات المعتمدة</TH>
+                        <TH>الأتعاب الفعلية</TH>
+                        <TH>الإجمالي الفعلي</TH>
+                      </tr>
+                    </THead>
+                    <TBody>
+                      {criminalActualRows.map((row, i) => (
+                        <TR key={row.label}>
+                          <TD className="text-[#767676] font-mono text-xs w-8">{i + 1}</TD>
+                          <TD className="font-semibold text-[#231F20]">{row.label}</TD>
+                          <TD><span className="font-bold tabular-nums text-[#2C8780]">{fmtNum(row.count)}</span></TD>
+                          <TD><span className="font-semibold tabular-nums" dir="ltr">{fmtMoney(row.actualFee)}</span></TD>
+                          <TD><span className="font-bold tabular-nums text-[#1D6365]" dir="ltr">{fmtMoney(row.total)}</span></TD>
+                        </TR>
+                      ))}
+                    </TBody>
+                  </Table>
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-8 text-center">
+                  <p className="text-sm text-[#767676]">لا توجد إنجازات جزائية معتمدة ضمن الفترة المحددة</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

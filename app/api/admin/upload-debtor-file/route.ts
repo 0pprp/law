@@ -6,6 +6,7 @@ import { logActivity } from '@/lib/activity-log'
 import { isPdfFile } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireDebtorInScope } from '@/lib/section-guard'
+import { uploadToR2, deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
 
 const MAX_BYTES = 15 * 1024 * 1024
 
@@ -46,11 +47,14 @@ export async function POST(request: NextRequest) {
   const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
   const filePath = `${debtorId}/${safeName}`
 
-  const { error: uploadErr } = await admin.storage
-    .from('debtor-files')
-    .upload(filePath, buffer, { contentType: 'application/pdf', upsert: false })
-
-  if (uploadErr) {
+  const r2Key = r2ObjectKey('debtor-files', filePath)
+  try {
+    await uploadToR2(buffer, r2Key, 'application/pdf')
+  } catch (uploadErr) {
+    // السابق (Supabase Storage) — مُعلّق حتى التأكد من R2:
+    // const { error: uploadErr } = await admin.storage
+    //   .from('debtor-files')
+    //   .upload(filePath, buffer, { contentType: 'application/pdf', upsert: false })
     return apiServerError('upload-debtor-file', uploadErr, 'فشل رفع الملف')
   }
 
@@ -68,7 +72,8 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (insertErr) {
-    await admin.storage.from('debtor-files').remove([filePath])
+    await deleteFromR2(r2Key).catch(() => null)
+    // السابق: await admin.storage.from('debtor-files').remove([filePath])
     return apiServerError('upload-debtor-file:db', insertErr, 'فشل حفظ المرفق')
   }
 

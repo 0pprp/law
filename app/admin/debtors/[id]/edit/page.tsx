@@ -21,7 +21,6 @@ import {
   validateCriminalClientForm,
   type CriminalDetailsFormState,
 } from '@/components/CriminalDebtorFields'
-import { isContractGuarantorStatus } from '@/lib/criminal-debtor-details'
 import { BackButton } from '@/components/ui/back-button'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import type { ReceiptType } from '@/lib/types'
@@ -118,12 +117,10 @@ export default function EditDebtorPage() {
             current_address: details?.current_address ?? '',
             incident_date: details?.incident_date ?? '',
             charge_type: details?.charge_type ?? '',
-            contract_guarantor_status: isContractGuarantorStatus(details?.contract_guarantor_status)
-              ? details.contract_guarantor_status
-              : '',
+            contract_guarantor_status: details?.contract_guarantor_status ?? '',
             first_witness_name: details?.first_witness_name ?? '',
             second_witness_name: details?.second_witness_name ?? '',
-            amount_owed: data.remaining_amount != null ? String(data.remaining_amount) : '',
+            amount_owed: details?.amount_owed ?? '',
           })
         } else if (data.branch_id) {
           const supabase = createClient()
@@ -179,14 +176,12 @@ export default function EditDebtorPage() {
         submitLock.current = false
         return
       }
-      const amountRaw = criminal.amount_owed.trim()
       const response = await fetch(`/api/admin/debtors/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           full_name: form.full_name.trim(),
           notes: form.notes || null,
-          remaining_amount: amountRaw ? parseMoneyInput(amountRaw) : null,
           branch_list_id: null,
           criminal_details: criminalDetailsPayload(criminal),
         }),

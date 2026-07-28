@@ -29,8 +29,22 @@ import { preserveScrollDuring } from '@/lib/preserve-scroll'
 
 const PAGE_SIZE = 50
 
-function debtorListName(debtor: { branch_list?: { name?: string } | null }): string {
+function debtorListName(debtor: {
+  branch_list?: { name?: string | null; court_name?: string | null; execution_office?: string | null } | null
+}): string {
   return debtor.branch_list?.name?.trim() || '—'
+}
+
+function debtorCourtName(debtor: {
+  branch_list?: { name?: string | null; court_name?: string | null; execution_office?: string | null } | null
+}): string {
+  return debtor.branch_list?.court_name?.trim() || '—'
+}
+
+function debtorExecutionOffice(debtor: {
+  branch_list?: { name?: string | null; court_name?: string | null; execution_office?: string | null } | null
+}): string {
+  return debtor.branch_list?.execution_office?.trim() || '—'
 }
 
 function SearchIcon() {
@@ -41,7 +55,7 @@ function SkeletonRow({ withCheckbox }: { withCheckbox?: boolean }) {
   return (
     <TR>
       {withCheckbox && <TD><div className="h-4 w-4 bg-[rgba(118,118,118,0.1)] rounded animate-pulse" /></TD>}
-      {[1,2,3,4,5,6,7,8,9,10].map(i => (
+      {[1,2,3,4,5,6,7,8,9,10,11,12].map(i => (
         <TD key={i}><div className="h-4 bg-[rgba(118,118,118,0.1)] rounded animate-pulse" style={{ width: `${50 + (i * 13) % 40}%` }} /></TD>
       ))}
     </TR>
@@ -377,7 +391,10 @@ export default function DebtorsPage() {
                     <TH>الاسم</TH>
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
-                    <TH>القائمة</TH><TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
+                    <TH>القائمة</TH>
+                    <TH>المحكمة</TH>
+                    <TH>دائرة التنفيذ</TH>
+                    <TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
                     <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>الملاحظة</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
                   </tr>
                 </THead>
@@ -425,6 +442,8 @@ export default function DebtorsPage() {
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH>
+                    <TH>المحكمة</TH>
+                    <TH>دائرة التنفيذ</TH>
                     <TH>رقم الهوية</TH>
                     <TH>{RECEIPT_NUMBER_LABEL}</TH>
                     <TH>{RECEIPT_TYPE_LABEL}</TH>
@@ -472,6 +491,8 @@ export default function DebtorsPage() {
                         <TD><span className="text-xs text-[#767676]">{debtor.branch_name ?? '—'}</span></TD>
                       )}
                       <TD><span className="text-xs text-[#767676]">{debtorListName(debtor)}</span></TD>
+                      <TD><span className="text-xs text-[#767676]">{debtorCourtName(debtor)}</span></TD>
+                      <TD><span className="text-xs text-[#767676]">{debtorExecutionOffice(debtor)}</span></TD>
                       <TD><span className="font-mono text-xs" dir="ltr">{debtor.id_number ?? '—'}</span></TD>
                       <TD><span className="font-mono text-xs" dir="ltr">{debtor.receipt_number ?? '—'}</span></TD>
                       <TD>
@@ -555,6 +576,8 @@ export default function DebtorsPage() {
                   </p>
                   {debtor.id_number && <p className="text-xs text-[#767676] font-mono mb-1" dir="ltr">{debtor.id_number}</p>}
                   <p className="text-xs text-[#767676] mb-1">القائمة: {debtorListName(debtor)}</p>
+                  <p className="text-xs text-[#767676] mb-1">المحكمة: {debtorCourtName(debtor)}</p>
+                  <p className="text-xs text-[#767676] mb-1">دائرة التنفيذ: {debtorExecutionOffice(debtor)}</p>
                   <p className="text-xs text-[#454042] whitespace-pre-wrap break-words mb-2">
                     الملاحظة: {debtor.last_note || '—'}
                   </p>

@@ -59,7 +59,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const db = canStaffReadBranch(profile, debtorProbe.branch_id) ? admin : supabase
 
   const [{ data: debtor }, { data: payments }, { data: expenses }, { data: files }, { data: taskRows }] = await Promise.all([
-    db.from('debtors').select('*, branch_list:branch_lists(name)').eq('id', id).single(),
+    db.from('debtors').select('*, branch_list:branch_lists(name, court_name, execution_office)').eq('id', id).single(),
     db.from('debtor_payments').select('*').eq('debtor_id', id).order('payment_date', { ascending: false }),
     db.from('expenses').select('*, task:tasks!expenses_task_id_fkey(task_type)').eq('debtor_id', id).order('expense_date', { ascending: false }),
     db.from('debtor_attachments').select('id, file_name, file_path, file_size, mime_type, created_at').eq('debtor_id', id).order('created_at', { ascending: false }),
@@ -76,10 +76,18 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const totalExpensesSum = (expenses ?? []).filter(e => e.status === 'approved' || e.status == null).reduce((s, e) => s + Number(e.amount), 0)
   const totalOwed = Number(debtor.required_amount ?? 0)
   const collectionRate = totalOwed > 0 ? Math.round((totalPaymentsSum / totalOwed) * 100) : 0
-  const contractLabel = criminalDetails?.contract_guarantor_status
-    && isContractGuarantorStatus(criminalDetails.contract_guarantor_status)
-    ? CONTRACT_GUARANTOR_STATUS_LABELS[criminalDetails.contract_guarantor_status]
-    : '—'
+  const contractLabel = !criminalDetails?.contract_guarantor_status
+    ? '—'
+    : isContractGuarantorStatus(criminalDetails.contract_guarantor_status)
+      ? CONTRACT_GUARANTOR_STATUS_LABELS[criminalDetails.contract_guarantor_status]
+      : criminalDetails.contract_guarantor_status
+
+  const branchList = Array.isArray((debtor as { branch_list?: unknown }).branch_list)
+    ? (debtor as { branch_list: { name?: string | null; court_name?: string | null; execution_office?: string | null }[] }).branch_list[0]
+    : (debtor as { branch_list?: { name?: string | null; court_name?: string | null; execution_office?: string | null } | null }).branch_list
+  const listName = branchList?.name?.trim() || '—'
+  const courtName = branchList?.court_name?.trim() || '—'
+  const executionOffice = branchList?.execution_office?.trim() || '—'
 
   const overviewTab = isCriminal ? (
     <div className="space-y-5">
@@ -97,10 +105,13 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
             <InfoRow label="عنوان السكن الحالي" value={criminalDetails?.current_address} />
             <InfoRow label="تاريخ الواقعة" value={criminalDetails?.incident_date ? fmtDate(criminalDetails.incident_date) : null} mono />
             <InfoRow label="نوع التهمة" value={criminalDetails?.charge_type} />
-            <InfoRow label="المبلغ الذي بذمته" value={fmtMoney(debtor.remaining_amount)} />
+            <InfoRow label="المبلغ الذي بذمته" value={criminalDetails?.amount_owed || '—'} />
             <InfoRow label="هل لديه عقد وكفيل" value={contractLabel} />
             <InfoRow label="الشاهد الأول" value={criminalDetails?.first_witness_name} />
             <InfoRow label="الشاهد الثاني" value={criminalDetails?.second_witness_name} />
+            <InfoRow label="القائمة" value={listName} />
+            <InfoRow label="المحكمة" value={courtName} />
+            <InfoRow label="دائرة التنفيذ" value={executionOffice} />
             <InfoRow label="حالة المدين" value={debtor.case_status ?? '—'} />
             <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} mono />
           </div>
@@ -154,8 +165,10 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
             <InfoRow label="أتعاب مسؤول القانونية" value={fmtMoney(debtor.legal_manager_fees ?? 0)} />
             <InfoRow
               label="القائمة"
-              value={(debtor as { branch_list?: { name?: string } | null }).branch_list?.name ?? '—'}
+              value={listName}
             />
+            <InfoRow label="المحكمة" value={courtName} />
+            <InfoRow label="دائرة التنفيذ" value={executionOffice} />
             {debtor.address && <InfoRow label="العنوان" value={debtor.address} />}
             {debtor.export_date && <InfoRow label={LEGAL_ISSUE_DATE_LABEL} value={fmtDate(debtor.export_date)} mono />}
             <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} mono />

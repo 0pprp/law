@@ -18,7 +18,10 @@ export interface CriminalDebtorDetails {
   current_address: string | null
   incident_date: string | null
   charge_type: string | null
-  contract_guarantor_status: ContractGuarantorStatus | null
+  /** المبلغ الذي بذمته — نص حر */
+  amount_owed: string | null
+  /** نص حر (سابقاً yes/no/contract_only فقط) */
+  contract_guarantor_status: string | null
   first_witness_name: string | null
   second_witness_name: string | null
   documents_contract_file_path: string | null
@@ -32,6 +35,7 @@ export type CriminalDebtorDetailsInput = {
   current_address?: string | null
   incident_date?: string | null
   charge_type?: string | null
+  amount_owed?: string | null
   contract_guarantor_status?: string | null
   first_witness_name?: string | null
   second_witness_name?: string | null
@@ -40,43 +44,45 @@ export type CriminalDebtorDetailsInput = {
 }
 
 const SELECT_COLS =
-  'debtor_id, job_title, current_address, incident_date, charge_type, contract_guarantor_status, first_witness_name, second_witness_name, documents_contract_file_path, petition_file_path, created_at, updated_at'
+  'debtor_id, job_title, current_address, incident_date, charge_type, amount_owed, contract_guarantor_status, first_witness_name, second_witness_name, documents_contract_file_path, petition_file_path, created_at, updated_at'
 
 export function isContractGuarantorStatus(v: unknown): v is ContractGuarantorStatus {
   return typeof v === 'string' && (CONTRACT_GUARANTOR_STATUSES as readonly string[]).includes(v)
 }
 
-function normalizeStatus(v: string | null | undefined): ContractGuarantorStatus | null {
-  if (v == null || v === '') return null
-  return isContractGuarantorStatus(v) ? v : null
+export function sanitizeCriminalDebtorDetailsInput(
+  input: CriminalDebtorDetailsInput,
+): Required<Pick<
+  CriminalDebtorDetailsInput,
+  | 'job_title'
+  | 'current_address'
+  | 'incident_date'
+  | 'charge_type'
+  | 'amount_owed'
+  | 'contract_guarantor_status'
+  | 'first_witness_name'
+  | 'second_witness_name'
+  | 'documents_contract_file_path'
+  | 'petition_file_path'
+>> {
+  return {
+    job_title: trimOrNull(input.job_title),
+    current_address: trimOrNull(input.current_address),
+    incident_date: trimOrNull(input.incident_date),
+    charge_type: trimOrNull(input.charge_type),
+    amount_owed: trimOrNull(input.amount_owed),
+    contract_guarantor_status: trimOrNull(input.contract_guarantor_status),
+    first_witness_name: trimOrNull(input.first_witness_name),
+    second_witness_name: trimOrNull(input.second_witness_name),
+    documents_contract_file_path: trimOrNull(input.documents_contract_file_path),
+    petition_file_path: trimOrNull(input.petition_file_path),
+  }
 }
 
 function trimOrNull(v: string | null | undefined): string | null {
   if (v == null) return null
   const t = String(v).trim()
   return t || null
-}
-
-export function sanitizeCriminalDebtorDetailsInput(
-  input: CriminalDebtorDetailsInput,
-): Omit<CriminalDebtorDetailsInput, 'contract_guarantor_status'> & {
-  contract_guarantor_status: ContractGuarantorStatus | null
-} {
-  const statusRaw = input.contract_guarantor_status
-  if (statusRaw != null && statusRaw !== '' && !isContractGuarantorStatus(statusRaw)) {
-    throw new Error('حالة الكفيل/العقد غير صالحة')
-  }
-  return {
-    job_title: trimOrNull(input.job_title),
-    current_address: trimOrNull(input.current_address),
-    incident_date: trimOrNull(input.incident_date),
-    charge_type: trimOrNull(input.charge_type),
-    contract_guarantor_status: normalizeStatus(statusRaw),
-    first_witness_name: trimOrNull(input.first_witness_name),
-    second_witness_name: trimOrNull(input.second_witness_name),
-    documents_contract_file_path: trimOrNull(input.documents_contract_file_path),
-    petition_file_path: trimOrNull(input.petition_file_path),
-  }
 }
 
 export async function fetchCriminalDebtorDetails(
@@ -93,6 +99,23 @@ export async function fetchCriminalDebtorDetails(
     // الجدول غير مفعّل بعد — لا نكسر الصفحة
     if (error.message?.includes('criminal_debtor_details') || error.code === '42P01') {
       return null
+    }
+    // عمود amount_owed غير مطبّق بعد — أعد بدون العمود
+    if (error.message?.includes('amount_owed') || error.code === '42703' || error.code === 'PGRST204') {
+      const { data: fallback, error: fbErr } = await supabase
+        .from('criminal_debtor_details')
+        .select(
+          'debtor_id, job_title, current_address, incident_date, charge_type, contract_guarantor_status, first_witness_name, second_witness_name, documents_contract_file_path, petition_file_path, created_at, updated_at',
+        )
+        .eq('debtor_id', debtorId)
+        .maybeSingle()
+      if (fbErr) {
+        console.error('[fetchCriminalDebtorDetails]', fbErr.message)
+        return null
+      }
+      return fallback
+        ? ({ ...fallback, amount_owed: null } as CriminalDebtorDetails)
+        : null
     }
     console.error('[fetchCriminalDebtorDetails]', error.message)
     return null

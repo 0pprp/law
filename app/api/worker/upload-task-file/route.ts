@@ -6,6 +6,7 @@ import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { logActivity } from '@/lib/activity-log'
 import { isAllowedTaskFile, sanitizeStorageKey } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
+import { uploadToR2, deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
 
 const MAX_BYTES = 15 * 1024 * 1024
 
@@ -67,14 +68,17 @@ export async function POST(request: NextRequest) {
     : `${taskId}/${description ? `${description}-` : ''}${safeName}`
   const buffer = Buffer.from(await file.arrayBuffer())
 
-  const { error: uploadErr } = await admin.storage
-    .from('task-files')
-    .upload(filePath, buffer, {
-      contentType: file.type || 'application/octet-stream',
-      upsert: false,
-    })
-
-  if (uploadErr) {
+  const r2Key = r2ObjectKey('task-files', filePath)
+  try {
+    await uploadToR2(buffer, r2Key, file.type || 'application/octet-stream')
+  } catch (uploadErr) {
+    // السابق (Supabase Storage) — مُعلّق حتى التأكد من R2:
+    // const { error: uploadErr } = await admin.storage
+    //   .from('task-files')
+    //   .upload(filePath, buffer, {
+    //     contentType: file.type || 'application/octet-stream',
+    //     upsert: false,
+    //   })
     return apiServerError('upload-task-file', uploadErr, 'فشل رفع الملف')
   }
 
@@ -95,7 +99,8 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (insertErr) {
-      await admin.storage.from('task-files').remove([filePath])
+      await deleteFromR2(r2Key).catch(() => null)
+      // السابق: await admin.storage.from('task-files').remove([filePath])
       return apiServerError('upload-task-file:db', insertErr, 'فشل حفظ المرفق')
     }
     attachment = row

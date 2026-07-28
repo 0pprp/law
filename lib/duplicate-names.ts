@@ -5,11 +5,13 @@ import {
   type FetchAwaitingAssignmentOptions,
   type FetchAwaitingAssignmentResult,
   resolveBranchListName,
+  resolveCourtName,
+  resolveExecutionOffice,
 } from '@/lib/awaiting-assignment'
 import { attachLastNotes } from '@/lib/debtor-last-notes'
 
 const BASE_COLS =
-  'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, branch_list:branch_lists(name)'
+  'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, branch_list:branch_lists(name, court_name, execution_office)'
 
 function isMissingNoteColumnError(message: string | undefined | null): boolean {
   return !!message && message.includes('assignment_note')
@@ -21,7 +23,11 @@ function isMissingDuplicateColumnError(message: string | undefined | null): bool
   )
 }
 
-type BranchListEmbed = { name?: string | null } | { name?: string | null }[] | null | undefined
+type BranchListEmbed =
+  | { name?: string | null; court_name?: string | null; execution_office?: string | null }
+  | { name?: string | null; court_name?: string | null; execution_office?: string | null }[]
+  | null
+  | undefined
 
 type RawDebtor = {
   id: string
@@ -48,6 +54,8 @@ async function mapRowsWithLastNotes(
     branch_name: r.branch_id ? branchNames.get(r.branch_id) ?? null : null,
     branch_list_id: r.branch_list_id ?? null,
     branch_list_name: resolveBranchListName(r.branch_list),
+    court_name: resolveCourtName(r.branch_list),
+    execution_office: resolveExecutionOffice(r.branch_list),
     created_at: r.created_at,
     assignment_note: r.assignment_note ?? null,
     last_note: '—' as string,

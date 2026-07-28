@@ -44,7 +44,7 @@ function isValidOptionalDate(value: unknown): boolean {
 }
 
 const DEFAULT_COLS =
-  'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, case_type, branch_list_id, branch_id, notes, branch_list:branch_lists(name)'
+  'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, case_type, branch_list_id, branch_id, notes, branch_list:branch_lists(name, court_name, execution_office)'
 
 export async function GET(request: NextRequest) {
   const auth = await requireStaffProfile()

@@ -13,6 +13,7 @@ import {
   RECEIPT_NUMBER_DUP_BRANCH_ERROR,
   RECEIPT_NUMBER_DUP_FILE_ERROR,
 } from '@/lib/receipt-number'
+import { deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
 
 export const IMPORT_EXCEL_HEADERS = [
   'الاسم الكامل',
@@ -457,7 +458,10 @@ async function cleanupDebtor(
   taskId: string | null,
   filePath: string | null,
 ): Promise<void> {
-  if (filePath) await supabase.storage.from('debtor-files').remove([filePath])
+  if (filePath) {
+    await deleteFromR2(r2ObjectKey('debtor-files', filePath)).catch(() => null)
+    // السابق: await supabase.storage.from('debtor-files').remove([filePath])
+  }
   await supabase.from('expenses').delete().eq('debtor_id', debtorId)
   await supabase.from('debtor_payments').delete().eq('debtor_id', debtorId)
   await supabase.from('debtor_notes').delete().eq('debtor_id', debtorId)

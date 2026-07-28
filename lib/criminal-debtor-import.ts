@@ -37,6 +37,7 @@ import { localTodayYmd } from '@/lib/local-date'
 import { isMainBranchName } from '@/lib/branch-constants'
 import { canStaffWriteBranch, type BranchAccessProfile } from '@/lib/staff-branch-access'
 import { isSafeStoragePath } from '@/lib/storage-path'
+import { uploadToR2, deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
 
 export type CriminalImportRowStatus = 'success' | 'success_with_warning' | 'failed'
 
@@ -62,8 +63,8 @@ export interface CriminalPreviewRow extends CriminalParsedRow {
   errors: string[]
   warnings: string[]
   incident_date: string | null
-  amount_owed: number | null
-  contract_guarantor: 'yes' | 'no' | 'contract_only' | null
+  amount_owed: string | null
+  contract_guarantor: string | null
   branchId: string | null
   resolvedBranchName: string | null
   pdfKey: string | null
@@ -333,12 +334,10 @@ export function validateCriminalImportRows(
     const incident_date = dateRes.ok ? dateRes.value : null
 
     const amountRes = parseCriminalImportAmount(row.amount_raw)
-    if (!amountRes.ok) errors.push(amountRes.error)
-    const amount_owed = amountRes.ok ? amountRes.value : null
+    const amount_owed = amountRes.value
 
     const contractRes = parseContractGuarantorImport(row.contract_raw)
-    if (!contractRes.ok) errors.push(contractRes.error)
-    const contract_guarantor = contractRes.ok ? contractRes.value : null
+    const contract_guarantor = contractRes.value
 
     let pdfKey: string | null = null
     let pdfStatus: CriminalPreviewRow['pdfStatus'] = '—'
@@ -423,7 +422,8 @@ async function cleanupCriminalDebtor(
 ): Promise<void> {
   for (const p of storagePaths) {
     if (isSafeStoragePath(p)) {
-      await admin.storage.from('debtor-files').remove([p]).catch(() => null)
+      await deleteFromR2(r2ObjectKey('debtor-files', p)).catch(() => null)
+      // السابق: await admin.storage.from('debtor-files').remove([p]).catch(() => null)
     }
   }
   await deleteCriminalDebtorDetails(admin, debtorId)
@@ -502,7 +502,7 @@ export async function executeCriminalDebtorImport(
         warnings.push('تكرار محتمل: مدين جزائي بنفس الاسم/الفرع/التاريخ')
       }
 
-      const amount = row.amount_owed ?? 0
+      const amount = 0
       const required = computeDebtorRequiredAmount(amount, 0, 0, 0)
       const remaining = computeRemainingFromRequired(required, 0)
 
@@ -555,6 +555,7 @@ export async function executeCriminalDebtorImport(
         current_address: row.current_address || null,
         incident_date: row.incident_date,
         charge_type: row.charge_type || null,
+        amount_owed: row.amount_owed,
         contract_guarantor_status: row.contract_guarantor,
         first_witness_name: row.first_witness || null,
         second_witness_name: row.second_witness || null,
@@ -581,10 +582,13 @@ export async function executeCriminalDebtorImport(
           pdfUpload = 'missing'
         } else {
           const path = buildCriminalFilePath(createdId, 'documents')
-          const { error: upErr } = await admin.storage
-            .from('debtor-files')
-            .upload(path, pdf.bytes, { contentType: 'application/pdf', upsert: false })
-          if (upErr) {
+          try {
+            await uploadToR2(pdf.bytes, r2ObjectKey('debtor-files', path), 'application/pdf')
+          } catch {
+            // السابق:
+            // const { error: upErr } = await admin.storage
+            //   .from('debtor-files')
+            //   .upload(path, pdf.bytes, { contentType: 'application/pdf', upsert: false })
             await cleanupCriminalDebtor(admin, createdId, [])
             debtorId = null
             throw new Error('فشل رفع ملف المستمسكات')

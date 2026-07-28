@@ -7,6 +7,7 @@ import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireLawyerInScope } from '@/lib/section-guard'
+import { deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
 
 export async function DELETE(request: Request) {
   const auth = await getSessionProfile()
@@ -39,8 +40,12 @@ export async function DELETE(request: Request) {
     return apiForbiddenResponse()
   }
 
-  const { error: storageErr } = await admin.storage.from('lawyer-files').remove([row.file_path])
-  if (storageErr) return apiServerError('delete-lawyer-file:storage', storageErr)
+  try {
+    await deleteFromR2(r2ObjectKey('lawyer-files', row.file_path))
+  } catch (storageErr) {
+    // السابق: await admin.storage.from('lawyer-files').remove([row.file_path])
+    return apiServerError('delete-lawyer-file:storage', storageErr)
+  }
 
   const { error: dbErr } = await admin.from('lawyer_attachments').delete().eq('id', fileId)
   if (dbErr) return apiServerError('delete-lawyer-file:db', dbErr)

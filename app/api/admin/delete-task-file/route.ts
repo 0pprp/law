@@ -7,6 +7,7 @@ import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireTaskInScope } from '@/lib/section-guard'
+import { deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
 
 export async function DELETE(request: Request) {
   const auth = await getSessionProfile()
@@ -38,8 +39,12 @@ export async function DELETE(request: Request) {
   const branchId = (task as { branch_id?: string | null } | null)?.branch_id ?? null
   if (!canStaffWriteBranch(auth.profile, branchId)) return apiForbiddenResponse()
 
-  const { error: storageErr } = await admin.storage.from('task-files').remove([row.file_path])
-  if (storageErr) return apiServerError('delete-task-file:storage', storageErr)
+  try {
+    await deleteFromR2(r2ObjectKey('task-files', row.file_path))
+  } catch (storageErr) {
+    // السابق: const { error: storageErr } = await admin.storage.from('task-files').remove([row.file_path])
+    return apiServerError('delete-task-file:storage', storageErr)
+  }
 
   const { error: dbErr } = await admin.from('task_attachments').delete().eq('id', fileId)
   if (dbErr) return apiServerError('delete-task-file:db', dbErr)

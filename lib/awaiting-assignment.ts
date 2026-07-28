@@ -13,6 +13,8 @@ export interface AwaitingAssignmentDebtor {
   branch_name: string | null
   branch_list_id: string | null
   branch_list_name: string | null
+  court_name: string | null
+  execution_office: string | null
   created_at: string
   assignment_note: string | null
   /** عرض آخر ملاحظة بروفايل: «الكاتب: النص...» */
@@ -43,7 +45,7 @@ export interface FetchAwaitingAssignmentResult {
 
 /** أعمدة المدين + اسم القائمة عبر علاقة PostgREST (بدون N+1) */
 const BASE_COLS =
-  'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, branch_list:branch_lists(name)'
+  'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, branch_list:branch_lists(name, court_name, execution_office)'
 
 /** حالات نهائية لا تُحسب ضمن صفوف «تحت إسناد» للمهام اليتيمة */
 const TERMINAL_TASK_STATUSES = new Set([
@@ -69,14 +71,31 @@ function applyNotDuplicateFilter(q: any, columnReady: boolean): any {
   return q.is('duplicate_flagged_at', null)
 }
 
-type BranchListEmbed = { name?: string | null } | { name?: string | null }[] | null | undefined
+type BranchListEmbed =
+  | { name?: string | null; court_name?: string | null; execution_office?: string | null }
+  | { name?: string | null; court_name?: string | null; execution_office?: string | null }[]
+  | null
+  | undefined
+
+function embedRow(embed: BranchListEmbed) {
+  if (!embed) return null
+  return Array.isArray(embed) ? embed[0] : embed
+}
 
 /** يستخرج اسم القائمة من embed PostgREST بأمان (كائن أو مصفوفة أو null) */
 export function resolveBranchListName(embed: BranchListEmbed): string | null {
-  if (!embed) return null
-  const row = Array.isArray(embed) ? embed[0] : embed
-  const name = row?.name?.trim()
+  const name = embedRow(embed)?.name?.trim()
   return name || null
+}
+
+export function resolveCourtName(embed: BranchListEmbed): string | null {
+  const v = embedRow(embed)?.court_name?.trim()
+  return v || null
+}
+
+export function resolveExecutionOffice(embed: BranchListEmbed): string | null {
+  const v = embedRow(embed)?.execution_office?.trim()
+  return v || null
 }
 
 type RawDebtor = {
@@ -105,6 +124,8 @@ async function mapRowsWithLastNotes(
     branch_name: r.branch_id ? branchNames.get(r.branch_id) ?? null : null,
     branch_list_id: r.branch_list_id ?? null,
     branch_list_name: resolveBranchListName(r.branch_list),
+    court_name: resolveCourtName(r.branch_list),
+    execution_office: resolveExecutionOffice(r.branch_list),
     created_at: r.created_at,
     assignment_note: r.assignment_note ?? null,
     last_note: '—' as string,

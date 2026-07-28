@@ -6,6 +6,7 @@ import { canReadAllBranches, isAdmin, isLegalManager } from '@/lib/permissions'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireLawyerInScope } from '@/lib/section-guard'
+import { getR2UrlFor } from '@/lib/r2-url'
 
 const SIGNED_TTL_SEC = 900
 
@@ -61,9 +62,12 @@ export async function POST(request: Request) {
     return safeClientError('صلاحية غير كافية', 403)
   }
 
-  const { data, error: signErr } = await admin.storage
-    .from('lawyer-files')
-    .createSignedUrl(row.file_path, SIGNED_TTL_SEC)
-  if (signErr) return apiServerError('lawyer-file-url:sign', signErr)
-  return NextResponse.json({ url: data.signedUrl })
+  // السابق (Supabase signed URL) — مُعلّق حتى التأكد من R2:
+  // const { data, error: signErr } = await admin.storage
+  //   .from('lawyer-files')
+  //   .createSignedUrl(row.file_path, SIGNED_TTL_SEC)
+  // if (signErr) return apiServerError('lawyer-file-url:sign', signErr)
+  // return NextResponse.json({ url: data.signedUrl })
+
+  return NextResponse.json({ url: getR2UrlFor('lawyer-files', row.file_path) })
 }

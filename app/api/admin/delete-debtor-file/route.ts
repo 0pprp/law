@@ -7,6 +7,7 @@ import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireDebtorInScope } from '@/lib/section-guard'
+import { deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
 
 export async function DELETE(request: Request) {
   const auth = await getSessionProfile()
@@ -38,8 +39,12 @@ export async function DELETE(request: Request) {
   const branchId = (debtor as { branch_id?: string | null } | null)?.branch_id ?? null
   if (!canStaffWriteBranch(auth.profile, branchId)) return apiForbiddenResponse()
 
-  const { error: storageErr } = await admin.storage.from('debtor-files').remove([row.file_path])
-  if (storageErr) return apiServerError('delete-debtor-file:storage', storageErr)
+  try {
+    await deleteFromR2(r2ObjectKey('debtor-files', row.file_path))
+  } catch (storageErr) {
+    // السابق: await admin.storage.from('debtor-files').remove([row.file_path])
+    return apiServerError('delete-debtor-file:storage', storageErr)
+  }
 
   const { error: dbErr } = await admin.from('debtor_attachments').delete().eq('id', fileId)
   if (dbErr) return apiServerError('delete-debtor-file:db', dbErr)

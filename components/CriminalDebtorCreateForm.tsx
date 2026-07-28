@@ -13,7 +13,6 @@ import {
 } from '@/components/OperationBranchSelect'
 import { FormFlow, FormFlowHero, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { cn } from '@/lib/utils'
-import { parseMoneyInput } from '@/lib/money-input'
 import {
   CriminalDebtorFields,
   EMPTY_CRIMINAL_DETAILS,
@@ -125,9 +124,6 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
       return
     }
 
-    const amountRaw = criminal.amount_owed.trim()
-    const remaining = amountRaw ? parseMoneyInput(amountRaw) : 0
-
     let createdId: string | null = null
     try {
       const res = await fetch('/api/admin/debtors', {
@@ -137,7 +133,7 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
           branchId,
           case_type: 'criminal',
           full_name: fullName.trim(),
-          remaining_amount: amountRaw ? remaining : null,
+          remaining_amount: null,
           branch_list_id: null,
           criminal_details: criminalDetailsPayload(criminal),
         }),

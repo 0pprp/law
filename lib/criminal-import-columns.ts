@@ -110,12 +110,15 @@ export const CRIMINAL_IMPORT_HEADER_SYNONYMS: Record<string, CriminalImportField
   notes: 'notes',
 }
 
-/** قيم العقد والكفيل المقبولة → التخزين الداخلي */
-export const CONTRACT_GUARANTOR_IMPORT_MAP: Record<string, 'yes' | 'no' | 'contract_only'> = {
-  نعم: 'yes',
-  لا: 'no',
-  'فقط عقد': 'contract_only',
-  yes: 'yes',
-  no: 'no',
-  contract_only: 'contract_only',
-}
+/**
+ * سابقاً: قيم مغلقة نعم/لا/فقط عقد.
+ * لم يعد مستخدماً — الحقل يقبل نصاً حراً عند الاستيراد.
+ */
+// export const CONTRACT_GUARANTOR_IMPORT_MAP: Record<string, 'yes' | 'no' | 'contract_only'> = {
+//   نعم: 'yes',
+//   لا: 'no',
+//   'فقط عقد': 'contract_only',
+//   yes: 'yes',
+//   no: 'no',
+//   contract_only: 'contract_only',
+// }

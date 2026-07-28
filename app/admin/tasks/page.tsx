@@ -38,6 +38,15 @@ import { appConfirm } from '@/lib/app-dialog'
 
 type TaskView = 'waiting' | 'assigned' | 'overdue'
 
+function branchCourtExecutionLine(t: CurrentBranchTaskRow): string | null {
+  const parts: string[] = []
+  const court = t.courtName?.trim()
+  const exec = t.executionOffice?.trim()
+  if (court) parts.push(`المحكمة: ${court}`)
+  if (exec) parts.push(`التنفيذ: ${exec}`)
+  return parts.length ? parts.join(' | ') : null
+}
+
 const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   waiting_assignment: 'warning',
   pending_assignment: 'warning',
@@ -790,9 +799,17 @@ function TasksPageInner() {
                     </TD>
                   )}
                   <TD>
-                    <Link href={`/admin/debtors/${t.debtor_id}/account`} className="font-bold text-[#231F20] hover:text-[#2C8780]">
-                      {t.debtorName}
-                    </Link>
+                    <div>
+                      <Link href={`/admin/debtors/${t.debtor_id}/account`} className="font-bold text-[#231F20] hover:text-[#2C8780]">
+                        {t.debtorName}
+                      </Link>
+                      {!isOverdueView && t.branchListName?.trim() && (
+                        <p className="text-[11px] text-[#767676] mt-0.5">القائمة: {t.branchListName.trim()}</p>
+                      )}
+                      {!isOverdueView && branchCourtExecutionLine(t) && (
+                        <p className="text-[11px] text-[#767676] mt-0.5">{branchCourtExecutionLine(t)}</p>
+                      )}
+                    </div>
                   </TD>
                   {!isOverdueView && <TD><span dir="ltr">{t.debtorPhone ?? '—'}</span></TD>}
                   <TD>{CASE_TYPE_LABELS[t.caseType] ?? 'دعوى مدنية'}</TD>
@@ -801,7 +818,14 @@ function TasksPageInner() {
                     <TD>{t.branchName ?? '—'}</TD>
                   )}
                   {isOverdueView && (
-                    <TD>{t.branchListName ?? '—'}</TD>
+                    <TD>
+                      <div>
+                        <span>{t.branchListName ?? '—'}</span>
+                        {branchCourtExecutionLine(t) && (
+                          <p className="text-[11px] text-[#767676] mt-0.5">{branchCourtExecutionLine(t)}</p>
+                        )}
+                      </div>
+                    </TD>
                   )}
                   {(taskView === 'assigned' || isOverdueView) && (
                     <TD>

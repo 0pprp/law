@@ -2,8 +2,6 @@
  * تطبيع نصوص/تواريخ/مبالغ استيراد الجزائي — للمطابقة والتحقق فقط.
  * القيمة المخزّنة للاسم تُنظَّف تنظيفاً خفيفاً دون فقدان المعنى.
  */
-import { CONTRACT_GUARANTOR_IMPORT_MAP } from '@/lib/criminal-import-columns'
-import type { ContractGuarantorStatus } from '@/lib/criminal-debtor-details'
 
 const EASTERN_DIGITS: Record<string, string> = {
   '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
@@ -144,50 +142,24 @@ export function isValidYmd(ymd: string): boolean {
 }
 
 /**
- * مبلغ اختياري — يرفض النصوص الجزئية (100abc) والسالب.
- * فارغ → null ؛ صفر مسموح.
+ * المبلغ الذي بذمته — نص حر اختياري (فارغ → null).
  */
 export function parseCriminalImportAmount(
   raw: unknown,
-): { ok: true; value: number | null } | { ok: false; error: string } {
-  if (raw == null || raw === '') return { ok: true, value: null }
-  if (typeof raw === 'number') {
-    if (!Number.isFinite(raw)) return { ok: false, error: 'المبلغ غير صالح' }
-    if (raw < 0) return { ok: false, error: 'المبلغ لا يمكن أن يكون سالباً' }
-    if (raw > CRIMINAL_IMPORT_MAX_AMOUNT) return { ok: false, error: 'المبلغ خارج الحدود المسموحة' }
-    if (!Number.isInteger(raw) && !Number.isInteger(Math.round(raw))) {
-      // اسمح بأرقام عشرية صحيحة فقط إن كانت .0
-    }
-    const n = Math.round(raw)
-    if (Math.abs(raw - n) > 1e-9) return { ok: false, error: 'المبلغ يجب أن يكون رقماً صحيحاً' }
-    return { ok: true, value: n }
-  }
-
-  let s = unifyEasternDigits(collapseSpaces(String(raw)))
-  if (!s) return { ok: true, value: null }
-  s = s.replace(/,/g, '').replace(/\s/g, '')
-  if (!/^\d+$/.test(s)) {
-    return { ok: false, error: 'المبلغ غير صالح — أدخل أرقاماً فقط' }
-  }
-  if (s.length > 15) return { ok: false, error: 'المبلغ خارج الحدود المسموحة' }
-  const n = Number(s)
-  if (!Number.isFinite(n) || n < 0) return { ok: false, error: 'المبلغ غير صالح' }
-  if (n > CRIMINAL_IMPORT_MAX_AMOUNT) return { ok: false, error: 'المبلغ خارج الحدود المسموحة' }
-  return { ok: true, value: n }
+): { ok: true; value: string | null } {
+  const display = sanitizeDisplayText(raw)
+  if (!display) return { ok: true, value: null }
+  return { ok: true, value: display }
 }
 
+/**
+ * العقد والكفيل — نص حر اختياري.
+ * فارغ → null ؛ أي نص غير فارغ يُخزَّن كما هو (بعد تنظيف خفيف).
+ */
 export function parseContractGuarantorImport(
   raw: unknown,
-): { ok: true; value: ContractGuarantorStatus | null } | { ok: false; error: string } {
-  const display = collapseSpaces(unifyEasternDigits(String(raw ?? '')))
+): { ok: true; value: string | null } {
+  const display = sanitizeDisplayText(raw)
   if (!display) return { ok: true, value: null }
-  const lower = display.toLowerCase()
-  const mapped =
-    CONTRACT_GUARANTOR_IMPORT_MAP[display]
-    ?? CONTRACT_GUARANTOR_IMPORT_MAP[lower]
-    ?? CONTRACT_GUARANTOR_IMPORT_MAP[normalizeForMatch(raw)]
-  if (!mapped) {
-    return { ok: false, error: 'قيمة العقد والكفيل غير صالحة — استخدم: نعم / لا / فقط عقد' }
-  }
-  return { ok: true, value: mapped }
+  return { ok: true, value: display }
 }

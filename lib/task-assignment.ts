@@ -50,6 +50,8 @@ export interface CurrentBranchTaskRow {
   branch_id: string | null
   branchName: string | null
   branchListName: string | null
+  courtName: string | null
+  executionOffice: string | null
   caseType: 'civil' | 'criminal'
   lawyerId: string | null
   lawyerName: string | null
@@ -464,7 +466,7 @@ const CURRENT_TASK_EMBED_INNER = `
   receipt_number,
   case_type,
   branch_list_id,
-  branch_list:branch_lists(name),
+  branch_list:branch_lists(name, court_name, execution_office),
   current_task_id,
   case_status,
   current_task:tasks!current_task_id!inner(
@@ -533,6 +535,8 @@ function debtorRowsToTaskRows(debtors: any[], branchId: string | null): CurrentB
       branch_id: task.branch_id,
       branchName: null,
       branchListName: bl?.name?.trim() ?? null,
+      courtName: bl?.court_name?.trim() ?? null,
+      executionOffice: bl?.execution_office?.trim() ?? null,
       caseType: d.case_type === 'criminal' ? 'criminal' : 'civil',
       lawyerId: taskLawyerId(task),
       lawyerName: null,

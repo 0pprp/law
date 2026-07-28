@@ -144,6 +144,8 @@ function DebtorRowsTable({
               <th className="px-4 py-2.5 font-semibold">الاسم</th>
               <th className="px-4 py-2.5 font-semibold">نوع الدعوى</th>
               <th className="px-4 py-2.5 font-semibold">القائمة</th>
+              <th className="px-4 py-2.5 font-semibold">المحكمة</th>
+              <th className="px-4 py-2.5 font-semibold">دائرة التنفيذ</th>
               <th className="px-4 py-2.5 font-semibold">تاريخ الإضافة</th>
               <th className="px-4 py-2.5 font-semibold">الملاحظة</th>
               <th className="px-4 py-2.5 font-semibold text-center">الإجراءات</th>
@@ -162,7 +164,7 @@ function DebtorRowsTable({
                     className="accent-violet-600 w-5 h-5 cursor-pointer"
                   />
                 </th>
-                <th colSpan={6} className="px-4 py-2 text-right text-[11px] font-medium text-violet-800">
+                <th colSpan={8} className="px-4 py-2 text-right text-[11px] font-medium text-violet-800">
                   تحديد الكل المعروض — ثم «نقل للأسماء المكررة» أعلى الجدول
                 </th>
               </tr>
@@ -201,6 +203,12 @@ function DebtorRowsTable({
                 </td>
                 <td className="px-4 py-3">
                   <span className="text-xs text-[#767676] break-words">{r.branch_list_name?.trim() || '—'}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="text-xs text-[#767676] break-words">{r.court_name?.trim() || '—'}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="text-xs text-[#767676] break-words">{r.execution_office?.trim() || '—'}</span>
                 </td>
                 <td className="px-4 py-3">
                   <span className="text-xs tabular-nums" dir="ltr">{fmtDate(r.created_at)}</span>
@@ -278,6 +286,8 @@ function DebtorRowsTable({
             </div>
             <p className="text-xs text-[#767676] mb-1">{CASE_TYPE_LABELS[r.case_type]}</p>
             <p className="text-xs text-[#767676] mb-1 break-words">القائمة: {r.branch_list_name?.trim() || '—'}</p>
+            <p className="text-xs text-[#767676] mb-1 break-words">المحكمة: {r.court_name?.trim() || '—'}</p>
+            <p className="text-xs text-[#767676] mb-1 break-words">دائرة التنفيذ: {r.execution_office?.trim() || '—'}</p>
             <p className="text-xs text-[#454042] whitespace-pre-wrap break-words mb-3">
               الملاحظة: {r.last_note || '—'}
             </p>
