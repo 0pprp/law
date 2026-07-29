@@ -189,7 +189,7 @@ export default function EditLawyerPage() {
   async function openFile(att: Attachment) {
     setOpeningId(att.id)
     try {
-      const res = await fetch('/api/admin/lawyer-file-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: att.file_path }) })
+      const res = await fetch('/api/admin/lawyer-file-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileId: att.id, path: att.file_path }) })
       if (!res.ok) throw new Error()
       const { url } = await res.json()
       window.open(url, '_blank', 'noopener,noreferrer')

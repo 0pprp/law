@@ -1,11 +1,11 @@
 /**
- * نقل ملفات Supabase Storage → Cloudflare R2 (مرة واحدة).
+ * نقل ملفات Supabase Storage → Cloudflare R2 (يكمل الناقص فقط — لا يكرر الموجود).
  * لا يحذف من Supabase.
  *
  * تشغيل:
  *   npx tsx --env-file=.env.local scripts/migrate-to-r2.ts
- *   npx tsx --env-file=.env.local scripts/migrate-to-r2.ts --apply-cors
  *   npx tsx --env-file=.env.local scripts/migrate-to-r2.ts --dry-run
+ *   npx tsx --env-file=.env.local scripts/migrate-to-r2.ts --apply-cors
  */
 import { createClient } from '@supabase/supabase-js'
 import {
@@ -20,6 +20,8 @@ type Bucket = (typeof BUCKETS)[number]
 
 const dryRun = process.argv.includes('--dry-run')
 const applyCors = process.argv.includes('--apply-cors')
+const LIST_CONCURRENCY = 12
+const COPY_CONCURRENCY = 8
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -45,6 +47,8 @@ const r2 = new S3Client({
   credentials: { accessKeyId: r2Access, secretAccessKey: r2Secret },
 })
 
+type ListedFile = { name: string; metadata?: { mimetype?: string } }
+
 function r2Key(bucket: Bucket, path: string): string {
   return `${bucket}/${path.replace(/^\/+/, '')}`
 }
@@ -53,26 +57,80 @@ function publicUrl(key: string): string {
   return `${r2Public}/${key.replace(/^\/+/, '')}`
 }
 
-async function listAll(bucket: Bucket, prefix = ''): Promise<{ name: string; id?: string; metadata?: { mimetype?: string } }[]> {
-  const out: { name: string; id?: string; metadata?: { mimetype?: string } }[] = []
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  async function run() {
+    while (next < items.length) {
+      const i = next++
+      results[i] = await worker(items[i], i)
+    }
+  }
+  const n = Math.max(1, Math.min(concurrency, items.length || 1))
+  await Promise.all(Array.from({ length: n }, () => run()))
+  return results
+}
+
+async function listPrefixPage(bucket: Bucket, prefix: string, offset: number, limit: number) {
   const { data, error } = await sb.storage.from(bucket).list(prefix, {
-    limit: 1000,
-    offset: 0,
+    limit,
+    offset,
     sortBy: { column: 'name', order: 'asc' },
   })
   if (error) throw new Error(`${bucket}/${prefix}: ${error.message}`)
+  return data ?? []
+}
 
-  for (const item of data ?? []) {
-    const full = prefix ? `${prefix}/${item.name}` : item.name
-    // مجلدات بدون id غالباً
-    if (!item.id) {
-      const nested = await listAll(bucket, full)
-      out.push(...nested)
-    } else {
-      out.push({ name: full, id: item.id, metadata: item.metadata as { mimetype?: string } | undefined })
+/** سرد متوازي لكل المجلدات داخل الباكت */
+async function listAll(bucket: Bucket): Promise<ListedFile[]> {
+  const files: ListedFile[] = []
+  const folderQueue: string[] = ['']
+  let listedFolders = 0
+
+  while (folderQueue.length) {
+    const batch = folderQueue.splice(0, LIST_CONCURRENCY)
+    const pages = await Promise.all(
+      batch.map(async (prefix) => {
+        const items: { name: string; id?: string; metadata?: { mimetype?: string } }[] = []
+        let offset = 0
+        const limit = 1000
+        for (;;) {
+          const page = await listPrefixPage(bucket, prefix, offset, limit)
+          items.push(...page)
+          if (page.length < limit) break
+          offset += limit
+        }
+        return { prefix, items }
+      }),
+    )
+
+    for (const { prefix, items } of pages) {
+      listedFolders++
+      for (const item of items) {
+        if (!item.name || item.name === '.emptyFolderPlaceholder') continue
+        const full = prefix ? `${prefix}/${item.name}` : item.name
+        // مجلدات غالباً بلا id
+        if (!item.id) {
+          folderQueue.push(full)
+        } else {
+          files.push({
+            name: full,
+            metadata: item.metadata as { mimetype?: string } | undefined,
+          })
+        }
+      }
+    }
+
+    if (listedFolders % 50 === 0 || folderQueue.length === 0) {
+      console.log(`  list ${bucket}: folders=${listedFolders} files=${files.length} queue=${folderQueue.length}`)
     }
   }
-  return out
+
+  return files
 }
 
 async function objectExists(key: string): Promise<boolean> {
@@ -116,7 +174,6 @@ async function rewriteStoredUrls(): Promise<{ scanned: number; updated: number }
   let scanned = 0
   let updated = 0
   const supabaseHost = new URL(url!).host
-  // file_path عادة مسار نسبي وليس URL — نبحث فقط عن قيم تحتوي رابط Supabase
   for (const table of ['debtor_attachments', 'task_attachments', 'lawyer_attachments'] as const) {
     const { data, error } = await sb
       .from(table)
@@ -131,7 +188,6 @@ async function rewriteStoredUrls(): Promise<{ scanned: number; updated: number }
       scanned++
       const raw = String(row.file_path ?? '')
       if (!raw.includes(supabaseHost)) continue
-      // مثال: .../storage/v1/object/public/task-files/path → r2Public/task-files/path
       const m = raw.match(/\/storage\/v1\/object\/(?:public|sign)\/(task-files|debtor-files|lawyer-files)\/([^?]+)/)
       if (!m) continue
       const next = publicUrl(`${m[1]}/${decodeURIComponent(m[2])}`)
@@ -145,7 +201,6 @@ async function rewriteStoredUrls(): Promise<{ scanned: number; updated: number }
     }
   }
 
-  // مسارات جزائية كنص URL نادر
   const { data: details } = await sb
     .from('criminal_debtor_details')
     .select('debtor_id, documents_contract_file_path, petition_file_path')
@@ -171,7 +226,8 @@ async function rewriteStoredUrls(): Promise<{ scanned: number; updated: number }
 async function main() {
   console.log(`\n=== migrate-to-r2 ${dryRun ? '(DRY RUN)' : ''} ===\n`)
   console.log(`R2 bucket: ${r2Bucket}`)
-  console.log(`Public: ${r2Public}\n`)
+  console.log(`Public: ${r2Public}`)
+  console.log(`Concurrency: list=${LIST_CONCURRENCY} copy=${COPY_CONCURRENCY}\n`)
 
   if (applyCors) {
     console.log('Applying CORS...')
@@ -203,15 +259,19 @@ async function main() {
   for (const bucket of BUCKETS) {
     console.log(`Listing ${bucket}...`)
     const files = await listAll(bucket)
-    console.log(`  ${files.length} files`)
-    for (const f of files) {
-      total++
+    console.log(`  ${files.length} files — copying missing only...\n`)
+
+    await mapPool(files, COPY_CONCURRENCY, async (f) => {
       const result = await copyOne(bucket, f.name, f.metadata?.mimetype)
+      total++
       if (result === 'ok') ok++
       else if (result === 'skip') skip++
       else fail++
-      if (total % 50 === 0) console.log(`  progress ${total} (ok=${ok} skip=${skip} fail=${fail})`)
-    }
+      if (total % 50 === 0) {
+        console.log(`  progress ${total}/${files.length} across buckets (ok=${ok} skip=${skip} fail=${fail})`)
+      }
+      return result
+    })
   }
 
   console.log('\nRewriting stored Supabase URLs in DB (if any)...')

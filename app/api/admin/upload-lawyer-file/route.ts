@@ -20,7 +20,12 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error
 
   const callerRole = auth.profile?.role
-  if (callerRole !== 'admin' && callerRole !== 'viewer') {
+  // مدير + مسؤولو الأقسام (مدني/جزائي) — المحاسب لا يدير مستمسكات المحامين
+  if (
+    callerRole !== 'admin'
+    && callerRole !== 'viewer'
+    && callerRole !== 'criminal_legal_manager'
+  ) {
     return NextResponse.json({ error: 'صلاحيات غير كافية' }, { status: 403 })
   }
 

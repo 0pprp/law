@@ -8,6 +8,7 @@ import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireTaskInScope } from '@/lib/section-guard'
 import { deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
+import { relativeStoredPath } from '@/lib/stored-file-url'
 
 export async function DELETE(request: Request) {
   const auth = await getSessionProfile()
@@ -19,7 +20,6 @@ export async function DELETE(request: Request) {
 
   const { fileId, filePath, fileName } = await request.json().catch(() => ({}))
   if (!fileId || !filePath) return safeClientError('fileId and filePath required', 400)
-  if (!isSafeStoragePath(filePath)) return safeClientError('مسار غير صالح', 400)
 
   const admin = createAdminClient()
   const { data: row, error } = await admin
@@ -29,7 +29,10 @@ export async function DELETE(request: Request) {
     .maybeSingle()
 
   if (error) return apiServerError('delete-task-file', error)
-  if (!row || row.file_path !== filePath) return safeClientError('الملف غير موجود', 404)
+  if (!row?.file_path) return safeClientError('الملف غير موجود', 404)
+  if (isSafeStoragePath(filePath) && row.file_path !== filePath) {
+    return safeClientError('الملف غير موجود', 404)
+  }
 
   const scope = sessionCaseScope(auth.profile)
   const gate = await requireTaskInScope(admin, scope, row.task_id)
@@ -39,10 +42,12 @@ export async function DELETE(request: Request) {
   const branchId = (task as { branch_id?: string | null } | null)?.branch_id ?? null
   if (!canStaffWriteBranch(auth.profile, branchId)) return apiForbiddenResponse()
 
+  const rel = relativeStoredPath('task-files', row.file_path)
+  if (!rel) return safeClientError('مسار غير صالح', 400)
+
   try {
-    await deleteFromR2(r2ObjectKey('task-files', row.file_path))
+    await deleteFromR2(r2ObjectKey('task-files', rel))
   } catch (storageErr) {
-    // السابق: const { error: storageErr } = await admin.storage.from('task-files').remove([row.file_path])
     return apiServerError('delete-task-file:storage', storageErr)
   }
 

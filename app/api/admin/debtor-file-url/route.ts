@@ -5,9 +5,7 @@ import { canStaffReadBranch } from '@/lib/staff-branch-access'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireDebtorInScope } from '@/lib/section-guard'
-import { storedFileUrl } from '@/lib/stored-file-url'
-
-const SIGNED_TTL_SEC = 900
+import { canResolveStoredFilePath, storedFileUrl } from '@/lib/stored-file-url'
 
 export async function POST(request: Request) {
   const auth = await requireStaffProfile()
@@ -24,7 +22,10 @@ export async function POST(request: Request) {
   }
 
   if (!fileId && !path) return safeClientError('معرّف أو مسار الملف مطلوب', 400)
-  if (path && !isSafeStoragePath(path)) return safeClientError('مسار غير صالح', 400)
+  // عند وجود fileId نثق بالمعرّف — المسارات المطلقة القديمة (Supabase) تفشل isSafeStoragePath
+  if (!fileId && path && !isSafeStoragePath(path) && !canResolveStoredFilePath('debtor-files', path)) {
+    return safeClientError('مسار غير صالح', 400)
+  }
 
   const admin = createAdminClient()
   let q = admin
@@ -37,7 +38,8 @@ export async function POST(request: Request) {
   if (error) return apiServerError('debtor-file-url', error)
   if (!row?.file_path) return safeClientError('الملف غير موجود', 404)
 
-  if (fileId && path && row.file_path !== path) {
+  // تطابق المسار فقط للمسارات النسبية الآمنة — الروابط المطلقة القديمة قد تختلف شكلياً
+  if (fileId && path && isSafeStoragePath(path) && row.file_path !== path) {
     return safeClientError('الملف غير موجود', 404)
   }
 
@@ -51,12 +53,8 @@ export async function POST(request: Request) {
     return safeClientError('صلاحية غير كافية', 403)
   }
 
-  // السابق (Supabase signed URL) — مُعلّق حتى التأكد من R2:
-  // const { data, error: signErr } = await admin.storage
-  //   .from('debtor-files')
-  //   .createSignedUrl(row.file_path, SIGNED_TTL_SEC)
-  // if (signErr) return apiServerError('debtor-file-url:sign', signErr)
-  // return NextResponse.json({ url: data.signedUrl })
+  const url = storedFileUrl('debtor-files', row.file_path)
+  if (!url) return safeClientError('رابط الملف غير متاح', 404)
 
-  return NextResponse.json({ url: storedFileUrl('debtor-files', row.file_path) })
+  return NextResponse.json({ url })
 }

@@ -8,6 +8,7 @@ import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireLawyerInScope } from '@/lib/section-guard'
 import { deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
+import { relativeStoredPath } from '@/lib/stored-file-url'
 
 export async function DELETE(request: Request) {
   const auth = await getSessionProfile()
@@ -19,7 +20,6 @@ export async function DELETE(request: Request) {
 
   const { fileId, filePath, fileName } = await request.json().catch(() => ({}))
   if (!fileId || !filePath) return safeClientError('fileId and filePath required', 400)
-  if (!isSafeStoragePath(filePath)) return safeClientError('مسار غير صالح', 400)
 
   const admin = createAdminClient()
   const { data: row, error } = await admin
@@ -29,7 +29,10 @@ export async function DELETE(request: Request) {
     .maybeSingle()
 
   if (error) return apiServerError('delete-lawyer-file', error)
-  if (!row || row.file_path !== filePath) return safeClientError('الملف غير موجود', 404)
+  if (!row?.file_path) return safeClientError('الملف غير موجود', 404)
+  if (isSafeStoragePath(filePath) && row.file_path !== filePath) {
+    return safeClientError('الملف غير موجود', 404)
+  }
 
   const scope = sessionCaseScope(auth.profile)
   const gate = await requireLawyerInScope(admin, scope, row.lawyer_id)
@@ -40,10 +43,12 @@ export async function DELETE(request: Request) {
     return apiForbiddenResponse()
   }
 
+  const rel = relativeStoredPath('lawyer-files', row.file_path)
+  if (!rel) return safeClientError('مسار غير صالح', 400)
+
   try {
-    await deleteFromR2(r2ObjectKey('lawyer-files', row.file_path))
+    await deleteFromR2(r2ObjectKey('lawyer-files', rel))
   } catch (storageErr) {
-    // السابق: await admin.storage.from('lawyer-files').remove([row.file_path])
     return apiServerError('delete-lawyer-file:storage', storageErr)
   }
 

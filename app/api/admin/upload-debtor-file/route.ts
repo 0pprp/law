@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { requireMutationStaff, sessionCaseScope } from '@/lib/api-auth'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
+import { apiForbiddenResponse, canEditDebtor } from '@/lib/permissions'
 import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { logActivity } from '@/lib/activity-log'
 import { isPdfFile } from '@/lib/storage-path'
@@ -11,8 +12,9 @@ import { uploadToR2, deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
 const MAX_BYTES = 15 * 1024 * 1024
 
 export async function POST(request: NextRequest) {
-  const auth = await requireMutationStaff()
+  const auth = await requireStaffProfile()
   if (auth.error) return auth.error
+  if (!canEditDebtor(auth.profile?.role)) return apiForbiddenResponse()
 
   const formData = await request.formData()
   const file = formData.get('file')

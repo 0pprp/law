@@ -73,11 +73,11 @@ function findAttachmentForField(
   return null
 }
 
-async function fetchTaskFileUrl(path: string): Promise<string> {
+async function fetchTaskFileUrl(fileId: string, path: string): Promise<string> {
   const res = await fetch('/api/admin/task-file-url', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ fileId, path }),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -88,12 +88,12 @@ async function fetchTaskFileUrl(path: string): Promise<string> {
 }
 
 function OpenFileButton({
-  id,
+  fileId,
   filePath,
   label,
   compact = false,
 }: {
-  id: string
+  fileId: string
   filePath: string
   label: string
   compact?: boolean
@@ -106,7 +106,7 @@ function OpenFileButton({
     setOpening(true)
     setError('')
     try {
-      const url = await fetchTaskFileUrl(filePath)
+      const url = await fetchTaskFileUrl(fileId, filePath)
       window.open(url, '_blank', 'noopener,noreferrer')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'تعذر فتح الملف')
@@ -169,7 +169,7 @@ function CompletionFields({
                   {val} 🗺️
                 </a>
               ) : mediaAtt?.file_path ? (
-                <OpenFileButton id={`${key}-${mediaAtt.id}`} filePath={mediaAtt.file_path} label={String(val)} />
+                <OpenFileButton fileId={mediaAtt.id} filePath={mediaAtt.file_path} label={String(val)} />
               ) : (
                 <span className="font-semibold text-[#231F20] break-all">{String(val)}</span>
               )}
@@ -245,7 +245,7 @@ export default function DebtorTasksHistoryList({
                     att.file_path ? (
                       <OpenFileButton
                         key={att.id}
-                        id={att.id}
+                        fileId={att.id}
                         filePath={att.file_path}
                         label={att.file_name}
                         compact

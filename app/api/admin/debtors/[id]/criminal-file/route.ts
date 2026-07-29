@@ -5,7 +5,6 @@ import { apiForbiddenResponse, canEditDebtor } from '@/lib/permissions'
 import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { logActivity } from '@/lib/activity-log'
 import { requireDebtorInScope } from '@/lib/section-guard'
-import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import {
   buildCriminalFilePath,
@@ -15,7 +14,7 @@ import {
 } from '@/lib/criminal-debtor-files'
 import { fetchCriminalDebtorDetails, upsertCriminalDebtorDetails } from '@/lib/criminal-debtor-details'
 import { uploadToR2, deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
-import { storedFileUrl } from '@/lib/stored-file-url'
+import { canResolveStoredFilePath, relativeStoredPath, storedFileUrl } from '@/lib/stored-file-url'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -94,9 +93,11 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     return apiServerError('criminal-file:db', detailsRes.error, 'فشل حفظ مسار الملف')
   }
 
-  if (oldPath && isSafeStoragePath(oldPath) && oldPath !== newPath) {
-    await deleteFromR2(r2ObjectKey('debtor-files', oldPath)).catch(() => null)
-    // السابق: await admin.storage.from('debtor-files').remove([oldPath]).catch(() => null)
+  if (oldPath) {
+    const oldRel = relativeStoredPath('debtor-files', oldPath)
+    if (oldRel && oldRel !== newPath) {
+      await deleteFromR2(r2ObjectKey('debtor-files', oldRel)).catch(() => null)
+    }
   }
 
   await logActivity({
@@ -138,18 +139,12 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       ? details?.petition_file_path
       : details?.documents_contract_file_path
 
-  if (!filePath || !isSafeStoragePath(filePath)) {
+  if (!filePath || !canResolveStoredFilePath('debtor-files', filePath)) {
     return NextResponse.json({ error: 'الملف غير موجود', missing: true }, { status: 404 })
   }
 
-  // السابق (Supabase signed URL) — مُعلّق حتى التأكد من R2:
-  // const { data, error } = await admin.storage
-  //   .from('debtor-files')
-  //   .createSignedUrl(filePath, 60 * 10)
-  // if (error || !data?.signedUrl) {
-  //   return apiServerError('criminal-file:signed', error, 'تعذر إنشاء رابط الملف')
-  // }
-  // return NextResponse.json({ url: data.signedUrl, filePath })
+  const url = storedFileUrl('debtor-files', filePath)
+  if (!url) return NextResponse.json({ error: 'الملف غير موجود', missing: true }, { status: 404 })
 
-  return NextResponse.json({ url: storedFileUrl('debtor-files', filePath), filePath })
+  return NextResponse.json({ url, filePath })
 }
