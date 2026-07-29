@@ -117,7 +117,7 @@ export default function DebtorsPage() {
   const [moveModalOpen, setMoveModalOpen] = useState(false)
   const [filterSpecialStatus, setFilterSpecialStatus] = useState('')
   const [statusFilterOptions, setStatusFilterOptions] = useState<{ value: string; label: string }[]>([
-    { value: '', label: 'كل الحالات الخاصة' },
+    { value: '', label: 'كل الأسماء التي تحتاج مراقبة' },
     { value: '__none__', label: 'بدون صفة' },
   ])
 
@@ -130,7 +130,7 @@ export default function DebtorsPage() {
   useEffect(() => {
     if (!branchId && !viewAllBranches) {
       setStatusFilterOptions([
-        { value: '', label: 'كل الحالات الخاصة' },
+        { value: '', label: 'كل الأسماء التي تحتاج مراقبة' },
         { value: '__none__', label: 'بدون صفة' },
       ])
       return
@@ -143,7 +143,7 @@ export default function DebtorsPage() {
       .then(json => {
         const rows = (json.statuses ?? []) as { id: string; ids?: string[]; name: string; is_active?: boolean }[]
         setStatusFilterOptions([
-          { value: '', label: 'كل الحالات الخاصة' },
+          { value: '', label: 'كل الأسماء التي تحتاج مراقبة' },
           { value: '__none__', label: 'بدون صفة' },
           // عند «كل الفروع» الصفة لها نسخة بكل فرع — الفلترة على كل النسخ
           ...rows.filter(s => s.is_active !== false).map(s => ({
@@ -154,7 +154,7 @@ export default function DebtorsPage() {
       })
       .catch(() => {
         setStatusFilterOptions([
-          { value: '', label: 'كل الحالات الخاصة' },
+          { value: '', label: 'كل الأسماء التي تحتاج مراقبة' },
           { value: '__none__', label: 'بدون صفة' },
         ])
       })
@@ -405,9 +405,9 @@ export default function DebtorsPage() {
             value={filterSpecialStatus}
             onChange={setFilterSpecialStatus}
             options={statusFilterOptions}
-            placeholder="كل الحالات الخاصة"
-            fieldLabel="الحالة الخاصة"
-            headerTitle="تصفية حسب الحالة الخاصة"
+            placeholder="كل الأسماء التي تحتاج مراقبة"
+            fieldLabel="الأسماء التي تحتاج مراقبة"
+            headerTitle="تصفية حسب الأسماء التي تحتاج مراقبة"
             searchable
           />
         </div>
@@ -462,7 +462,7 @@ export default function DebtorsPage() {
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH>
-                    <TH>الحالة الخاصة</TH>
+                    <TH>الأسماء التي تحتاج مراقبة</TH>
                     <TH>🏛 المحكمة</TH>
                     <TH>⚖️ دائرة التنفيذ</TH>
                     <TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
@@ -513,7 +513,7 @@ export default function DebtorsPage() {
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH>
-                    <TH>الحالة الخاصة</TH>
+                    <TH>الأسماء التي تحتاج مراقبة</TH>
                     <TH>🏛 المحكمة</TH>
                     <TH>⚖️ دائرة التنفيذ</TH>
                     <TH>رقم الهوية</TH>

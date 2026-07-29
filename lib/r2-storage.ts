@@ -5,10 +5,13 @@
 import {
   S3Client,
   PutObjectCommand,
+  HeadObjectCommand,
+  GetObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   PutBucketCorsCommand,
 } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { getR2Url } from '@/lib/r2-url'
 
 export { getR2Url, getR2UrlFor, r2ObjectKey, getR2PublicBase } from '@/lib/r2-url'
@@ -31,6 +34,10 @@ function getR2Client(): S3Client {
   cachedClient = new S3Client({
     region: 'auto',
     endpoint: requireEnv('R2_ENDPOINT'),
+    // الإصدارات الحديثة من AWS SDK تضيف CRC32 لقيمة فارغة عند توقيع PUT بلا Body.
+    // هذا يجعل R2 يرفض ملف المتصفح الفعلي ويظهر كخطأ CORS مضلل.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
     credentials: {
       accessKeyId: requireEnv('R2_ACCESS_KEY_ID'),
       secretAccessKey: requireEnv('R2_SECRET_ACCESS_KEY'),
@@ -65,6 +72,67 @@ export async function uploadToR2(
     }),
   )
   return getR2Url(Key)
+}
+
+/** رابط PUT مؤقت يرفع المتصفح من خلاله مباشرة إلى R2، متجاوزاً حد جسم طلب الخادم. */
+export async function createR2PresignedUploadUrl(
+  key: string,
+  contentType: string,
+  expiresIn = 15 * 60,
+): Promise<string> {
+  const Key = key.replace(/^\/+/, '')
+  return getSignedUrl(
+    getR2Client(),
+    new PutObjectCommand({
+      Bucket: getBucket(),
+      Key,
+      ContentType: contentType || 'application/octet-stream',
+    }),
+    { expiresIn },
+  )
+}
+
+/** التحقق من وصول الملف إلى R2 قبل حفظ مساره في قاعدة البيانات. */
+export async function getR2ObjectMetadata(
+  key: string,
+): Promise<{ size: number; contentType: string | null } | null> {
+  const Key = key.replace(/^\/+/, '')
+  try {
+    const result = await getR2Client().send(
+      new HeadObjectCommand({ Bucket: getBucket(), Key }),
+    )
+    return {
+      size: Number(result.ContentLength ?? 0),
+      contentType: result.ContentType ?? null,
+    }
+  } catch {
+    return null
+  }
+}
+
+/** يتحقق من توقيع PDF (%PDF) دون تنزيل الملف كاملاً. */
+export async function isR2PdfObject(key: string): Promise<boolean> {
+  const Key = key.replace(/^\/+/, '')
+  try {
+    const result = await getR2Client().send(
+      new GetObjectCommand({
+        Bucket: getBucket(),
+        Key,
+        Range: 'bytes=0-3',
+      }),
+    )
+    if (!result.Body) return false
+    const bytes = await result.Body.transformToByteArray()
+    return (
+      bytes.length >= 4
+      && bytes[0] === 0x25
+      && bytes[1] === 0x50
+      && bytes[2] === 0x44
+      && bytes[3] === 0x46
+    )
+  } catch {
+    return false
+  }
 }
 
 /** يحذف ملف واحد من R2 */
@@ -105,7 +173,11 @@ export async function applyR2CorsPolicy(): Promise<void> {
       CORSConfiguration: {
         CORSRules: [
           {
-            AllowedOrigins: ['https://qalatlaw.com', 'http://localhost:3000'],
+            AllowedOrigins: [
+              'https://qalatlaw.com',
+              'https://www.qalatlaw.com',
+              'http://localhost:3000',
+            ],
             AllowedMethods: ['GET', 'PUT', 'POST', 'DELETE'],
             AllowedHeaders: ['*'],
             MaxAgeSeconds: 3600,

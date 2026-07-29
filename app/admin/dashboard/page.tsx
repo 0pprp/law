@@ -190,7 +190,7 @@ export default function DashboardPage() {
       return
     }
 
-    const cacheKey = `dashboard:v8:${branchId ?? 'all'}:${listId ?? 'all'}:${ct ?? 'both'}`
+    const cacheKey = `dashboard:v9:${branchId ?? 'all'}:${listId ?? 'all'}:${ct ?? 'both'}`
     const cached = cacheGet<DashboardCache>(cacheKey)
     if (cached) {
       setCivilStages(cached.civilStages)

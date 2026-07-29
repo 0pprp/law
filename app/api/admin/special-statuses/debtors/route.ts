@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
       special_status:special_statuses(id, name, color)
     `)
     .neq('case_status', 'closed')
+    .not('special_status_id', 'is', null)
     .order('full_name')
 
   if (!viewAll && branchId) q = q.eq('branch_id', branchId)

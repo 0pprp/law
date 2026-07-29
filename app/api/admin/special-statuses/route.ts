@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
   const admin = createAdminClient()
   let q = admin
     .from('special_statuses')
-    .select('id, branch_id, name, color, sort_order, is_active, created_at, updated_at')
+    .select('id, branch_id, name, color, sort_order, is_active, created_at')
     .order('sort_order', { ascending: true })
     .order('name', { ascending: true })
 
@@ -156,7 +156,7 @@ export async function POST(request: NextRequest) {
   await logActivity({
     action: 'create_special_status',
     entity_type: 'special_status',
-    description: `إضافة صفة خاصة: ${name}`,
+    description: `إضافة للأسماء التي تحتاج مراقبة: ${name}`,
     metadata: { name, color, branches: branchIds.length },
   }, auth.supabase)
 
@@ -223,7 +223,7 @@ export async function PATCH(request: NextRequest) {
     action: 'update_special_status',
     entity_type: 'special_status',
     entity_id: id,
-    description: `تعديل صفة خاصة: ${row.name}`,
+    description: `تعديل الأسماء التي تحتاج مراقبة: ${row.name}`,
     metadata: { ...patch, branches: targetIds.length },
   }, auth.supabase)
 
@@ -268,7 +268,7 @@ export async function DELETE(request: NextRequest) {
     action: 'delete_special_status',
     entity_type: 'special_status',
     entity_id: id,
-    description: `حذف صفة خاصة: ${row.name}`,
+    description: `حذف من الأسماء التي تحتاج مراقبة: ${row.name}`,
     metadata: { branches: targetIds.length },
   }, auth.supabase)
 

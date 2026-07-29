@@ -4,12 +4,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useAdminRole } from '@/context/admin-role'
-import { canAssignTasks, isAdmin, isLegalManager } from '@/lib/permissions'
+import { canAssignTasks, canManageSpecialStatuses, isAdmin, isLegalManager } from '@/lib/permissions'
 import { fmtDate } from '@/lib/utils'
 import { CASE_TYPE_LABELS } from '@/lib/case-type'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import BranchListBox from '@/components/BranchListBox'
 import SpecialStatusBadge from '@/components/SpecialStatusBadge'
+import MoveToMonitoringModal from '@/components/MoveToMonitoringModal'
 import {
   fetchAwaitingAssignmentBranchSummaries,
   fetchAwaitingAssignmentDebtors,
@@ -120,7 +121,7 @@ function DebtorRowsTable({
   rows,
   allowNote,
   allowAssign,
-  allowMark,
+  allowSelect,
   noteMissing,
   onNote,
   onRemoved,
@@ -131,7 +132,7 @@ function DebtorRowsTable({
   rows: AwaitingAssignmentDebtor[]
   allowNote: boolean
   allowAssign: boolean
-  allowMark: boolean
+  allowSelect: boolean
   noteMissing: boolean
   onNote: (r: AwaitingAssignmentDebtor) => void
   onRemoved: (id: string) => void
@@ -148,8 +149,8 @@ function DebtorRowsTable({
         <table className="w-full text-sm min-w-[640px]">
           <thead>
             <tr className="text-right text-xs text-[#767676] border-b border-[rgba(118,118,118,0.1)]">
-              {allowMark && (
-                <th className="px-3 py-2.5 w-14 text-center font-semibold text-violet-700">تحديد</th>
+              {allowSelect && (
+                <th className="px-3 py-2.5 w-14 text-center font-semibold text-[#1D6365]">تحديد</th>
               )}
               <th className="px-4 py-2.5 font-semibold">الاسم</th>
               <th className="px-4 py-2.5 font-semibold">نوع الدعوى</th>
@@ -160,8 +161,8 @@ function DebtorRowsTable({
               <th className="px-4 py-2.5 font-semibold">الملاحظة</th>
               <th className="px-4 py-2.5 font-semibold text-center">الإجراءات</th>
             </tr>
-            {allowMark && (
-              <tr className="bg-violet-50/40 border-b border-violet-100">
+            {allowSelect && (
+              <tr className="bg-[#2C8780]/5 border-b border-[#2C8780]/15">
                 <th className="px-3 py-2 text-center">
                   <input
                     type="checkbox"
@@ -171,11 +172,11 @@ function DebtorRowsTable({
                     }}
                     onChange={onToggleAll}
                     aria-label="تحديد الكل"
-                    className="accent-violet-600 w-5 h-5 cursor-pointer"
+                    className="accent-[#2C8780] w-5 h-5 cursor-pointer"
                   />
                 </th>
-                <th colSpan={8} className="px-4 py-2 text-right text-[11px] font-medium text-violet-800">
-                  تحديد الكل المعروض — ثم «نقل للأسماء المكررة» أعلى الجدول
+                <th colSpan={8} className="px-4 py-2 text-right text-[11px] font-medium text-[#1D6365]">
+                  تحديد الكل المعروض — ثم التحويل إلى الأسماء التي تحتاج مراقبة
                 </th>
               </tr>
             )}
@@ -186,9 +187,9 @@ function DebtorRowsTable({
               return (
               <tr
                 key={r.id}
-                className={`transition-colors ${checked ? 'bg-violet-50/70' : 'hover:bg-[#FAFAFA]'}`}
+                className={`transition-colors ${checked ? 'bg-[#2C8780]/5' : 'hover:bg-[#FAFAFA]'}`}
               >
-                {allowMark && (
+                {allowSelect && (
                   <td className="px-3 py-3 text-center align-middle">
                     <input
                       type="checkbox"
@@ -196,7 +197,7 @@ function DebtorRowsTable({
                       onChange={() => onToggle(r.id)}
                       onClick={e => e.stopPropagation()}
                       aria-label={`تحديد ${r.full_name}`}
-                      className="accent-violet-600 w-5 h-5 cursor-pointer"
+                      className="accent-[#2C8780] w-5 h-5 cursor-pointer"
                     />
                   </td>
                 )}
@@ -263,8 +264,8 @@ function DebtorRowsTable({
       </div>
 
       <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
-        {allowMark && rows.length > 0 && (
-          <div className="px-4 py-2.5 flex items-center gap-2 border-b border-[rgba(118,118,118,0.08)] bg-violet-50/50">
+        {allowSelect && rows.length > 0 && (
+          <div className="px-4 py-2.5 flex items-center gap-2 border-b border-[rgba(118,118,118,0.08)] bg-[#2C8780]/5">
             <input
               type="checkbox"
               checked={allSelected}
@@ -273,7 +274,7 @@ function DebtorRowsTable({
               }}
               onChange={onToggleAll}
               aria-label="تحديد الكل"
-              className="accent-violet-600 w-4 h-4 cursor-pointer"
+              className="accent-[#2C8780] w-4 h-4 cursor-pointer"
             />
             <span className="text-xs text-[#767676] font-semibold">تحديد الكل ({rows.length})</span>
           </div>
@@ -281,16 +282,16 @@ function DebtorRowsTable({
         {rows.map(r => {
           const checked = selectedIds.includes(r.id)
           return (
-          <div key={r.id} className={`p-4 ${checked ? 'bg-violet-50/70' : ''}`}>
+          <div key={r.id} className={`p-4 ${checked ? 'bg-[#2C8780]/5' : ''}`}>
             <div className="flex items-start justify-between gap-2 mb-1">
               <div className="flex items-start gap-2.5 min-w-0">
-                {allowMark && (
+                {allowSelect && (
                   <input
                     type="checkbox"
                     checked={checked}
                     onChange={() => onToggle(r.id)}
                     aria-label={`تحديد ${r.full_name}`}
-                    className="accent-violet-600 w-5 h-5 mt-0.5 shrink-0 cursor-pointer"
+                    className="accent-[#2C8780] w-5 h-5 mt-0.5 shrink-0 cursor-pointer"
                   />
                 )}
                 <Link href={`/admin/debtors/${r.id}/account`} className="font-semibold text-[#231F20]">
@@ -346,7 +347,7 @@ function BranchAwaitingBox({
   initialListId,
   allowNote,
   allowAssign,
-  allowMark,
+  allowMonitor,
   onAssigned,
   onNote,
   notePatch,
@@ -357,7 +358,7 @@ function BranchAwaitingBox({
   initialListId: string
   allowNote: boolean
   allowAssign: boolean
-  allowMark: boolean
+  allowMonitor: boolean
   onAssigned?: () => void
   onNote: (r: AwaitingAssignmentDebtor) => void
   notePatch?: { id: string; note: string | null } | null
@@ -370,8 +371,8 @@ function BranchAwaitingBox({
   const [noteMissing, setNoteMissing] = useState(false)
   const [error, setError] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [marking, setMarking] = useState(false)
-  const [markError, setMarkError] = useState('')
+  const [monitorModalOpen, setMonitorModalOpen] = useState(false)
+  const [monitorError, setMonitorError] = useState('')
 
   useEffect(() => {
     setListId(initialListId)
@@ -437,51 +438,6 @@ function BranchAwaitingBox({
     else setSelectedIds(rows.map(r => r.id))
   }
 
-  async function markSelected() {
-    const ids = [...selectedIds]
-    if (!ids.length || marking) return
-    setMarking(true)
-    setMarkError('')
-    try {
-      const res = await fetch('/api/admin/debtors/mark-duplicate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ debtorIds: ids }),
-      })
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        setMarkError(typeof json.error === 'string' ? json.error : 'فشل نقل الأسماء المكررة')
-        setMarking(false)
-        return
-      }
-      const updatedIds = new Set(
-        Array.isArray(json.updatedIds) ? json.updatedIds.map(String) : [],
-      )
-      if (!updatedIds.size) {
-        setMarkError(
-          Array.isArray(json.skippedIds) && json.skippedIds.length
-            ? 'لم يُنقل أي اسم — ربما خارج نطاق القسم أو مُحوَّل مسبقاً'
-            : 'لم يُنقل أي اسم',
-        )
-        setMarking(false)
-        return
-      }
-      preserveScrollDuring(() => {
-        setRows(prev => prev.filter(r => !updatedIds.has(r.id)))
-        setTotal(prev => Math.max(0, prev - updatedIds.size))
-        setSelectedIds([])
-      })
-      onAssigned?.()
-      if (Array.isArray(json.skippedIds) && json.skippedIds.length) {
-        setMarkError(`نُقل ${updatedIds.size} — وتُخطي ${json.skippedIds.length}`)
-      }
-    } catch {
-      setMarkError('فشل الاتصال')
-    } finally {
-      setMarking(false)
-    }
-  }
-
   // لا تعرض البوكس إن صارت القائمة فارغة بعد الفلتر (ما عدا أثناء التحميل الأول)
   if (!loading && total === 0 && !search && !listId) return null
   if (!loading && total === 0 && !search && listId) {
@@ -527,31 +483,36 @@ function BranchAwaitingBox({
         </div>
       ) : (
         <>
-          {allowMark && (
-            <div className="mx-4 mt-3 mb-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-violet-200 bg-violet-50/60 px-3 py-2.5">
+          {allowMonitor && (
+            <div className="mx-4 mt-3 mb-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#2C8780]/25 bg-[#2C8780]/8 px-3 py-2.5">
               <p className="text-xs text-[#454042] font-medium">
                 {selectedIds.length > 0
-                  ? `محدَّد: ${selectedIds.length} — جاهز للنقل`
-                  : 'حدّد اسماً أو أكثر من عمود ✓ ثم انقل'}
+                  ? `محدَّد: ${selectedIds.length} — جاهز للتحويل`
+                  : 'حدّد اسماً أو أكثر ثم حوّل للمراقبة'}
               </p>
               <button
                 type="button"
-                onClick={() => void markSelected()}
-                disabled={marking || selectedIds.length === 0}
-                className="text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-2 rounded-lg transition-colors"
+                onClick={() => {
+                  setMonitorError('')
+                  setMonitorModalOpen(true)
+                }}
+                disabled={selectedIds.length === 0}
+                className="text-xs font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-2 rounded-lg transition-colors"
+                style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
               >
-                {marking ? 'جارٍ النقل...' : `نقل للأسماء المكررة${selectedIds.length ? ` (${selectedIds.length})` : ''}`}
+                تحويل إلى تبويب الأسماء التي تحتاج مراقبة
+                {selectedIds.length ? ` (${selectedIds.length})` : ''}
               </button>
             </div>
           )}
-          {markError && (
-            <div className="mx-4 mt-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{markError}</div>
+          {monitorError && (
+            <div className="mx-4 mt-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{monitorError}</div>
           )}
           <DebtorRowsTable
             rows={rows}
             allowNote={allowNote}
             allowAssign={allowAssign}
-            allowMark={allowMark}
+            allowSelect={allowMonitor}
             noteMissing={noteMissing}
             onNote={onNote}
             selectedIds={selectedIds}
@@ -579,6 +540,24 @@ function BranchAwaitingBox({
               </button>
             )}
           </div>
+          {allowMonitor && (
+            <MoveToMonitoringModal
+              open={monitorModalOpen}
+              branchId={summary.branchId}
+              debtorIds={selectedIds}
+              onClose={() => setMonitorModalOpen(false)}
+              onSuccess={(debtorIds) => {
+                const moved = new Set(debtorIds)
+                preserveScrollDuring(() => {
+                  setRows(prev => prev.filter(row => !moved.has(row.id)))
+                  setTotal(prev => Math.max(0, prev - moved.size))
+                  setSelectedIds([])
+                  setMonitorError('')
+                })
+                onAssigned?.()
+              }}
+            />
+          )}
         </>
       )}
     </BranchListBox>
@@ -597,7 +576,7 @@ export default function AwaitingAssignmentCard({
   const role = useAdminRole()
   const allowNote = isAdmin(role) || isLegalManager(role)
   const allowAssign = canAssignTasks(role)
-  const allowMark = canAssignTasks(role)
+  const allowMonitor = canManageSpecialStatuses(role)
   const { caseTypeFilter: roleCaseType } = useCaseScope()
   const caseTypeFilter = caseType !== undefined ? caseType : roleCaseType
 
@@ -733,7 +712,7 @@ export default function AwaitingAssignmentCard({
               initialListId={initialListForBox}
               allowNote={allowNote}
               allowAssign={allowAssign}
-              allowMark={allowMark}
+              allowMonitor={allowMonitor}
               onAssigned={() => {
                 onAssigned?.()
                 preserveScrollDuring(() => {

@@ -95,7 +95,7 @@ async function listAll(bucket: Bucket): Promise<ListedFile[]> {
     const batch = folderQueue.splice(0, LIST_CONCURRENCY)
     const pages = await Promise.all(
       batch.map(async (prefix) => {
-        const items: { name: string; id?: string; metadata?: { mimetype?: string } }[] = []
+        const items: { name: string; id?: string | null; metadata?: { mimetype?: string } | null }[] = []
         let offset = 0
         const limit = 1000
         for (;;) {

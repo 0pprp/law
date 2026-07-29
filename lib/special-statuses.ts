@@ -1,4 +1,4 @@
-/** الحالات الخاصة — صفات المدينين (special_statuses) */
+/** الأسماء التي تحتاج مراقبة — صفات المدينين (special_statuses) */
 
 export type SpecialStatusColor = 'red' | 'yellow' | 'green' | 'purple' | 'blue' | 'gray'
 

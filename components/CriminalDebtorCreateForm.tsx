@@ -21,6 +21,7 @@ import {
   type CriminalDetailsFormState,
 } from '@/components/CriminalDebtorFields'
 import { BackButton } from '@/components/ui/back-button'
+import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
 
 type Props = {
   readOnly?: boolean
@@ -46,7 +47,6 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
   const [fullName, setFullName] = useState('')
   const [criminal, setCriminal] = useState<CriminalDetailsFormState>(EMPTY_CRIMINAL_DETAILS)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
-  const [petitionFile, setPetitionFile] = useState<File | null>(null)
   const submitLock = useRef(false)
 
   const branchOk = Boolean(branchId && branchName && !isMainBranchName(branchName))
@@ -55,48 +55,21 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
     setCriminal(prev => ({ ...prev, [field]: value }))
   }
 
-  function pickPdf(
-    e: React.ChangeEvent<HTMLInputElement>,
-    setFile: (f: File | null) => void,
-  ) {
+  function pickPdf(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null
     if (!file) {
-      setFile(null)
+      setPdfFile(null)
       return
     }
     const ext = (file.name.split('.').pop() || '').toLowerCase()
     if (file.type !== 'application/pdf' || ext !== 'pdf') {
       setError('يجب أن يكون الملف بصيغة PDF فقط')
-      setFile(null)
+      setPdfFile(null)
       e.target.value = ''
       return
     }
     setError('')
-    setFile(file)
-  }
-
-  async function uploadCriminalPdf(debtorId: string, file: File, kind: 'documents' | 'petition') {
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('kind', kind)
-    const up = await fetch(`/api/admin/debtors/${debtorId}/criminal-file`, {
-      method: 'POST',
-      body: fd,
-    })
-    const upJson = await up.json().catch(() => ({}))
-    if (!up.ok) {
-      return typeof upJson.error === 'string' ? upJson.error : 'فشل رفع الملف'
-    }
-    return null
-  }
-
-  async function rollbackDebtor(id: string): Promise<boolean> {
-    try {
-      const res = await fetch(`/api/admin/debtors/${id}`, { method: 'DELETE' })
-      return res.ok
-    } catch {
-      return false
-    }
+    setPdfFile(file)
   }
 
   async function handleSubmit(e: { preventDefault(): void }) {
@@ -148,32 +121,11 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
       createdId = String(json.id)
 
       if (pdfFile) {
-        setUploadProgress('جاري رفع المستمسكات والعقد…')
-        const err = await uploadCriminalPdf(createdId, pdfFile, 'documents')
-        if (err) {
-          const rolled = await rollbackDebtor(createdId)
-          setError(
-            rolled
-              ? `فشل رفع المستمسكات: ${err}`
-              : `فشل رفع المستمسكات: ${err} — وتعذّر التراجع عن المدين؛ احذفه يدوياً إن لزم`,
-          )
-          setUploadProgress('')
-          setSaving(false)
-          submitLock.current = false
-          return
-        }
-      }
-
-      if (petitionFile) {
-        setUploadProgress('جاري رفع عريضة الدعوى…')
-        const err = await uploadCriminalPdf(createdId, petitionFile, 'petition')
-        if (err) {
-          const rolled = await rollbackDebtor(createdId)
-          setError(
-            rolled
-              ? `فشل رفع عريضة الدعوى: ${err}`
-              : `فشل رفع عريضة الدعوى: ${err} — وتعذّر التراجع عن المدين؛ احذفه يدوياً إن لزم`,
-          )
+        setUploadProgress('جاري رفع ملف المدين…')
+        try {
+          await uploadDebtorPdfFile(createdId, pdfFile)
+        } catch (uploadError) {
+          setError(`تم إنشاء المدين لكن فشل رفع الملف: ${uploadError instanceof Error ? uploadError.message : 'خطأ غير معروف'}`)
           setUploadProgress('')
           setSaving(false)
           submitLock.current = false
@@ -185,7 +137,6 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
       setUploadProgress('')
       router.push(`/admin/debtors/${createdId}/account`)
     } catch {
-      if (createdId) await rollbackDebtor(createdId)
       setError('فشل إنشاء المدين')
       setSaving(false)
       submitLock.current = false
@@ -248,63 +199,39 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
               form={criminal}
               onChange={setCriminalField}
               disabled={readOnly}
-              documentsSlot={
-                <>
-                  <FormField label="المستمسكات والعقد" hint="اختياري — PDF واحد فقط">
-                    <label
-                      className={cn(
-                        'flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed cursor-pointer transition-all',
-                        pdfFile
-                          ? 'border-[#2C8780]/40 bg-[#2C8780]/5'
-                          : 'border-[rgba(118,118,118,0.2)] bg-[#FAFAFA] hover:border-[#2C8780]/35',
-                      )}
-                    >
-                      <input
-                        type="file"
-                        accept="application/pdf,.pdf"
-                        onChange={e => pickPdf(e, setPdfFile)}
-                        className="hidden"
-                        disabled={readOnly}
-                      />
-                      {pdfFile ? (
-                        <>
-                          <p className="text-sm font-bold text-[#2C8780]">{pdfFile.name}</p>
-                          <p className="text-xs text-[#767676]">{(pdfFile.size / 1024).toFixed(0)} KB</p>
-                        </>
-                      ) : (
-                        <p className="text-sm font-bold text-[#231F20]">رفع PDF</p>
-                      )}
-                    </label>
-                  </FormField>
-                  <FormField label="عريضة الدعوى" hint="اختياري — PDF واحد فقط">
-                    <label
-                      className={cn(
-                        'flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed cursor-pointer transition-all',
-                        petitionFile
-                          ? 'border-[#2C8780]/40 bg-[#2C8780]/5'
-                          : 'border-[rgba(118,118,118,0.2)] bg-[#FAFAFA] hover:border-[#2C8780]/35',
-                      )}
-                    >
-                      <input
-                        type="file"
-                        accept="application/pdf,.pdf"
-                        onChange={e => pickPdf(e, setPetitionFile)}
-                        className="hidden"
-                        disabled={readOnly}
-                      />
-                      {petitionFile ? (
-                        <>
-                          <p className="text-sm font-bold text-[#2C8780]">{petitionFile.name}</p>
-                          <p className="text-xs text-[#767676]">{(petitionFile.size / 1024).toFixed(0)} KB</p>
-                        </>
-                      ) : (
-                        <p className="text-sm font-bold text-[#231F20]">رفع عريضة الدعوى (PDF)</p>
-                      )}
-                    </label>
-                  </FormField>
-                </>
-              }
             />
+          </FormFlowStep>
+
+          <FormFlowStep step={3} title="ملف المدين" subtitle="يظهر لاحقاً في تبويب المستمسكات" isLast>
+            <FormField label="ملف PDF" hint="اختياري — PDF فقط">
+              <label
+                className={cn(
+                  'flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed cursor-pointer transition-all',
+                  pdfFile
+                    ? 'border-[#2C8780]/40 bg-[#2C8780]/5'
+                    : 'border-[rgba(118,118,118,0.2)] bg-[#FAFAFA] hover:border-[#2C8780]/35',
+                )}
+              >
+                <input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  onChange={pickPdf}
+                  className="hidden"
+                  disabled={readOnly}
+                />
+                {pdfFile ? (
+                  <>
+                    <p className="text-sm font-bold text-[#2C8780]">{pdfFile.name}</p>
+                    <p className="text-xs text-[#767676]">{(pdfFile.size / 1024).toFixed(0)} KB — اضغط لتغيير الملف</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-bold text-[#231F20]">اسحب الملف أو اضغط للرفع</p>
+                    <p className="text-xs text-[#767676]">PDF فقط</p>
+                  </>
+                )}
+              </label>
+            </FormField>
           </FormFlowStep>
         </FormFlow>
 

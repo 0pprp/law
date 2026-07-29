@@ -114,18 +114,91 @@ function StatusModal({
   )
 }
 
+function DebtorNoteModal({
+  debtor,
+  onClose,
+  onSaved,
+}: {
+  debtor: SpecialStatusDebtor
+  onClose: () => void
+  onSaved: (lastNote: string) => void
+}) {
+  const [text, setText] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function save() {
+    const note = text.trim()
+    if (!note || saving) return
+    setSaving(true)
+    setError('')
+    try {
+      const res = await fetch('/api/admin/debtors/monitoring-note', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ debtorId: debtor.id, note }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error ?? 'فشل حفظ الملاحظة')
+      onSaved(typeof json.lastNote === 'string' ? json.lastNote : note)
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'فشل حفظ الملاحظة')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 p-4" dir="rtl">
+      <div className="w-full max-w-md space-y-4 rounded-2xl bg-white p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-black text-[#231F20]">إضافة ملاحظة</h3>
+            <p className="mt-1 text-xs text-[#767676]">{debtor.full_name}</p>
+          </div>
+          <button type="button" onClick={onClose} disabled={saving} className="text-xl leading-none text-[#767676] disabled:opacity-50">×</button>
+        </div>
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          rows={5}
+          maxLength={2000}
+          autoFocus
+          placeholder="اكتب ملاحظة المتابعة..."
+          className="w-full resize-none rounded-xl border border-[rgba(118,118,118,0.2)] px-3 py-2.5 text-sm focus:border-[#2C8780] focus:outline-none"
+        />
+        {error && <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={saving} className="rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50">إلغاء</button>
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving || !text.trim()}
+            className="rounded-xl bg-[#2C8780] px-4 py-2 text-sm font-bold text-white hover:bg-[#1D6365] disabled:opacity-50"
+          >
+            {saving ? 'جارٍ الحفظ...' : 'حفظ الملاحظة'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DebtorTable({
   rows,
   selected,
   onToggle,
   onToggleAll,
   showBranch,
+  onAddNote,
 }: {
   rows: SpecialStatusDebtor[]
   selected: Set<string>
   onToggle: (id: string) => void
   onToggleAll: () => void
   showBranch: boolean
+  onAddNote: (debtor: SpecialStatusDebtor) => void
 }) {
   const allOn = rows.length > 0 && rows.every(r => selected.has(r.id))
   if (!rows.length) {
@@ -145,6 +218,7 @@ function DebtorTable({
             <th className="px-3 py-2.5 text-right font-semibold">القائمة</th>
             <th className="px-3 py-2.5 text-right font-semibold">المحكمة</th>
             <th className="px-3 py-2.5 text-right font-semibold">آخر ملاحظة</th>
+            <th className="px-3 py-2.5 text-center font-semibold">الإجراء</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[rgba(118,118,118,0.08)]">
@@ -168,6 +242,15 @@ function DebtorTable({
               <td className="px-3 py-3 text-xs text-[#767676]">{r.branch_list_name ?? '—'}</td>
               <td className="px-3 py-3 text-xs text-[#767676]">{r.court_name ?? '—'}</td>
               <td className="px-3 py-3 text-xs text-[#454042] max-w-[14rem] truncate">{r.last_note || '—'}</td>
+              <td className="px-3 py-3 text-center">
+                <button
+                  type="button"
+                  onClick={() => onAddNote(r)}
+                  className="whitespace-nowrap rounded-lg border border-[#2C8780]/30 bg-[#2C8780]/5 px-3 py-1.5 text-xs font-bold text-[#1D6365] hover:bg-[#2C8780]/10"
+                >
+                  + إضافة ملاحظة
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -195,6 +278,8 @@ export default function SpecialStatusesPage() {
   const [editingStatus, setEditingStatus] = useState<SpecialStatus | null>(null)
   const [modalError, setModalError] = useState('')
   const [modalSaving, setModalSaving] = useState(false)
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
+  const [noteDebtor, setNoteDebtor] = useState<SpecialStatusDebtor | null>(null)
 
   const load = useCallback(async () => {
     if (!branchId && !viewAllBranches) {
@@ -221,6 +306,7 @@ export default function SpecialStatusesPage() {
       setStatuses(stJson.statuses ?? [])
       setDebtors(dJson.debtors ?? [])
       setSelected(new Set())
+      setExpandedKey(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'فشل التحميل')
       setStatuses([])
@@ -245,18 +331,14 @@ export default function SpecialStatusesPage() {
 
   const debtorsByStatus = useMemo(() => {
     const map = new Map<string, SpecialStatusDebtor[]>()
-    const unassigned: SpecialStatusDebtor[] = []
     for (const d of debtors) {
-      if (!d.special_status_id) {
-        unassigned.push(d)
-        continue
-      }
+      if (!d.special_status_id) continue
       const key = viewAllBranches ? (d.special_status_name ?? '').trim() : d.special_status_id
       const prev = map.get(key) ?? []
       prev.push(d)
       map.set(key, prev)
     }
-    return { map, unassigned }
+    return map
   }, [debtors, viewAllBranches])
 
   const statusOptions = useMemo(() => [
@@ -391,14 +473,20 @@ export default function SpecialStatusesPage() {
   const selectedCount = selected.size
   const showBranchCol = viewAllBranches
 
+  const expandedStatus = useMemo(
+    () => activeStatuses.find(status => groupKeyOf(status) === expandedKey) ?? null,
+    [activeStatuses, expandedKey, groupKeyOf],
+  )
+  const expandedRows = expandedKey ? (debtorsByStatus.get(expandedKey) ?? []) : []
+
   return (
     <div className="space-y-5">
       <PageHeader
-        title="الحالات الخاصة"
-        subtitle="تصنيف المدينين بصفات مخصصة لكل فرع"
+        title="الأسماء التي تحتاج مراقبة"
+        subtitle="تصنيف المدينين الذين يحتاجون متابعة خاصة لكل فرع"
         breadcrumb={[
           { label: 'لوحة التحكم', href: '/admin/dashboard' },
-          { label: 'الحالات الخاصة' },
+          { label: 'الأسماء التي تحتاج مراقبة' },
         ]}
         actions={
           <button
@@ -415,38 +503,12 @@ export default function SpecialStatusesPage() {
 
       {!branchId && !viewAllBranches && (
         <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
-          اختر فرعاً من القائمة العلوية أو «الكل» لعرض الحالات الخاصة.
+          اختر فرعاً من القائمة العلوية أو «الكل» لعرض الأسماء التي تحتاج مراقبة.
         </div>
       )}
 
       {success && <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl px-4 py-3 font-semibold">{success}</p>}
       {error && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{error}</p>}
-
-      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.12)] shadow-sm p-4">
-        <h2 className="text-sm font-black text-[#231F20] mb-3">إدارة الصفات</h2>
-        {loading ? (
-          <div className="py-8 text-center text-sm text-[#767676]">جارٍ التحميل...</div>
-        ) : !statuses.length ? (
-          <EmptyState title="لا توجد صفات بعد" description="أضف أول صفة خاصة للفرع المحدد" />
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {statuses.map(s => {
-              const opt = specialStatusColorOption(s.color)
-              return (
-                <div key={s.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${opt.cardBorder} ${opt.cardBg}`}>
-                  <span className={`w-3 h-3 rounded-full ${opt.bar}`} />
-                  <SpecialStatusBadge name={s.name} color={s.color} />
-                  <span className="text-[11px] text-[#767676] tabular-nums">({s.debtor_count ?? 0})</span>
-                  <button type="button" onClick={() => openEdit(s)} className="text-[11px] font-semibold text-[#2C8780] hover:underline">تعديل</button>
-                  {allowDelete && (
-                    <button type="button" onClick={() => void deleteStatus(s)} className="text-[11px] font-semibold text-red-600 hover:underline">حذف</button>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
 
       {selectedCount > 0 && (
         <div className="sticky top-2 z-20 bg-[#2C8780]/8 border border-[#2C8780]/25 rounded-xl px-4 py-3 flex flex-wrap items-center gap-3">
@@ -485,62 +547,95 @@ export default function SpecialStatusesPage() {
       )}
 
       {loading ? (
-        <div className="space-y-3">
-          {[1, 2].map(i => <div key={i} className="h-40 bg-white rounded-2xl border animate-pulse" />)}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          {[1, 2, 3, 4].map(i => <div key={i} className="h-36 bg-white rounded-xl border animate-pulse" />)}
         </div>
+      ) : !activeStatuses.length ? (
+        <EmptyState title="لا توجد صفات بعد" description="أضف أول تصنيف للأسماء التي تحتاج مراقبة للفرع المحدد" />
       ) : (
-        <div className="space-y-4">
-          {activeStatuses.map(status => {
-            const rows = debtorsByStatus.map.get(groupKeyOf(status)) ?? []
-            const opt = specialStatusColorOption(status.color)
-            const ids = rows.map(r => r.id)
-            return (
-              <div key={status.id} className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${opt.cardBorder}`}>
-                <div className={`px-4 py-3 border-b flex items-center gap-3 ${opt.cardBg}`}>
-                  <span className={`w-1.5 h-8 rounded-full ${opt.bar}`} />
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-base font-black text-[#231F20]">{status.name}</h3>
-                    <p className="text-xs text-[#767676]">{rows.length} مدين</p>
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {activeStatuses.map(status => {
+              const key = groupKeyOf(status)
+              const rows = debtorsByStatus.get(key) ?? []
+              const count = rows.length || Number(status.debtor_count ?? 0)
+              const opt = specialStatusColorOption(status.color)
+              const selectedHere = rows.filter(r => selected.has(r.id)).length
+              const isOpen = expandedKey === key
+              return (
+                <div
+                  key={status.id}
+                  className={`bg-white rounded-xl border p-5 sm:p-6 shadow-sm transition-all hover:shadow-md ${opt.cardBorder} ${isOpen ? 'ring-2 ring-[#2C8780]/30' : ''}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setExpandedKey(isOpen ? null : key)}
+                    className="w-full text-right"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs sm:text-sm font-semibold text-[#454042] mb-2 truncate">{status.name}</p>
+                        <p className="text-2xl sm:text-3xl font-black leading-none tabular-nums text-[#231F20]" dir="ltr">{count}</p>
+                        <p className="text-sm text-[#454042] mt-2 font-medium">
+                          {count} اسم يحتاج مراقبة
+                          {selectedHere > 0 ? ` · محدد ${selectedHere}` : ''}
+                        </p>
+                      </div>
+                      <div className={`w-11 h-11 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0 ${opt.swatch}`}>
+                        <span className="text-white text-lg font-black">{status.name.charAt(0)}</span>
+                      </div>
+                    </div>
+                  </button>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedKey(isOpen ? null : key)}
+                      className="text-xs font-bold text-white px-3 py-1.5 rounded-lg"
+                      style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+                    >
+                      {isOpen ? 'إخفاء الأسماء' : 'عرض الأسماء'}
+                    </button>
+                    <button type="button" onClick={() => openEdit(status)} className="text-xs font-semibold text-[#2C8780] hover:underline">
+                      تعديل
+                    </button>
+                    {allowDelete && (
+                      <button type="button" onClick={() => void deleteStatus(status)} className="text-xs font-semibold text-red-600 hover:underline">
+                        حذف
+                      </button>
+                    )}
                   </div>
-                  <SpecialStatusBadge name={status.name} color={status.color} />
                 </div>
-                <DebtorTable
-                  rows={rows}
-                  selected={selected}
-                  onToggle={toggle}
-                  onToggleAll={() => toggleMany(ids)}
-                  showBranch={showBranchCol}
-                />
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
 
-          <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.12)] shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b bg-slate-50 flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-base font-black text-[#231F20]">بدون صفة</h3>
-                <p className="text-xs text-[#767676]">{debtorsByStatus.unassigned.length} مدين</p>
-              </div>
-              {selectedCount > 0 && (
+          {expandedStatus && (
+            <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${specialStatusColorOption(expandedStatus.color).cardBorder}`}>
+              <div className={`px-4 py-3 border-b flex items-center gap-3 ${specialStatusColorOption(expandedStatus.color).cardBg}`}>
+                <span className={`w-1.5 h-8 rounded-full ${specialStatusColorOption(expandedStatus.color).bar}`} />
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-black text-[#231F20]">{expandedStatus.name}</h3>
+                  <p className="text-xs text-[#767676]">{expandedRows.length} مدين</p>
+                </div>
+                <SpecialStatusBadge name={expandedStatus.name} color={expandedStatus.color} />
                 <button
                   type="button"
-                  disabled={busy || !assignStatusId}
-                  onClick={() => void applyStatus(assignStatusId)}
-                  className="text-xs font-bold text-white px-3 py-2 rounded-lg disabled:opacity-50"
-                  style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+                  onClick={() => setExpandedKey(null)}
+                  className="text-xs font-semibold text-[#767676] hover:text-[#231F20]"
                 >
-                  تعيين صفة للمحددين
+                  إغلاق
                 </button>
-              )}
+              </div>
+              <DebtorTable
+                rows={expandedRows}
+                selected={selected}
+                onToggle={toggle}
+                onToggleAll={() => toggleMany(expandedRows.map(r => r.id))}
+                showBranch={showBranchCol}
+                onAddNote={setNoteDebtor}
+              />
             </div>
-            <DebtorTable
-              rows={debtorsByStatus.unassigned}
-              selected={selected}
-              onToggle={toggle}
-              onToggleAll={() => toggleMany(debtorsByStatus.unassigned.map(r => r.id))}
-              showBranch={showBranchCol}
-            />
-          </div>
+          )}
         </div>
       )}
 
@@ -554,6 +649,16 @@ export default function SpecialStatusesPage() {
         onClose={() => setModalOpen(false)}
         onSave={saveStatus}
       />
+      {noteDebtor && (
+        <DebtorNoteModal
+          debtor={noteDebtor}
+          onClose={() => setNoteDebtor(null)}
+          onSaved={lastNote => {
+            setDebtors(prev => prev.map(d => (d.id === noteDebtor.id ? { ...d, last_note: lastNote } : d)))
+            setSuccess(`تمت إضافة ملاحظة لـ ${noteDebtor.full_name}`)
+          }}
+        />
+      )}
     </div>
   )
 }

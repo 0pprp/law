@@ -16,11 +16,11 @@ import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debto
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DatePicker } from '@/components/ui/date-picker'
 import { useAdminRole } from '@/context/admin-role'
-import { canAssignTasks, canMoveToPaymentInProgress } from '@/lib/permissions'
+import { canAssignTasks, canManageSpecialStatuses, canMoveToPaymentInProgress } from '@/lib/permissions'
 import { executeTaskAssignment, executeTaskUnassign, validateTaskAssignmentInput } from '@/lib/client-task-assign'
 import { taskLawyerId } from '@/lib/task-assignment'
 import { useCaseScope } from '@/hooks/use-case-scope'
-import { isTaskOverdue, taskOverdueDays } from '@/lib/local-date'
+import { isTaskOverdue, localTodayYmd, OVERDUE_TERMINAL_STATUSES, taskOverdueDays } from '@/lib/local-date'
 import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
 import SpecialStatusBadge from '@/components/SpecialStatusBadge'
 import { cacheInvalidatePrefix } from '@/lib/query-cache'
@@ -29,6 +29,7 @@ import { appConfirm } from '@/lib/app-dialog'
 import { resolveCourtName, resolveExecutionOffice } from '@/lib/awaiting-assignment'
 import { resolveSpecialStatus } from '@/lib/special-statuses'
 import { fetchBranchCourtNames } from '@/lib/branch-lists'
+import MoveToMonitoringModal from '@/components/MoveToMonitoringModal'
 
 type StageView = 'waiting' | 'assigned' | 'overdue'
 
@@ -94,6 +95,7 @@ function DebtorStageRow({
   d,
   view,
   canAssign,
+  canMonitor,
   selected,
   onToggle,
   onAssignOne,
@@ -105,6 +107,7 @@ function DebtorStageRow({
   d: StageDebtor
   view: StageView
   canAssign: boolean
+  canMonitor: boolean
   selected: Set<string>
   onToggle: (taskId: string) => void
   onAssignOne: (taskId: string) => void
@@ -114,9 +117,10 @@ function DebtorStageRow({
   bulkDueDate: string
 }) {
   const isWaiting = view === 'waiting'
+  const canSelect = canMonitor || (canAssign && isWaiting)
   return (
     <div className="flex items-center gap-3 px-4 py-4 hover:bg-[#F8F7F8] transition-colors">
-      {canAssign && isWaiting && (
+      {canSelect && (
         <input
           type="checkbox"
           checked={selected.has(d.taskId)}
@@ -218,6 +222,7 @@ function BranchStageBox({
   rows,
   view,
   canAssign,
+  canMonitor,
   selected,
   onToggle,
   onAssignOne,
@@ -232,6 +237,7 @@ function BranchStageBox({
   rows: StageDebtor[]
   view: StageView
   canAssign: boolean
+  canMonitor: boolean
   selected: Set<string>
   onToggle: (taskId: string) => void
   onAssignOne: (taskId: string) => void
@@ -347,6 +353,7 @@ function BranchStageBox({
                     d={d}
                     view={view}
                     canAssign={canAssign}
+                    canMonitor={canMonitor}
                     selected={selected}
                     onToggle={onToggle}
                     onAssignOne={onAssignOne}
@@ -384,6 +391,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const { viewAllBranches } = useBranch()
   const role = useAdminRole()
   const canAssign = canAssignTasks(role)
+  const canMonitor = canManageSpecialStatuses(role)
   const allowPaymentInProgress = canMoveToPaymentInProgress(role)
   const { caseTypeFilter } = useCaseScope()
   const [stageLabel, setStageLabel] = useState('')
@@ -405,6 +413,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const [error, setError] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
   const [moveModalOpen, setMoveModalOpen] = useState(false)
+  const [monitorModalOpen, setMonitorModalOpen] = useState(false)
 
   const load = useCallback(async (opts?: { soft?: boolean }) => {
     if (!branchId && !viewAllBranches) {
@@ -435,7 +444,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       return
     }
 
-    let matchingDefIds = new Set<string>([stageId])
+    const matchingDefIds = new Set<string>([stageId])
     if (viewAllBranches && def?.label) {
       const { data: sameLabel } = await supabase
         .from('task_definitions')
@@ -444,28 +453,61 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
         .eq('label', def.label)
       for (const row of sameLabel ?? []) matchingDefIds.add(row.id)
     }
+    const defIds = [...matchingDefIds]
+    const terminalFilter = `(${OVERDUE_TERMINAL_STATUSES.join(',')})`
+    const PAGE = 500
+    const rawRows: any[] = []
+    let offset = 0
 
-    let q = supabase
-      .from('debtors')
-      .select(`
-        id, full_name, phone, receipt_type, receipt_number, branch_id, branch_list_id,
-        remaining_amount, case_status, case_type, current_task_id,
-        branch_list:branch_lists(name, court_name, execution_office),
-        special_status:special_statuses(id, name, color),
-        current_task:tasks!current_task_id(
-          id, task_status, assigned_to, created_at, due_date, task_definition_id, branch_id,
-          lawyer:profiles!tasks_assigned_to_fkey(full_name, role)
-        )
-      `)
-      .not('case_status', 'eq', 'closed')
-      .not('current_task_id', 'is', null)
-      .eq('case_type', stageCt)
-      .order('full_name')
+    // فلترة المرحلة على السيرفر + صفحات — لا نعتمد على جلب كل المدينين ثم الفلترة محلياً
+    // (حد Supabase الافتراضي ~1000 صف كان يخفي مراحل مثل «ابطال»)
+    while (true) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q: any = supabase
+        .from('debtors')
+        .select(`
+          id, full_name, phone, receipt_type, receipt_number, branch_id, branch_list_id,
+          remaining_amount, case_status, case_type, current_task_id,
+          branch_list:branch_lists(name, court_name, execution_office),
+          special_status:special_statuses(id, name, color),
+          current_task:tasks!current_task_id!inner(
+            id, task_status, assigned_to, created_at, due_date, task_definition_id, branch_id,
+            lawyer:profiles!tasks_assigned_to_fkey(full_name, role)
+          )
+        `)
+        .not('case_status', 'eq', 'closed')
+        .not('current_task_id', 'is', null)
+        .is('special_status_id', null)
+        .eq('case_type', stageCt)
+        .in('current_task.task_definition_id', defIds)
+        .not('current_task.task_status', 'in', terminalFilter)
+        .order('full_name')
+        .range(offset, offset + PAGE - 1)
 
-    if (branchId) q = (q as any).eq('branch_id', branchId)
-    const { data } = await q
+      if (branchId) q = q.eq('branch_id', branchId)
 
-    const rawRows = (data ?? []) as any[]
+      if (view === 'waiting') {
+        q = q.is('current_task.assigned_to', null)
+      } else if (view === 'assigned') {
+        q = q.not('current_task.assigned_to', 'is', null)
+      } else if (view === 'overdue') {
+        q = q
+          .not('current_task.assigned_to', 'is', null)
+          .not('current_task.due_date', 'is', null)
+          .lt('current_task.due_date', localTodayYmd())
+      }
+
+      const { data, error } = await q
+      if (error) {
+        console.error('[stage-detail:load]', error.message ?? error)
+        break
+      }
+      const chunk = data ?? []
+      rawRows.push(...chunk)
+      if (chunk.length < PAGE) break
+      offset += PAGE
+    }
+
     const branchIds = [...new Set(rawRows.map(d => d.branch_id).filter(Boolean))] as string[]
     const branchNames = new Map<string, string>()
     if (branchIds.length) {
@@ -476,15 +518,16 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     const mapped: StageDebtor[] = rawRows
       .filter((d: any) => {
         const t = d.current_task
-        if (!t || !matchingDefIds.has(t.task_definition_id)) return false
-        if (d.current_task_id !== t.id) return false
+        if (!t || d.current_task_id !== t.id) return false
         if (branchId && (t.branch_id ?? d.branch_id) !== branchId) return false
-
+        // دفاع إضافي لو وُجد lawyer_id بدون assigned_to
         const assigned = Boolean(taskLawyerId(t))
-        const due = t.due_date ? String(t.due_date).slice(0, 10) : null
         if (view === 'waiting') return !assigned
         if (view === 'assigned') return assigned
-        if (view === 'overdue') return assigned && isTaskOverdue(due)
+        if (view === 'overdue') {
+          const due = t.due_date ? String(t.due_date).slice(0, 10) : null
+          return assigned && isTaskOverdue(due)
+        }
         return false
       })
       .map((d: any) => {
@@ -653,7 +696,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       })
       setAssigning(false)
       setSuccessMsg(`تم تكليف ${taskIds.length} مهمة بنجاح`)
-      cacheInvalidatePrefix('dashboard:v8:')
+      cacheInvalidatePrefix('dashboard:v9:')
     })
   }
 
@@ -681,7 +724,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     preserveScrollDuring(() => {
       setDebtors(prev => prev.filter(d => d.taskId !== taskId))
       setSuccessMsg('تم إلغاء التكليف — عادت المهمة لغير المكلفة')
-      cacheInvalidatePrefix('dashboard:v8:')
+      cacheInvalidatePrefix('dashboard:v9:')
     })
   }
 
@@ -702,7 +745,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     setMoveModalOpen(false)
     const movedTaskIds = new Set(selected)
     setSelected(new Set())
-    cacheInvalidatePrefix('dashboard:v8:')
+    cacheInvalidatePrefix('dashboard:v9:')
     if (summary) {
       const parts = [`تم تحويل ${summary.moved} مدين إلى جاري التسديد`]
       if (summary.failed > 0) parts.push(`تعذّر تحويل ${summary.failed}`)
@@ -719,6 +762,21 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
         return
       }
       setDebtors(prev => prev.filter(d => !movedTaskIds.has(d.taskId)))
+    })
+  }
+
+  function handleMovedToMonitoring(taskIds: string[], debtorIds: string[], statusName: string) {
+    const taskIdSet = new Set(taskIds)
+    preserveScrollDuring(() => {
+      setDebtors(prev => prev.filter(row => !taskIdSet.has(row.taskId)))
+      setSelected(prev => {
+        const next = new Set(prev)
+        for (const taskId of taskIds) next.delete(taskId)
+        return next
+      })
+      setError('')
+      setSuccessMsg(`تم تحويل ${debtorIds.length} اسم إلى «${statusName}» في تبويب الأسماء التي تحتاج مراقبة`)
+      cacheInvalidatePrefix('dashboard:v9:')
     })
   }
 
@@ -794,6 +852,22 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
             >
               {assigning ? 'جارٍ التكليف...' : `تكليف المحددين${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
             </button>
+            {canMonitor && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError('')
+                  setSuccessMsg('')
+                  setMonitorModalOpen(true)
+                }}
+                disabled={assigning || selectedCount === 0}
+                className="shrink-0 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+              >
+                تحويل إلى تبويب الأسماء التي تحتاج مراقبة
+                {selectedCount > 0 ? ` (${selectedCount})` : ''}
+              </button>
+            )}
             {showMoveToPayment && (
               <button
                 type="button"
@@ -842,6 +916,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
               rows={g.rows}
               view={view}
               canAssign={canAssign}
+              canMonitor={canMonitor}
               selected={selected}
               onToggle={toggle}
               onAssignOne={id => void assignTasks([id], bulkLawyerId)}
@@ -861,6 +936,18 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
           debtorIds={selectedDebtorIds}
           onClose={() => setMoveModalOpen(false)}
           onSuccess={handleMoveSuccess}
+        />
+      )}
+      {canMonitor && (
+        <MoveToMonitoringModal
+          open={monitorModalOpen}
+          branchId={branchId}
+          viewAll={viewAllBranches}
+          debtorIds={selectedDebtorIds}
+          onClose={() => setMonitorModalOpen(false)}
+          onSuccess={(debtorIds, statusName) => {
+            handleMovedToMonitoring(Array.from(selected), debtorIds, statusName)
+          }}
         />
       )}
     </div>

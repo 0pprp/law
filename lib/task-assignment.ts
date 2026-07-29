@@ -436,6 +436,9 @@ export const LAWYER_TASK_PAGE_SIZE = 30
 
 const STATS_CHUNK_SIZE = 500
 
+/** حجم دفعة معرّفات المهام في `in(...)` — يمنع روابط ضخمة تفشل بصمت */
+const TASK_ID_BATCH_SIZE = 100
+
 const CURRENT_TASK_EMBED = `
   id,
   full_name,
@@ -637,6 +640,7 @@ async function scanCurrentTaskMeta(
       .select('current_task_id')
       .not('case_status', 'eq', 'closed')
       .not('current_task_id', 'is', null)
+      .is('special_status_id', null)
       .order('id')
       .range(offset, offset + STATS_CHUNK_SIZE - 1)
     if (branchId) debtorsQ = debtorsQ.eq('branch_id', branchId)
@@ -652,11 +656,13 @@ async function scanCurrentTaskMeta(
     if (!debtors?.length) break
 
     const taskIds = debtors.map(d => d.current_task_id).filter(Boolean) as string[]
-    if (taskIds.length) {
+    // تمرير مئات المعرّفات في `in(...)` يُنتج رابطاً ضخماً قد يفشل ويُسقط العدّ بصمت
+    for (let i = 0; i < taskIds.length; i += TASK_ID_BATCH_SIZE) {
+      const batch = taskIds.slice(i, i + TASK_ID_BATCH_SIZE)
       let tasksQ = supabase
         .from('tasks')
         .select('id, assigned_to, task_definition_id, task_status, due_date')
-        .in('id', taskIds)
+        .in('id', batch)
         .not('task_status', 'in', CURRENT_TASK_TERMINAL_FILTER)
       if (branchId) tasksQ = tasksQ.eq('branch_id', branchId)
 
@@ -664,25 +670,26 @@ async function scanCurrentTaskMeta(
 
       if (tErr) {
         console.error('[scanCurrentTaskMeta:tasks]', tErr.message ?? tErr)
-      } else {
-        for (const task of tasks ?? []) {
-          const defId = task.task_definition_id as string | null
-          if (taskLawyerId(task)) {
-            assigned++
-            if (defId) {
-              assignedStageCounts.set(defId, (assignedStageCounts.get(defId) ?? 0) + 1)
-              const due = task.due_date ? String(task.due_date).slice(0, 10) : ''
-              if (due && due < today) {
-                overdueStageCounts.set(defId, (overdueStageCounts.get(defId) ?? 0) + 1)
-              }
+        continue
+      }
+
+      for (const task of tasks ?? []) {
+        const defId = task.task_definition_id as string | null
+        if (taskLawyerId(task)) {
+          assigned++
+          if (defId) {
+            assignedStageCounts.set(defId, (assignedStageCounts.get(defId) ?? 0) + 1)
+            const due = task.due_date ? String(task.due_date).slice(0, 10) : ''
+            if (due && due < today) {
+              overdueStageCounts.set(defId, (overdueStageCounts.get(defId) ?? 0) + 1)
             }
-          } else if (defId) {
-            // غير مكلفة بتعريف مهمة → بطاقات المراحل
-            unassigned++
-            stageCounts.set(defId, (stageCounts.get(defId) ?? 0) + 1)
           }
-          // بلا task_definition_id → تُحسب ضمن «الأسماء التي تحت إسناد مهمة» لا هنا
+        } else if (defId) {
+          // غير مكلفة بتعريف مهمة → بطاقات المراحل
+          unassigned++
+          stageCounts.set(defId, (stageCounts.get(defId) ?? 0) + 1)
         }
+        // بلا task_definition_id → تُحسب ضمن «الأسماء التي تحت إسناد مهمة» لا هنا
       }
     }
 
@@ -704,6 +711,7 @@ async function countCurrentTasksByAssignment(
     .select(`${CURRENT_TASK_EMBED_INNER}`, { count: 'exact', head: true })
     .not('case_status', 'eq', 'closed')
     .not('current_task_id', 'is', null)
+    .is('special_status_id', null)
 
   if (branchId) q = q.eq('branch_id', branchId)
 
@@ -727,6 +735,7 @@ async function countOverdueTasks(
     .select(`${CURRENT_TASK_EMBED_INNER}`, { count: 'exact', head: true })
     .not('case_status', 'eq', 'closed')
     .not('current_task_id', 'is', null)
+    .is('special_status_id', null)
 
   if (branchId) q = q.eq('branch_id', branchId)
 
@@ -801,6 +810,7 @@ export async function fetchCurrentBranchTaskRowsPaginated(
     .select(CURRENT_TASK_EMBED_INNER, { count: 'exact' })
     .not('case_status', 'eq', 'closed')
     .not('current_task_id', 'is', null)
+    .is('special_status_id', null)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
 

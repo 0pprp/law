@@ -104,7 +104,7 @@ export function canWriteAdminData(role: string | null | undefined): boolean {
   return isAdmin(role)
 }
 
-/** إدارة الحالات الخاصة (صفات المدينين) — المدير ومسؤول الدعاوى المدنية */
+/** إدارة الأسماء التي تحتاج مراقبة (صفات المدينين) — المدير ومسؤول الدعاوى المدنية */
 export function canManageSpecialStatuses(role: string | null | undefined): boolean {
   return isAdmin(role) || isLegalManager(role)
 }
@@ -349,9 +349,9 @@ const PAYMENT_FOLLOW_UP_HREFS = new Set([
   '/admin/payments',
 ])
 
-/** إدارة المهام (مدني/جزائي) — المدير فقط */
+/** إدارة المهام (مدني/جزائي) — المدير والمحاسب */
 export function canManageTaskManagement(role: string | null | undefined): boolean {
-  return isAdmin(role)
+  return isAdmin(role) || isAccountant(role)
 }
 
 /**

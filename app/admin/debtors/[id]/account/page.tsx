@@ -26,7 +26,6 @@ import type { UserRole } from '@/lib/types'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import { BackButton } from '@/components/ui/back-button'
 import { fetchCriminalDebtorDetails, CONTRACT_GUARANTOR_STATUS_LABELS, isContractGuarantorStatus } from '@/lib/criminal-debtor-details'
-import CriminalDebtorFilesPanel from '@/components/CriminalDebtorFilesPanel'
 
 function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
@@ -121,12 +120,6 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
         </Card>
         <DebtorNotesPanel debtorId={id} profileNotes={debtor.notes} />
       </div>
-      <CriminalDebtorFilesPanel
-        debtorId={id}
-        documentsPath={criminalDetails?.documents_contract_file_path ?? null}
-        petitionPath={criminalDetails?.petition_file_path ?? null}
-        canEdit={allowEdit}
-      />
     </div>
   ) : (
     <div className="space-y-5">

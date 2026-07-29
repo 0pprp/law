@@ -30,11 +30,11 @@ export default function AdminRouteGuard({ children }: { children: React.ReactNod
   const pathname = usePathname()
 
   if (pathname.startsWith('/admin/task-management') && !canManageTaskManagement(role)) {
-    return <PermissionDenied message="إدارة المهام: للمدير فقط." />
+    return <PermissionDenied message="إدارة المهام: للمدير أو المحاسب فقط." />
   }
 
   if (pathname.startsWith('/admin/special-statuses') && !canManageSpecialStatuses(role)) {
-    return <PermissionDenied message="الحالات الخاصة: للمدير أو مسؤول الدعاوى المدنية فقط." />
+    return <PermissionDenied message="الأسماء التي تحتاج مراقبة: للمدير أو مسؤول الدعاوى المدنية فقط." />
   }
 
   if (isPaymentFollowUp(role) && !isPaymentFollowUpPathAllowed(pathname)) {

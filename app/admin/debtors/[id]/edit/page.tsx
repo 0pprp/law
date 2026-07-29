@@ -193,6 +193,16 @@ export default function EditDebtorPage() {
         submitLock.current = false
         return
       }
+      if (pdfFile) {
+        try {
+          await uploadDebtorPdfFile(id, pdfFile)
+        } catch (uploadError) {
+          setError(`تم حفظ البيانات لكن فشل رفع الملف: ${uploadError instanceof Error ? uploadError.message : 'خطأ غير معروف'}`)
+          setSaving(false)
+          submitLock.current = false
+          return
+        }
+      }
       setSuccess('تم حفظ التعديلات')
       router.push(`/admin/debtors/${id}/account`)
       return
@@ -284,8 +294,48 @@ export default function EditDebtorPage() {
                 </FormField>
                 <p className="text-xs text-[#767676]">نوع الدعوى: جزائي (لا يمكن تغييره) — القائمة غير متاحة للجزائي</p>
               </FormFlowStep>
-              <FormFlowStep step={2} title="تفاصيل القضية" isLast>
+              <FormFlowStep step={2} title="تفاصيل القضية">
                 <CriminalDebtorFields form={criminal} onChange={setCriminalField} disabled={readOnly} />
+              </FormFlowStep>
+              <FormFlowStep step={3} title="ملف المدين" subtitle="يظهر في تبويب المستمسكات" isLast>
+                <div className="space-y-4">
+                  {attachments.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-[#767676]">الملفات الحالية</p>
+                      {attachments.map(a => (
+                        <div key={a.id} className="flex items-center gap-2 bg-[#2C8780]/5 rounded-xl px-3 py-2.5 border border-[#2C8780]/15">
+                          <span className="text-sm text-[#231F20] font-semibold flex-1 min-w-0 truncate">{a.file_name}</span>
+                          {a.file_size && <span className="text-xs text-[#767676] shrink-0">{(a.file_size / 1024).toFixed(0)} KB</span>}
+                          {allowDeleteFile && (
+                            <button
+                              type="button"
+                              onClick={() => deleteFile(a)}
+                              disabled={deletingFileId === a.id}
+                              className="text-xs text-red-600 hover:text-red-800 font-semibold shrink-0 disabled:opacity-50"
+                            >
+                              {deletingFileId === a.id ? '...' : 'حذف'}
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <FormField label="رفع ملف PDF جديد" hint="اختياري — PDF فقط">
+                    <label className={cn(
+                      'flex flex-col items-center justify-center gap-2 p-5 rounded-xl border-2 border-dashed cursor-pointer transition-all',
+                      pdfFile
+                        ? 'border-[#2C8780]/40 bg-[#2C8780]/5'
+                        : 'border-[rgba(118,118,118,0.2)] bg-[#FAFAFA] hover:border-[#2C8780]/35',
+                    )}>
+                      <input type="file" accept="application/pdf,.pdf" onChange={handleFileChange} className="hidden" />
+                      {pdfFile ? (
+                        <p className="text-sm font-bold text-[#2C8780]">{pdfFile.name} ({(pdfFile.size / 1024).toFixed(0)} KB)</p>
+                      ) : (
+                        <p className="text-sm text-[#767676]">اضغط لرفع ملف PDF</p>
+                      )}
+                    </label>
+                  </FormField>
+                </div>
               </FormFlowStep>
             </FormFlow>
           </fieldset>
