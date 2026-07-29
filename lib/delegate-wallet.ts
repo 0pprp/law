@@ -318,6 +318,8 @@ export interface DelegateReportRow {
   debtor_id: string | null
   debtor_name: string
   debtor_list_name: string
+  court_name: string | null
+  execution_office: string | null
   task_label: string
   completed_at: string | null
   debtor_notified: DebtorNotifiedStatus
@@ -369,8 +371,21 @@ export async function fetchDelegateReport(
       ? supabase.from('profiles').select('id, full_name, role').in('id', assigneeIds)
       : Promise.resolve({ data: [] as { id: string; full_name: string; role: string | null }[] }),
     debtorIds.length
-      ? supabase.from('debtors').select('id, full_name, branch_list_id, branch_list:branch_lists(name)').in('id', debtorIds)
-      : Promise.resolve({ data: [] as { id: string; full_name: string; branch_list_id?: string | null; branch_list?: { name?: string } | { name?: string }[] | null }[] }),
+      ? supabase.from('debtors').select('id, full_name, branch_list_id, branch_list:branch_lists(name, court_name, execution_office)').in('id', debtorIds)
+      : Promise.resolve({ data: [] as {
+        id: string
+        full_name: string
+        branch_list_id?: string | null
+        branch_list?: {
+          name?: string | null
+          court_name?: string | null
+          execution_office?: string | null
+        } | {
+          name?: string | null
+          court_name?: string | null
+          execution_office?: string | null
+        }[] | null
+      }[] }),
     defIds.length
       ? supabase.from('task_definitions').select('id, label').in('id', defIds)
       : Promise.resolve({ data: [] as { id: string; label: string }[] }),
@@ -395,12 +410,34 @@ export async function fetchDelegateReport(
     if (tx.task_id) withdrawnAt.set(tx.task_id, tx.created_at)
   }
 
-  function debtorListName(
-    debtor: { branch_list?: { name?: string } | { name?: string }[] | null } | null | undefined,
-  ): string {
-    if (!debtor) return '—'
+  type DebtorEmbed = {
+    branch_list?: {
+      name?: string | null
+      court_name?: string | null
+      execution_office?: string | null
+    } | {
+      name?: string | null
+      court_name?: string | null
+      execution_office?: string | null
+    }[] | null
+  } | null | undefined
+
+  function branchListRow(debtor: DebtorEmbed) {
+    if (!debtor) return null
     const bl = Array.isArray(debtor.branch_list) ? debtor.branch_list[0] : debtor.branch_list
-    return bl?.name?.trim() || '—'
+    return bl ?? null
+  }
+
+  function debtorListName(debtor: DebtorEmbed): string {
+    return branchListRow(debtor)?.name?.trim() || '—'
+  }
+
+  function debtorCourtName(debtor: DebtorEmbed): string | null {
+    return branchListRow(debtor)?.court_name?.trim() || null
+  }
+
+  function debtorExecutionOffice(debtor: DebtorEmbed): string | null {
+    return branchListRow(debtor)?.execution_office?.trim() || null
   }
 
   const listFilter = branchListId?.trim() || null
@@ -420,6 +457,8 @@ export async function fetchDelegateReport(
       debtor_id: t.debtor_id,
       debtor_name: debtor?.full_name ?? '—',
       debtor_list_name: debtorListName(debtor),
+      court_name: debtorCourtName(debtor),
+      execution_office: debtorExecutionOffice(debtor),
       task_label: def?.label ?? 'إيجاد عنوان',
       completed_at: t.completed_at,
       debtor_notified: normalizeDebtorNotified(t.debtor_notified),

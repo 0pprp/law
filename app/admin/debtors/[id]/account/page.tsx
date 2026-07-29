@@ -88,6 +88,10 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const listName = branchList?.name?.trim() || '—'
   const courtName = branchList?.court_name?.trim() || '—'
   const executionOffice = branchList?.execution_office?.trim() || '—'
+  const courtExecutionLine = [
+    courtName !== '—' ? `🏛 المحكمة: ${courtName}` : null,
+    executionOffice !== '—' ? `⚖️ التنفيذ: ${executionOffice}` : null,
+  ].filter(Boolean).join(' | ') || '—'
 
   const overviewTab = isCriminal ? (
     <div className="space-y-5">
@@ -110,8 +114,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
             <InfoRow label="الشاهد الأول" value={criminalDetails?.first_witness_name} />
             <InfoRow label="الشاهد الثاني" value={criminalDetails?.second_witness_name} />
             <InfoRow label="القائمة" value={listName} />
-            <InfoRow label="المحكمة" value={courtName} />
-            <InfoRow label="دائرة التنفيذ" value={executionOffice} />
+            <InfoRow label="المحكمة والتنفيذ" value={courtExecutionLine} />
             <InfoRow label="حالة المدين" value={debtor.case_status ?? '—'} />
             <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} mono />
           </div>
@@ -167,8 +170,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
               label="القائمة"
               value={listName}
             />
-            <InfoRow label="المحكمة" value={courtName} />
-            <InfoRow label="دائرة التنفيذ" value={executionOffice} />
+            <InfoRow label="المحكمة والتنفيذ" value={courtExecutionLine} />
             {debtor.address && <InfoRow label="العنوان" value={debtor.address} />}
             {debtor.export_date && <InfoRow label={LEGAL_ISSUE_DATE_LABEL} value={fmtDate(debtor.export_date)} mono />}
             <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} mono />

@@ -23,6 +23,15 @@ import { preserveScrollDuring } from '@/lib/preserve-scroll'
 
 const PAGE_SIZE = 20
 
+function courtExecutionLine(row: AwaitingAssignmentDebtor): string | null {
+  const parts: string[] = []
+  const court = row.court_name?.trim()
+  const execution = row.execution_office?.trim()
+  if (court) parts.push(`🏛 المحكمة: ${court}`)
+  if (execution) parts.push(`⚖️ التنفيذ: ${execution}`)
+  return parts.length ? parts.join(' | ') : null
+}
+
 interface Props {
   branchId: string | null
   viewAllBranches: boolean
@@ -63,8 +72,8 @@ function DebtorRowsTable({
               <th className="px-4 py-2.5 font-semibold">الاسم</th>
               <th className="px-4 py-2.5 font-semibold">نوع الدعوى</th>
               <th className="px-4 py-2.5 font-semibold">القائمة</th>
-              <th className="px-4 py-2.5 font-semibold">المحكمة</th>
-              <th className="px-4 py-2.5 font-semibold">دائرة التنفيذ</th>
+              <th className="px-4 py-2.5 font-semibold">🏛 المحكمة</th>
+              <th className="px-4 py-2.5 font-semibold">⚖️ دائرة التنفيذ</th>
               <th className="px-4 py-2.5 font-semibold">تاريخ الإضافة</th>
               <th className="px-4 py-2.5 font-semibold">الملاحظة</th>
               <th className="px-4 py-2.5 font-semibold text-center">الإجراءات</th>
@@ -150,8 +159,9 @@ function DebtorRowsTable({
             </div>
             <p className="text-xs text-[#767676] mb-1">{CASE_TYPE_LABELS[r.case_type]}</p>
             <p className="text-xs text-[#767676] mb-1 break-words">القائمة: {r.branch_list_name?.trim() || '—'}</p>
-            <p className="text-xs text-[#767676] mb-1 break-words">المحكمة: {r.court_name?.trim() || '—'}</p>
-            <p className="text-xs text-[#767676] mb-1 break-words">دائرة التنفيذ: {r.execution_office?.trim() || '—'}</p>
+            {courtExecutionLine(r) && (
+              <p className="text-xs text-[#767676] mb-1 break-words">{courtExecutionLine(r)}</p>
+            )}
             <p className="text-xs text-[#454042] whitespace-pre-wrap break-words mb-3">
               الملاحظة: {r.last_note || '—'}
             </p>

@@ -38,6 +38,15 @@ const FEE_STATUS_FILTER_OPTIONS = [
   { value: 'withdrawn', label: DELEGATE_FEE_STATUS_LABELS.withdrawn },
 ]
 
+function courtExecutionLine(row: Pick<DelegateReportRow, 'court_name' | 'execution_office'>): string | null {
+  const parts: string[] = []
+  const court = row.court_name?.trim()
+  const execution = row.execution_office?.trim()
+  if (court) parts.push(`🏛 المحكمة: ${court}`)
+  if (execution) parts.push(`⚖️ التنفيذ: ${execution}`)
+  return parts.length ? parts.join(' | ') : null
+}
+
 export default function DelegateReportPage() {
   const router = useRouter()
   const branchId = useBranchId()
@@ -125,6 +134,8 @@ export default function DelegateReportPage() {
       'المندوب': r.delegate_name,
       'الفرع': r.branch_name,
       'قائمة المدين': r.debtor_list_name,
+      'المحكمة': r.court_name ?? '—',
+      'دائرة التنفيذ': r.execution_office ?? '—',
       'المدين': r.debtor_name,
       'المهمة': r.task_label,
       'تاريخ الإنجاز': r.completed_at ? fmtDate(r.completed_at) : '—',
@@ -252,7 +263,14 @@ export default function DelegateReportPage() {
                   <TR key={r.task_id}>
                     <TD><span className="font-semibold text-[#231F20]">{r.delegate_name}</span></TD>
                     <TD><span className="text-xs text-[#767676]">{r.branch_name}</span></TD>
-                    <TD><span className="text-xs text-[#767676]">{r.debtor_list_name}</span></TD>
+                    <TD>
+                      <div>
+                        <span className="text-xs text-[#767676]">{r.debtor_list_name}</span>
+                        {courtExecutionLine(r) && (
+                          <p className="text-[11px] text-[#767676] mt-0.5">{courtExecutionLine(r)}</p>
+                        )}
+                      </div>
+                    </TD>
                     <TD>
                       {r.debtor_id ? (
                         <Link href={`/admin/debtors/${r.debtor_id}/account`} className="text-sm text-[#2C8780] font-semibold hover:underline">

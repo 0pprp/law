@@ -42,8 +42,8 @@ function branchCourtExecutionLine(t: CurrentBranchTaskRow): string | null {
   const parts: string[] = []
   const court = t.courtName?.trim()
   const exec = t.executionOffice?.trim()
-  if (court) parts.push(`المحكمة: ${court}`)
-  if (exec) parts.push(`التنفيذ: ${exec}`)
+  if (court) parts.push(`🏛 المحكمة: ${court}`)
+  if (exec) parts.push(`⚖️ التنفيذ: ${exec}`)
   return parts.length ? parts.join(' | ') : null
 }
 

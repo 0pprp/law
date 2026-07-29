@@ -47,6 +47,17 @@ function debtorExecutionOffice(debtor: {
   return debtor.branch_list?.execution_office?.trim() || '—'
 }
 
+function debtorCourtExecutionLine(debtor: {
+  branch_list?: { court_name?: string | null; execution_office?: string | null } | null
+}): string | null {
+  const parts: string[] = []
+  const court = debtor.branch_list?.court_name?.trim()
+  const execution = debtor.branch_list?.execution_office?.trim()
+  if (court) parts.push(`🏛 المحكمة: ${court}`)
+  if (execution) parts.push(`⚖️ التنفيذ: ${execution}`)
+  return parts.length ? parts.join(' | ') : null
+}
+
 function SearchIcon() {
   return <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
 }
@@ -392,8 +403,8 @@ export default function DebtorsPage() {
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH>
-                    <TH>المحكمة</TH>
-                    <TH>دائرة التنفيذ</TH>
+                    <TH>🏛 المحكمة</TH>
+                    <TH>⚖️ دائرة التنفيذ</TH>
                     <TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
                     <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>الملاحظة</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
                   </tr>
@@ -442,8 +453,8 @@ export default function DebtorsPage() {
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH>
-                    <TH>المحكمة</TH>
-                    <TH>دائرة التنفيذ</TH>
+                    <TH>🏛 المحكمة</TH>
+                    <TH>⚖️ دائرة التنفيذ</TH>
                     <TH>رقم الهوية</TH>
                     <TH>{RECEIPT_NUMBER_LABEL}</TH>
                     <TH>{RECEIPT_TYPE_LABEL}</TH>
@@ -576,8 +587,9 @@ export default function DebtorsPage() {
                   </p>
                   {debtor.id_number && <p className="text-xs text-[#767676] font-mono mb-1" dir="ltr">{debtor.id_number}</p>}
                   <p className="text-xs text-[#767676] mb-1">القائمة: {debtorListName(debtor)}</p>
-                  <p className="text-xs text-[#767676] mb-1">المحكمة: {debtorCourtName(debtor)}</p>
-                  <p className="text-xs text-[#767676] mb-1">دائرة التنفيذ: {debtorExecutionOffice(debtor)}</p>
+                  {debtorCourtExecutionLine(debtor) && (
+                    <p className="text-xs text-[#767676] mb-1">{debtorCourtExecutionLine(debtor)}</p>
+                  )}
                   <p className="text-xs text-[#454042] whitespace-pre-wrap break-words mb-2">
                     الملاحظة: {debtor.last_note || '—'}
                   </p>
