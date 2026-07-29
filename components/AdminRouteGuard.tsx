@@ -14,6 +14,7 @@ import {
   canViewLegalManagerWallet,
   canManageDelegates,
   canManageTaskManagement,
+  canManageSpecialStatuses,
 } from '@/lib/permissions'
 import PermissionDenied from '@/components/PermissionDenied'
 
@@ -30,6 +31,10 @@ export default function AdminRouteGuard({ children }: { children: React.ReactNod
 
   if (pathname.startsWith('/admin/task-management') && !canManageTaskManagement(role)) {
     return <PermissionDenied message="إدارة المهام: للمدير فقط." />
+  }
+
+  if (pathname.startsWith('/admin/special-statuses') && !canManageSpecialStatuses(role)) {
+    return <PermissionDenied message="الحالات الخاصة: للمدير أو مسؤول الدعاوى المدنية فقط." />
   }
 
   if (isPaymentFollowUp(role) && !isPaymentFollowUpPathAllowed(pathname)) {

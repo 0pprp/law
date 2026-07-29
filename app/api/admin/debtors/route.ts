@@ -44,7 +44,7 @@ function isValidOptionalDate(value: unknown): boolean {
 }
 
 const DEFAULT_COLS =
-  'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, case_type, branch_list_id, branch_id, notes, branch_list:branch_lists(name, court_name, execution_office)'
+  'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, case_type, branch_list_id, branch_id, notes, special_status_id, branch_list:branch_lists(name, court_name, execution_office), special_status:special_statuses(id, name, color)'
 
 export async function GET(request: NextRequest) {
   const auth = await requireStaffProfile()
@@ -56,6 +56,7 @@ export async function GET(request: NextRequest) {
   const listId = searchParams.get('listId')?.trim() || ''
   const search = searchParams.get('search')?.trim() || ''
   const caseType = searchParams.get('caseType')?.trim() || ''
+  const specialStatusId = searchParams.get('specialStatusId')?.trim() || ''
   const offset = Math.max(0, Number(searchParams.get('offset') ?? 0) || 0)
   const limit = Math.min(5000, Math.max(1, Number(searchParams.get('limit') ?? 50) || 50))
   const cols = searchParams.get('cols')?.trim() || DEFAULT_COLS
@@ -110,6 +111,13 @@ export async function GET(request: NextRequest) {
   if (search) {
     const s = search.replace(/[%_,]/g, '')
     q = q.or(`full_name.ilike.%${s}%,phone.ilike.%${s}%,receipt_number.ilike.%${s}%`)
+  }
+  if (specialStatusId === '__none__') {
+    q = q.is('special_status_id', null)
+  } else if (specialStatusId) {
+    // عند «كل الفروع» تُرسل نسخ الصفة بكل الفروع مفصولة بفواصل
+    const ids = specialStatusId.split(',').map(s => s.trim()).filter(Boolean)
+    q = ids.length > 1 ? q.in('special_status_id', ids) : q.eq('special_status_id', ids[0])
   }
 
   const { data, count, error } = await q

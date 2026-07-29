@@ -466,7 +466,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {showCivilStages && (
+      {showCivilStages && isAdmin(role) && (
         <div className="bg-green-100 border border-green-300 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-black text-[#231F20] text-base sm:text-lg">القضايا المدنية المكلفة</h2>

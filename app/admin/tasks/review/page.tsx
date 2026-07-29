@@ -23,7 +23,7 @@ import { useAdminRole } from '@/context/admin-role'
 import { canMoveToPaymentInProgress, canReadAdminData, canReviewTasks } from '@/lib/permissions'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, normalizeCaseType, type CaseType } from '@/lib/case-type'
-import { getR2UrlFor } from '@/lib/r2-url'
+import { storedFileUrl } from '@/lib/stored-file-url'
 import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
 import { appAlert } from '@/lib/app-dialog'
 import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
@@ -149,7 +149,7 @@ function AttachmentsCard({ taskId }: { taskId: string }) {
         const signed = await Promise.all(
           (data ?? []).map(async att => {
             // السابق: const { data: u } = await supabase.storage.from('task-files').createSignedUrl(att.file_path, 3600)
-            return { ...att, url: getR2UrlFor('task-files', att.file_path) }
+            return { ...att, url: storedFileUrl('task-files', att.file_path) }
           })
         )
         setAtts(signed); setLoaded(true)

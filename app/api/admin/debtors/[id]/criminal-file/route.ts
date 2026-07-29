@@ -14,7 +14,8 @@ import {
   type CriminalFileKind,
 } from '@/lib/criminal-debtor-files'
 import { fetchCriminalDebtorDetails, upsertCriminalDebtorDetails } from '@/lib/criminal-debtor-details'
-import { uploadToR2, deleteFromR2, r2ObjectKey, getR2UrlFor } from '@/lib/r2-storage'
+import { uploadToR2, deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
+import { storedFileUrl } from '@/lib/stored-file-url'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -150,5 +151,5 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   // }
   // return NextResponse.json({ url: data.signedUrl, filePath })
 
-  return NextResponse.json({ url: getR2UrlFor('debtor-files', filePath), filePath })
+  return NextResponse.json({ url: storedFileUrl('debtor-files', filePath), filePath })
 }

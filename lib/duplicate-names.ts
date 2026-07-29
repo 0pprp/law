@@ -9,9 +9,10 @@ import {
   resolveExecutionOffice,
 } from '@/lib/awaiting-assignment'
 import { attachLastNotes } from '@/lib/debtor-last-notes'
+import { resolveSpecialStatus } from '@/lib/special-statuses'
 
 const BASE_COLS =
-  'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, branch_list:branch_lists(name, court_name, execution_office)'
+  'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, branch_list:branch_lists(name, court_name, execution_office), special_status:special_statuses(id, name, color)'
 
 function isMissingNoteColumnError(message: string | undefined | null): boolean {
   return !!message && message.includes('assignment_note')
@@ -40,6 +41,7 @@ type RawDebtor = {
   assignment_note?: string | null
   notes?: string | null
   duplicate_flagged_at?: string | null
+  special_status?: { id?: string; name?: string | null; color?: string | null } | { id?: string; name?: string | null; color?: string | null }[] | null
 }
 
 async function mapRowsWithLastNotes(
@@ -47,7 +49,9 @@ async function mapRowsWithLastNotes(
   raw: RawDebtor[],
   branchNames: Map<string, string>,
 ): Promise<AwaitingAssignmentDebtor[]> {
-  const mapped = raw.map(r => ({
+  const mapped = raw.map(r => {
+    const ss = resolveSpecialStatus(r.special_status)
+    return {
     id: r.id,
     full_name: r.full_name ?? '—',
     branch_id: r.branch_id,
@@ -62,7 +66,10 @@ async function mapRowsWithLastNotes(
     notes: r.notes ?? null,
     case_type: (r.case_type === 'criminal' ? 'criminal' : 'civil') as 'civil' | 'criminal',
     duplicate_flagged_at: r.duplicate_flagged_at ?? null,
-  }))
+    special_status_id: ss.id,
+    special_status_name: ss.name,
+    special_status_color: ss.color,
+  }})
   const withNotes = await attachLastNotes(supabase, mapped)
   return withNotes.map(({ notes: _notes, ...rest }) => rest)
 }

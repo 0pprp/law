@@ -5,7 +5,7 @@ import { canStaffReadBranch } from '@/lib/staff-branch-access'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireTaskInScope } from '@/lib/section-guard'
-import { getR2UrlFor } from '@/lib/r2-url'
+import { storedFileUrl } from '@/lib/stored-file-url'
 
 const SIGNED_TTL_SEC = 900
 
@@ -63,5 +63,5 @@ export async function POST(request: Request) {
   // if (signErr) return apiServerError('task-file-url:sign', signErr)
   // return NextResponse.json({ url: data.signedUrl })
 
-  return NextResponse.json({ url: getR2UrlFor('task-files', row.file_path) })
+  return NextResponse.json({ url: storedFileUrl('task-files', row.file_path) })
 }

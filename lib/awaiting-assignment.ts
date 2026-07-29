@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { attachLastNotes } from '@/lib/debtor-last-notes'
+import { resolveSpecialStatus } from '@/lib/special-statuses'
 
 /**
  * «الأسماء التي تحت إسناد مهمة» — مدينون بانتظار تعيين مهمة مطلوبة:
@@ -24,6 +25,9 @@ export interface AwaitingAssignmentDebtor {
   needs_task_definition?: boolean
   /** وقت التحويل لكارد الأسماء المكررة — إن وُجد */
   duplicate_flagged_at?: string | null
+  special_status_id?: string | null
+  special_status_name?: string | null
+  special_status_color?: string | null
 }
 
 export interface FetchAwaitingAssignmentOptions {
@@ -45,7 +49,7 @@ export interface FetchAwaitingAssignmentResult {
 
 /** أعمدة المدين + اسم القائمة عبر علاقة PostgREST (بدون N+1) */
 const BASE_COLS =
-  'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, branch_list:branch_lists(name, court_name, execution_office)'
+  'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, branch_list:branch_lists(name, court_name, execution_office), special_status:special_statuses(id, name, color)'
 
 /** حالات نهائية لا تُحسب ضمن صفوف «تحت إسناد» للمهام اليتيمة */
 const TERMINAL_TASK_STATUSES = new Set([
@@ -110,6 +114,7 @@ type RawDebtor = {
   notes?: string | null
   needs_task_definition?: boolean
   duplicate_flagged_at?: string | null
+  special_status?: { id?: string; name?: string | null; color?: string | null } | { id?: string; name?: string | null; color?: string | null }[] | null
 }
 
 async function mapRowsWithLastNotes(
@@ -117,7 +122,9 @@ async function mapRowsWithLastNotes(
   raw: RawDebtor[],
   branchNames: Map<string, string>,
 ): Promise<AwaitingAssignmentDebtor[]> {
-  const mapped = raw.map(r => ({
+  const mapped = raw.map(r => {
+    const ss = resolveSpecialStatus(r.special_status)
+    return {
     id: r.id,
     full_name: r.full_name ?? '—',
     branch_id: r.branch_id,
@@ -133,7 +140,10 @@ async function mapRowsWithLastNotes(
     case_type: (r.case_type === 'criminal' ? 'criminal' : 'civil') as 'civil' | 'criminal',
     needs_task_definition: Boolean(r.needs_task_definition),
     duplicate_flagged_at: r.duplicate_flagged_at ?? null,
-  }))
+    special_status_id: ss.id,
+    special_status_name: ss.name,
+    special_status_color: ss.color,
+  }})
   const withNotes = await attachLastNotes(supabase, mapped)
   return withNotes.map(({ notes: _notes, ...rest }) => rest)
 }

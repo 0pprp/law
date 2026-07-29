@@ -9,6 +9,7 @@ import { fmtDate } from '@/lib/utils'
 import { CASE_TYPE_LABELS } from '@/lib/case-type'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import BranchListBox from '@/components/BranchListBox'
+import SpecialStatusBadge from '@/components/SpecialStatusBadge'
 import {
   fetchAwaitingAssignmentBranchSummaries,
   fetchAwaitingAssignmentDebtors,
@@ -200,12 +201,17 @@ function DebtorRowsTable({
                   </td>
                 )}
                 <td className="px-4 py-3">
-                  <Link
-                    href={`/admin/debtors/${r.id}/account`}
-                    className="font-semibold text-[#231F20] hover:text-[#2C8780] transition-colors"
-                  >
-                    {r.full_name}
-                  </Link>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={`/admin/debtors/${r.id}/account`}
+                      className="font-semibold text-[#231F20] hover:text-[#2C8780] transition-colors"
+                    >
+                      {r.full_name}
+                    </Link>
+                    {r.special_status_name && (
+                      <SpecialStatusBadge name={r.special_status_name} color={r.special_status_color} />
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <span className="text-xs text-[#767676]">{CASE_TYPE_LABELS[r.case_type]}</span>
@@ -290,6 +296,9 @@ function DebtorRowsTable({
                 <Link href={`/admin/debtors/${r.id}/account`} className="font-semibold text-[#231F20]">
                   {r.full_name}
                 </Link>
+                {r.special_status_name && (
+                  <SpecialStatusBadge name={r.special_status_name} color={r.special_status_color} />
+                )}
               </div>
               <span className="text-[10px] text-[#767676] shrink-0 tabular-nums" dir="ltr">{fmtDate(r.created_at)}</span>
             </div>

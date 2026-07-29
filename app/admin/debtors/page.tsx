@@ -26,6 +26,8 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, normalizeCaseType, type CaseType } from '@/lib/case-type'
 import { CASE_STATUS_PAYMENT_IN_PROGRESS } from '@/lib/types'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
+import SpecialStatusBadge from '@/components/SpecialStatusBadge'
+import { resolveSpecialStatus } from '@/lib/special-statuses'
 
 const PAGE_SIZE = 50
 
@@ -45,6 +47,12 @@ function debtorExecutionOffice(debtor: {
   branch_list?: { name?: string | null; court_name?: string | null; execution_office?: string | null } | null
 }): string {
   return debtor.branch_list?.execution_office?.trim() || '—'
+}
+
+function debtorSpecialStatus(debtor: {
+  special_status?: { name?: string | null; color?: string | null } | { name?: string | null; color?: string | null }[] | null
+}) {
+  return resolveSpecialStatus(debtor.special_status)
 }
 
 function debtorCourtExecutionLine(debtor: {
@@ -107,11 +115,50 @@ export default function DebtorsPage() {
   const [criminalImportOpen, setCriminalImportOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [moveModalOpen, setMoveModalOpen] = useState(false)
+  const [filterSpecialStatus, setFilterSpecialStatus] = useState('')
+  const [statusFilterOptions, setStatusFilterOptions] = useState<{ value: string; label: string }[]>([
+    { value: '', label: 'كل الحالات الخاصة' },
+    { value: '__none__', label: 'بدون صفة' },
+  ])
 
   useEffect(() => {
     setFilterCaseType(lockedCaseType ?? '')
     setSearch('')
+    setFilterSpecialStatus('')
   }, [branchId, viewAllBranches, filterListId, lockedCaseType])
+
+  useEffect(() => {
+    if (!branchId && !viewAllBranches) {
+      setStatusFilterOptions([
+        { value: '', label: 'كل الحالات الخاصة' },
+        { value: '__none__', label: 'بدون صفة' },
+      ])
+      return
+    }
+    const params = new URLSearchParams()
+    if (viewAllBranches) params.set('viewAll', '1')
+    else if (branchId) params.set('branchId', branchId)
+    fetch(`/api/admin/special-statuses?${params}`)
+      .then(r => r.json())
+      .then(json => {
+        const rows = (json.statuses ?? []) as { id: string; ids?: string[]; name: string; is_active?: boolean }[]
+        setStatusFilterOptions([
+          { value: '', label: 'كل الحالات الخاصة' },
+          { value: '__none__', label: 'بدون صفة' },
+          // عند «كل الفروع» الصفة لها نسخة بكل فرع — الفلترة على كل النسخ
+          ...rows.filter(s => s.is_active !== false).map(s => ({
+            value: s.ids?.length ? s.ids.join(',') : s.id,
+            label: s.name,
+          })),
+        ])
+      })
+      .catch(() => {
+        setStatusFilterOptions([
+          { value: '', label: 'كل الحالات الخاصة' },
+          { value: '__none__', label: 'بدون صفة' },
+        ])
+      })
+  }, [branchId, viewAllBranches])
   const [showAllDebtors, setShowAllDebtors] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -120,6 +167,7 @@ export default function DebtorsPage() {
     searchTerm: string,
     listId: string | null,
     caseType: '' | CaseType = '',
+    specialStatus: string = '',
     offset = 0,
     append = false,
     limitOverride?: number,
@@ -146,6 +194,7 @@ export default function DebtorsPage() {
       else if (branchId) params.set('branchId', branchId)
       if (listId) params.set('listId', listId)
       if (caseType) params.set('caseType', caseType)
+      if (specialStatus) params.set('specialStatusId', specialStatus)
       if (searchTerm.trim()) params.set('search', searchTerm.trim())
 
       const res = await fetch(`/api/admin/debtors?${params}`)
@@ -177,22 +226,22 @@ export default function DebtorsPage() {
   }, [branchId, viewAllBranches])
 
   useEffect(() => {
-    fetchDebtors(search, filterListId, filterCaseType)
-  }, [fetchDebtors, filterListId, filterCaseType])
+    fetchDebtors(search, filterListId, filterCaseType, filterSpecialStatus)
+  }, [fetchDebtors, filterListId, filterCaseType, filterSpecialStatus])
 
   function handleSearch(val: string) {
     setSearch(val)
     setShowAllDebtors(false)
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      fetchDebtors(val, filterListId, filterCaseType)
+      fetchDebtors(val, filterListId, filterCaseType, filterSpecialStatus)
     }, 300)
   }
 
   function loadAllRemaining() {
     const remaining = Math.max(0, total - debtors.length)
     if (remaining <= 0 || loadingMore) return
-    fetchDebtors(search, filterListId, filterCaseType, debtors.length, true, remaining)
+    fetchDebtors(search, filterListId, filterCaseType, filterSpecialStatus, debtors.length, true, remaining)
   }
 
   async function deleteDebtor(id: string, name: string) {
@@ -215,7 +264,7 @@ export default function DebtorsPage() {
         return
       }
       setDeletingId(null)
-      fetchDebtors(search, filterListId, filterCaseType)
+      fetchDebtors(search, filterListId, filterCaseType, filterSpecialStatus)
     } catch {
       setError('فشل الحذف')
       setDeletingId(null)
@@ -268,7 +317,7 @@ export default function DebtorsPage() {
     preserveScrollDuring(() => {
       if (summary && summary.failed > 0) {
         // بعض المحددين فشلوا — أعد تحميل الصفحة الحالية دون الرجوع للبداية إن أمكن
-        void fetchDebtors(search, filterListId, filterCaseType, 0, false)
+        void fetchDebtors(search, filterListId, filterCaseType, filterSpecialStatus, 0, false)
         return
       }
       setDebtors(prev => prev.filter((d: { id: string }) => !movedIds.has(d.id)))
@@ -316,7 +365,7 @@ export default function DebtorsPage() {
 
       {/* Search bar */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="relative">
             <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-[#767676]">
               <SearchIcon />
@@ -352,13 +401,23 @@ export default function DebtorsPage() {
             searchable={false}
             disabled={Boolean(lockedCaseType)}
           />
+          <PremiumSelect
+            value={filterSpecialStatus}
+            onChange={setFilterSpecialStatus}
+            options={statusFilterOptions}
+            placeholder="كل الحالات الخاصة"
+            fieldLabel="الحالة الخاصة"
+            headerTitle="تصفية حسب الحالة الخاصة"
+            searchable
+          />
         </div>
-        {(search || filterListId || filterCaseType) && !loading && (
+        {(search || filterListId || filterCaseType || filterSpecialStatus) && !loading && (
           <p className="text-xs text-[#767676] mt-2">
             {total === 0 ? 'لا نتائج' : `${total} نتيجة`}
             {search ? ` للبحث عن "${search}"` : ''}
             {filterCaseType ? ` · ${CASE_TYPE_LABELS[filterCaseType]}` : ''}
             {filterListId ? ' ضمن القائمة المحددة' : ''}
+            {filterSpecialStatus === '__none__' ? ' · بدون صفة' : filterSpecialStatus ? ` · ${statusFilterOptions.find(o => o.value === filterSpecialStatus)?.label ?? 'صفة محددة'}` : ''}
           </p>
         )}
       </div>
@@ -403,6 +462,7 @@ export default function DebtorsPage() {
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH>
+                    <TH>الحالة الخاصة</TH>
                     <TH>🏛 المحكمة</TH>
                     <TH>⚖️ دائرة التنفيذ</TH>
                     <TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
@@ -453,6 +513,7 @@ export default function DebtorsPage() {
                     <TH>نوع الدعوى</TH>
                     {viewAllBranches && <TH>الفرع</TH>}
                     <TH>القائمة</TH>
+                    <TH>الحالة الخاصة</TH>
                     <TH>🏛 المحكمة</TH>
                     <TH>⚖️ دائرة التنفيذ</TH>
                     <TH>رقم الهوية</TH>
@@ -502,6 +563,14 @@ export default function DebtorsPage() {
                         <TD><span className="text-xs text-[#767676]">{debtor.branch_name ?? '—'}</span></TD>
                       )}
                       <TD><span className="text-xs text-[#767676]">{debtorListName(debtor)}</span></TD>
+                      <TD>
+                        {(() => {
+                          const ss = debtorSpecialStatus(debtor)
+                          return ss.name
+                            ? <SpecialStatusBadge name={ss.name} color={ss.color} />
+                            : <span className="text-xs text-[#767676]">—</span>
+                        })()}
+                      </TD>
                       <TD><span className="text-xs text-[#767676]">{debtorCourtName(debtor)}</span></TD>
                       <TD><span className="text-xs text-[#767676]">{debtorExecutionOffice(debtor)}</span></TD>
                       <TD><span className="font-mono text-xs" dir="ltr">{debtor.id_number ?? '—'}</span></TD>
@@ -587,6 +656,12 @@ export default function DebtorsPage() {
                   </p>
                   {debtor.id_number && <p className="text-xs text-[#767676] font-mono mb-1" dir="ltr">{debtor.id_number}</p>}
                   <p className="text-xs text-[#767676] mb-1">القائمة: {debtorListName(debtor)}</p>
+                  {(() => {
+                    const ss = debtorSpecialStatus(debtor)
+                    return ss.name ? (
+                      <div className="mb-1"><SpecialStatusBadge name={ss.name} color={ss.color} /></div>
+                    ) : null
+                  })()}
                   {debtorCourtExecutionLine(debtor) && (
                     <p className="text-xs text-[#767676] mb-1">{debtorCourtExecutionLine(debtor)}</p>
                   )}
@@ -664,12 +739,12 @@ export default function DebtorsPage() {
       <DebtorImportModal
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onComplete={() => fetchDebtors(search, filterListId, filterCaseType)}
+        onComplete={() => fetchDebtors(search, filterListId, filterCaseType, filterSpecialStatus)}
       />
       <CriminalDebtorImportModal
         open={criminalImportOpen}
         onClose={() => setCriminalImportOpen(false)}
-        onComplete={() => fetchDebtors(search, filterListId, filterCaseType)}
+        onComplete={() => fetchDebtors(search, filterListId, filterCaseType, filterSpecialStatus)}
       />
       <MoveToPaymentInProgressModal
         open={moveModalOpen}

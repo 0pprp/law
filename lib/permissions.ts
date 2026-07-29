@@ -104,6 +104,16 @@ export function canWriteAdminData(role: string | null | undefined): boolean {
   return isAdmin(role)
 }
 
+/** إدارة الحالات الخاصة (صفات المدينين) — المدير ومسؤول الدعاوى المدنية */
+export function canManageSpecialStatuses(role: string | null | undefined): boolean {
+  return isAdmin(role) || isLegalManager(role)
+}
+
+/** حذف الصفات نفسها — المدير فقط */
+export function canDeleteSpecialStatuses(role: string | null | undefined): boolean {
+  return isAdmin(role)
+}
+
 /** تكليف المهام — مدير / موظف / مسؤولو الأقسام (ليس المحاسب) */
 export function canAssignTasks(role: string | null | undefined): boolean {
   return isAdmin(role) || role === 'employee' || isAnyLegalManager(role)
@@ -353,6 +363,9 @@ export function canManageTaskManagement(role: string | null | undefined): boolea
  * - مسؤول متابعة التسديد: لوحته والتسديدات فقط
  */
 export function isNavVisibleForRole(href: string, role: string | null | undefined): boolean {
+  if (href === '/admin/special-statuses' || href.startsWith('/admin/special-statuses/')) {
+    return canManageSpecialStatuses(role)
+  }
   if (href === '/admin/task-management' || href.startsWith('/admin/task-management/')) {
     return canManageTaskManagement(role)
   }

@@ -23,7 +23,7 @@ import { Card } from '@/components/ui/card'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
-import { getR2UrlFor } from '@/lib/r2-url'
+import { storedFileUrl } from '@/lib/stored-file-url'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   assignment_pending_acceptance: 'warning',
@@ -158,13 +158,13 @@ export default async function DelegateTaskDetailPage({ params }: { params: Promi
   const taskAttachments = (rawTaskAtts ?? []).map(att => ({
     ...att,
     // السابق: supabase.storage.from('task-files').createSignedUrl(...)
-    signedUrl: getR2UrlFor('task-files', att.file_path),
+    signedUrl: storedFileUrl('task-files', att.file_path),
   }))
 
   const debtorAttachments = (rawDebtorAtts ?? []).map(att => ({
     ...att,
     // السابق: supabase.storage.from('debtor-files').createSignedUrl(...)
-    signedUrl: getR2UrlFor('debtor-files', att.file_path),
+    signedUrl: storedFileUrl('debtor-files', att.file_path),
   }))
 
   const d = debtor as {

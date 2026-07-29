@@ -22,10 +22,12 @@ import { taskLawyerId } from '@/lib/task-assignment'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { isTaskOverdue, taskOverdueDays } from '@/lib/local-date'
 import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
+import SpecialStatusBadge from '@/components/SpecialStatusBadge'
 import { cacheInvalidatePrefix } from '@/lib/query-cache'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
 import { appConfirm } from '@/lib/app-dialog'
 import { resolveCourtName, resolveExecutionOffice } from '@/lib/awaiting-assignment'
+import { resolveSpecialStatus } from '@/lib/special-statuses'
 import { fetchBranchCourtNames } from '@/lib/branch-lists'
 
 type StageView = 'waiting' | 'assigned' | 'overdue'
@@ -49,6 +51,8 @@ interface StageDebtor {
   branchListName: string | null
   courtName: string | null
   executionOffice: string | null
+  specialStatusName: string | null
+  specialStatusColor: string | null
 }
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
@@ -130,6 +134,9 @@ function DebtorStageRow({
         >
           {d.debtorName}
         </Link>
+        {d.specialStatusName && (
+          <SpecialStatusBadge name={d.specialStatusName} color={d.specialStatusColor} className="mt-1" />
+        )}
         {(d.courtName || d.executionOffice) && (
           <div className="mt-1 text-sm font-semibold text-[#1D6365]">
             {[
@@ -444,6 +451,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
         id, full_name, phone, receipt_type, receipt_number, branch_id, branch_list_id,
         remaining_amount, case_status, case_type, current_task_id,
         branch_list:branch_lists(name, court_name, execution_office),
+        special_status:special_statuses(id, name, color),
         current_task:tasks!current_task_id(
           id, task_status, assigned_to, created_at, due_date, task_definition_id, branch_id,
           lawyer:profiles!tasks_assigned_to_fkey(full_name, role)
@@ -484,6 +492,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
         const bl = Array.isArray(d.branch_list) ? d.branch_list[0] : d.branch_list
         const lawyer = Array.isArray(t.lawyer) ? t.lawyer[0] : t.lawyer
         const bId = (d.branch_id ?? t.branch_id ?? null) as string | null
+        const ss = resolveSpecialStatus(d.special_status)
         return {
           debtorId: d.id,
           debtorName: d.full_name,
@@ -503,6 +512,8 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
           branchListName: bl?.name?.trim() ?? null,
           courtName: resolveCourtName(d.branch_list),
           executionOffice: resolveExecutionOffice(d.branch_list),
+          specialStatusName: ss.name,
+          specialStatusColor: ss.color,
         }
       })
 

@@ -6,7 +6,7 @@ import { canReadAllBranches, isAdmin, isLegalManager } from '@/lib/permissions'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireLawyerInScope } from '@/lib/section-guard'
-import { getR2UrlFor } from '@/lib/r2-url'
+import { storedFileUrl } from '@/lib/stored-file-url'
 
 const SIGNED_TTL_SEC = 900
 
@@ -69,5 +69,5 @@ export async function POST(request: Request) {
   // if (signErr) return apiServerError('lawyer-file-url:sign', signErr)
   // return NextResponse.json({ url: data.signedUrl })
 
-  return NextResponse.json({ url: getR2UrlFor('lawyer-files', row.file_path) })
+  return NextResponse.json({ url: storedFileUrl('lawyer-files', row.file_path) })
 }
