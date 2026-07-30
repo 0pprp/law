@@ -428,6 +428,13 @@ export interface UnassignedStageCount {
   label: string
   sortOrder: number
   count: number
+  taskType?: string | null
+}
+
+export type PleadingHearingBadgeCounts = {
+  yellow: number
+  red: number
+  gray: number
 }
 
 export const CURRENT_TASK_PAGE_SIZE = 50
@@ -905,8 +912,8 @@ export async function fetchDashboardData(
   ]
 
   const { data: defs } = allDefIds.length
-    ? await supabase.from('task_definitions').select('id, label, sort_order').in('id', allDefIds)
-    : { data: [] as { id: string; label: string; sort_order: number }[] }
+    ? await supabase.from('task_definitions').select('id, label, sort_order, task_type').in('id', allDefIds)
+    : { data: [] as { id: string; label: string; sort_order: number; task_type: string | null }[] }
 
   const defMap = new Map((defs ?? []).map(d => [d.id, d]))
 
@@ -920,6 +927,7 @@ export async function fetchDashboardData(
         label: def?.label ?? '—',
         sortOrder: def?.sort_order ?? 999,
         count,
+        taskType: def?.task_type ?? null,
       })
     }
 
@@ -933,6 +941,7 @@ export async function fetchDashboardData(
         } else {
           prev.count += s.count
           if (s.sortOrder < prev.sortOrder) prev.sortOrder = s.sortOrder
+          if (!prev.taskType && s.taskType) prev.taskType = s.taskType
         }
       }
       stages.length = 0
@@ -954,6 +963,82 @@ export async function fetchDashboardData(
     unassigned: stages.reduce((sum, s) => sum + s.count, 0),
     assigned: meta.assigned,
   }
+}
+
+/**
+ * عدّادات تاريخ المرافعة لكارد «مرافعات» غير المكلفة على لوحة التحكم.
+ * yellow = خلال 3 أيام | red = خلال يومين | gray = مضى الموعد
+ */
+export async function fetchPleadingHearingBadgeCounts(
+  supabase: SupabaseClient,
+  branchId: string | null,
+  options?: { branchListId?: string | null },
+): Promise<PleadingHearingBadgeCounts> {
+  const { getHearingDateStatus } = await import('@/lib/hearing-date-utils')
+  const empty: PleadingHearingBadgeCounts = { yellow: 0, red: 0, gray: 0 }
+
+  let defsQ = supabase
+    .from('task_definitions')
+    .select('id')
+    .eq('task_type', 'pleading')
+    .eq('is_active', true)
+    .or('case_type.eq.civil,case_type.is.null')
+  if (branchId) defsQ = defsQ.eq('branch_id', branchId)
+
+  const { data: defs, error: defsError } = await defsQ
+  if (defsError) {
+    console.error('[fetchPleadingHearingBadgeCounts:defs]', defsError.message)
+    return empty
+  }
+  const defIds = (defs ?? []).map(d => d.id)
+  if (!defIds.length) return empty
+
+  const terminalFilter = `(${OVERDUE_TERMINAL_STATUSES.join(',')})`
+  const PAGE = 500
+  let offset = 0
+  const counts: PleadingHearingBadgeCounts = { yellow: 0, red: 0, gray: 0 }
+
+  while (true) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q: any = supabase
+      .from('debtors')
+      .select(`
+        first_hearing_date,
+        current_task:tasks!current_task_id!inner(
+          id, assigned_to, task_status, task_definition_id
+        )
+      `)
+      .not('case_status', 'eq', 'closed')
+      .not('case_status', 'eq', 'payment_in_progress')
+      .is('special_status_id', null)
+      .eq('case_type', 'civil')
+      .in('current_task.task_definition_id', defIds)
+      .is('current_task.assigned_to', null)
+      .not('current_task.task_status', 'in', terminalFilter)
+      .order('id')
+      .range(offset, offset + PAGE - 1)
+
+    if (branchId) q = q.eq('branch_id', branchId)
+    if (options?.branchListId) q = q.eq('branch_list_id', options.branchListId)
+
+    const { data, error } = await q
+    if (error) {
+      console.error('[fetchPleadingHearingBadgeCounts]', error.message)
+      break
+    }
+    const chunk = data ?? []
+    for (const row of chunk) {
+      const date = row.first_hearing_date ? String(row.first_hearing_date).slice(0, 10) : null
+      const status = getHearingDateStatus(date)
+      if (status === 'yellow') counts.yellow += 1
+      else if (status === 'red') counts.red += 1
+      else if (status === 'gray') counts.gray += 1
+    }
+    if (chunk.length < PAGE) break
+    offset += PAGE
+  }
+
+  return counts
 }
 
 export async function fetchUnassignedCurrentTasks(

@@ -7,6 +7,7 @@ import { logActivity } from '@/lib/activity-log'
 import { isAllowedTaskFile, sanitizeStorageKey } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { uploadToR2, deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
+import { logR2UploadError, r2UploadClientMessage } from '@/lib/r2-upload-diagnostics'
 
 const MAX_BYTES = 15 * 1024 * 1024
 
@@ -79,7 +80,15 @@ export async function POST(request: NextRequest) {
     //     contentType: file.type || 'application/octet-stream',
     //     upsert: false,
     //   })
-    return apiServerError('upload-task-file', uploadErr, 'فشل رفع الملف')
+    logR2UploadError('upload-task-file', uploadErr, {
+      taskId,
+      objectKey: r2Key,
+      fileName: file.name,
+      fileSize: file.size,
+      contentType: file.type,
+      role: profile.role,
+    })
+    return safeClientError(r2UploadClientMessage(uploadErr), 500)
   }
 
   let attachment = null

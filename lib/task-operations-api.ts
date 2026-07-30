@@ -241,6 +241,25 @@ export async function applyTaskTransition(
     return { ok: false, error: linkErr.message }
   }
 
+  // تاريخ المرافعة يُلتقط من إنجاز «إقامة دعوى» ويُحفظ مرة واحدة فقط للمدين
+  if ((task as any).task_type === 'file_lawsuit' && task.debtor_id) {
+    const hearingDate = String(completionData.hearing_date ?? '').trim().slice(0, 10)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(hearingDate)) {
+      const { data: currentDebtor } = await supabase
+        .from('debtors')
+        .select('first_hearing_date')
+        .eq('id', task.debtor_id)
+        .maybeSingle()
+
+      if (!currentDebtor?.first_hearing_date) {
+        await supabase
+          .from('debtors')
+          .update({ first_hearing_date: hearingDate } as any)
+          .eq('id', task.debtor_id)
+      }
+    }
+  }
+
   // الاعتماد النهائي واحتساب الأتعاب — فقط بعد نجاح إنشاء المهمة التالية وربطها
   if (awaitingFinalization) {
     const finalizeResult = await finalizeTaskApproval(supabase, task.id, userId)

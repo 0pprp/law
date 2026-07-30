@@ -25,7 +25,12 @@ import { assertDebtorSection, resolveCaseScope } from '@/lib/case-scope'
 import type { UserRole } from '@/lib/types'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import { BackButton } from '@/components/ui/back-button'
-import { fetchCriminalDebtorDetails, CONTRACT_GUARANTOR_STATUS_LABELS, isContractGuarantorStatus } from '@/lib/criminal-debtor-details'
+import {
+  fetchCriminalDebtorDetails,
+  CONTRACT_GUARANTOR_STATUS_LABELS,
+  isContractGuarantorStatus,
+  displayCriminalAmountText,
+} from '@/lib/criminal-debtor-details'
 
 function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
@@ -95,7 +100,16 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const overviewTab = isCriminal ? (
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <StatCard label="المبلغ بذمته" value={fmtMoney(debtor.remaining_amount)} accent="teal" valueColor="text-[#2C8780]" />
+        <StatCard
+          label="المبلغ بذمته"
+          value={displayCriminalAmountText(
+            criminalDetails?.amount_owed,
+            debtor.receipt_amount,
+            debtor.remaining_amount,
+          )}
+          accent="teal"
+          valueColor="text-[#2C8780]"
+        />
         <StatCard label="إجمالي التسديدات" value={fmtMoney(totalPaymentsSum)} accent="green" valueColor="text-emerald-700" />
         <StatCard label="حالة المدين" value={debtor.case_status ?? '—'} accent="teal" />
       </div>
@@ -108,7 +122,10 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
             <InfoRow label="عنوان السكن الحالي" value={criminalDetails?.current_address} />
             <InfoRow label="تاريخ الواقعة" value={criminalDetails?.incident_date ? fmtDate(criminalDetails.incident_date) : null} mono />
             <InfoRow label="نوع التهمة" value={criminalDetails?.charge_type} />
-            <InfoRow label="المبلغ الذي بذمته" value={criminalDetails?.amount_owed || '—'} />
+            <InfoRow
+              label="المبلغ الذي بذمته"
+              value={displayCriminalAmountText(criminalDetails?.amount_owed)}
+            />
             <InfoRow label="هل لديه عقد وكفيل" value={contractLabel} />
             <InfoRow label="الشاهد الأول" value={criminalDetails?.first_witness_name} />
             <InfoRow label="الشاهد الثاني" value={criminalDetails?.second_witness_name} />

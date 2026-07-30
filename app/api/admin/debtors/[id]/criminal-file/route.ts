@@ -24,6 +24,11 @@ import {
   r2ObjectKey,
 } from '@/lib/r2-storage'
 import { canResolveStoredFilePath, relativeStoredPath, storedFileUrl } from '@/lib/stored-file-url'
+import {
+  logR2UploadError,
+  missingR2EnvironmentVariables,
+  r2UploadClientMessage,
+} from '@/lib/r2-upload-diagnostics'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -51,6 +56,19 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
   const debtor = gate.data as { id: string; branch_id: string | null }
   if (!canStaffWriteBranch(auth.profile, debtor.branch_id)) return apiForbiddenResponse()
+
+  const missingR2Env = missingR2EnvironmentVariables()
+  if (missingR2Env.length) {
+    console.error('[criminal-file:config] Missing R2 environment variables', {
+      missingEnvironmentVariables: missingR2Env,
+      debtorId,
+      role: auth.profile?.role,
+    })
+    return safeClientError(
+      `إعدادات تخزين R2 ناقصة في الخادم: ${missingR2Env.join(', ')}`,
+      500,
+    )
+  }
 
   async function finalize(kind: CriminalFileKind, newPath: string) {
     const r2Key = r2ObjectKey('debtor-files', newPath)
@@ -122,11 +140,21 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       }
 
       const filePath = buildCriminalFilePath(debtorId, kind)
-      const uploadUrl = await createR2PresignedUploadUrl(
-        r2ObjectKey('debtor-files', filePath),
-        'application/pdf',
-      )
-      return NextResponse.json({ uploadUrl, filePath, contentType: 'application/pdf' })
+      const objectKey = r2ObjectKey('debtor-files', filePath)
+      try {
+        const uploadUrl = await createR2PresignedUploadUrl(objectKey, 'application/pdf')
+        return NextResponse.json({ uploadUrl, filePath, contentType: 'application/pdf' })
+      } catch (uploadErr) {
+        logR2UploadError('criminal-file:prepare', uploadErr, {
+          debtorId,
+          kind,
+          objectKey,
+          fileName,
+          fileSize,
+          role: auth.profile?.role,
+        })
+        return safeClientError(r2UploadClientMessage(uploadErr), 500)
+      }
     }
 
     if (body.action === 'commit') {
@@ -166,7 +194,16 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
     await uploadToR2(buffer, r2ObjectKey('debtor-files', newPath), 'application/pdf')
   } catch (uploadErr) {
-    return apiServerError('criminal-file:upload', uploadErr, 'فشل رفع الملف')
+    logR2UploadError('criminal-file:upload', uploadErr, {
+      debtorId,
+      kind: kindRaw,
+      objectKey: r2ObjectKey('debtor-files', newPath),
+      fileName: file.name,
+      fileSize: file.size,
+      contentType: file.type,
+      role: auth.profile?.role,
+    })
+    return safeClientError(r2UploadClientMessage(uploadErr), 500)
   }
 
   return finalize(kindRaw, newPath)

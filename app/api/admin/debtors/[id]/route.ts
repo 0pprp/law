@@ -23,7 +23,7 @@ import {
   rejectBranchListForCriminal,
   sectionForbiddenResponse,
 } from '@/lib/case-scope'
-import { fetchCriminalDebtorDetails, upsertCriminalDebtorDetails } from '@/lib/criminal-debtor-details'
+import { fetchCriminalDebtorDetails, upsertCriminalDebtorDetails, optionalNumericAmountOrNull } from '@/lib/criminal-debtor-details'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -132,23 +132,20 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       phone: null,
     }
 
-    if (body.remaining_amount !== undefined || body.amount_owed !== undefined) {
-      const raw = body.remaining_amount ?? body.amount_owed
-      if (raw == null || raw === '') {
-        if (Number(debtor.total_payments ?? 0) === 0) {
-          updatePayload.required_amount = 0
-          updatePayload.remaining_amount = 0
-        }
-      } else {
-        const n = Number(raw)
-        if (!Number.isFinite(n) || n < 0) {
-          return NextResponse.json({ error: 'المبلغ يجب أن يكون رقماً موجباً أو فارغاً' }, { status: 400 })
-        }
-        if (Number(debtor.total_payments ?? 0) === 0) {
-          const required = computeDebtorRequiredAmount(n, Number(debtor.total_expenses ?? 0), 0, 0)
-          updatePayload.required_amount = required
-          updatePayload.remaining_amount = computeRemainingFromRequired(required, 0)
-        }
+    // المبلغ الجزائي نص حر في criminal_details.amount_owed.
+    // الأعمدة numeric (receipt_amount / remaining_amount): رقم صالح فقط، وإلا null/0.
+    const freeAmountRaw =
+      (body.criminal_details && typeof body.criminal_details === 'object'
+        ? (body.criminal_details as Record<string, unknown>).amount_owed
+        : undefined)
+      ?? body.receipt_amount
+      ?? body.remaining_amount
+    if (freeAmountRaw !== undefined) {
+      const numeric = optionalNumericAmountOrNull(freeAmountRaw)
+      updatePayload.receipt_amount = numeric
+      if (Number(debtor.total_payments ?? 0) === 0) {
+        updatePayload.required_amount = numeric ?? 0
+        updatePayload.remaining_amount = numeric ?? 0
       }
     }
 
@@ -164,10 +161,17 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     if (!updated) return NextResponse.json({ error: 'لم يتم تحديث المدين' }, { status: 409 })
 
     if (body.criminal_details && typeof body.criminal_details === 'object') {
+      const detailsInput = { ...(body.criminal_details as Record<string, string | null>) }
+      // amount_owed دائماً كنص (أو null) — لا Number()
+      if ('amount_owed' in detailsInput) {
+        const raw = detailsInput.amount_owed
+        detailsInput.amount_owed =
+          raw == null || String(raw).trim() === '' ? null : String(raw).trim()
+      }
       const detailsRes = await upsertCriminalDebtorDetails(
         admin,
         id,
-        body.criminal_details as Record<string, string | null>,
+        detailsInput,
       )
       if (detailsRes.error) {
         return NextResponse.json({ error: detailsRes.error }, { status: 400 })

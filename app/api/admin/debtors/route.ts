@@ -21,19 +21,9 @@ import {
   rejectBranchListForCriminal,
   sectionForbiddenResponse,
 } from '@/lib/case-scope'
-import { upsertCriminalDebtorDetails } from '@/lib/criminal-debtor-details'
+import { upsertCriminalDebtorDetails, optionalNumericAmountOrNull } from '@/lib/criminal-debtor-details'
 import { cleanupFailedDebtorCreate } from '@/lib/debtor-hard-delete'
 import { attachLastNotes } from '@/lib/debtor-last-notes'
-
-/** مبلغ اختياري للجزائي: null/فارغ → 0؛ سالب → خطأ */
-function parseOptionalNonNegativeAmount(value: unknown): { ok: true; value: number } | { ok: false; error: string } {
-  if (value == null || value === '') return { ok: true, value: 0 }
-  const n = Number(value)
-  if (!Number.isFinite(n) || n < 0) {
-    return { ok: false, error: 'المبلغ يجب أن يكون رقماً موجباً أو فارغاً' }
-  }
-  return { ok: true, value: n }
-}
 
 function isValidOptionalDate(value: unknown): boolean {
   if (value == null || value === '') return true
@@ -234,12 +224,22 @@ export async function POST(request: NextRequest) {
   }
 
   let remaining = 0
-  let receiptAmount = 0
+  let receiptAmount: number | null = 0
   let penalty = 0
+  let required = 0
   if (isCriminal) {
-    const amt = parseOptionalNonNegativeAmount(body.remaining_amount ?? body.amount_owed)
-    if (!amt.ok) return NextResponse.json({ error: amt.error }, { status: 400 })
-    remaining = amt.value
+    // amount_owed نص حر في criminal_details.
+    // receipt_amount / remaining_amount أعمدة numeric: رقم صالح فقط، وإلا null/0.
+    const freeAmountRaw =
+      (body.criminal_details && typeof body.criminal_details === 'object'
+        ? (body.criminal_details as Record<string, unknown>).amount_owed
+        : undefined)
+      ?? body.receipt_amount
+      ?? body.remaining_amount
+    const numeric = optionalNumericAmountOrNull(freeAmountRaw)
+    receiptAmount = numeric
+    remaining = numeric ?? 0
+    required = numeric ?? 0
     const details = body.criminal_details
     if (details && typeof details === 'object') {
       const incident = (details as Record<string, unknown>).incident_date
@@ -251,9 +251,11 @@ export async function POST(request: NextRequest) {
     remaining = Number(body.remaining_amount ?? 0) || 0
     receiptAmount = Number(body.receipt_amount ?? 0) || 0
     penalty = body.has_contract ? Number(body.penalty_amount ?? 0) || 0 : 0
+    required = computeDebtorRequiredAmount(remaining, 0, penalty, receiptAmount)
   }
-  const required = computeDebtorRequiredAmount(remaining, 0, penalty, receiptAmount)
-  const balanceRemaining = computeRemainingFromRequired(required, 0)
+  const balanceRemaining = isCriminal
+    ? remaining
+    : computeRemainingFromRequired(required, 0)
   const today = new Date().toISOString().split('T')[0]
 
   const { data: newDebtor, error: dbError } = await admin
@@ -291,8 +293,13 @@ export async function POST(request: NextRequest) {
   if (isCriminal) {
     const detailsInput =
       body.criminal_details && typeof body.criminal_details === 'object'
-        ? (body.criminal_details as Record<string, string | null>)
+        ? { ...(body.criminal_details as Record<string, string | null>) }
         : {}
+    if ('amount_owed' in detailsInput) {
+      const raw = detailsInput.amount_owed
+      detailsInput.amount_owed =
+        raw == null || String(raw).trim() === '' ? null : String(raw).trim()
+    }
     const detailsRes = await upsertCriminalDebtorDetails(admin, newDebtor.id, detailsInput)
     if (detailsRes.error) {
       const cleaned = await cleanupFailedDebtorCreate(admin, newDebtor.id, { caseType: 'criminal' })

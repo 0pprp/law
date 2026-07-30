@@ -4,6 +4,7 @@ import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { logActivity } from '@/lib/activity-log'
 import { requireLawyerInScope } from '@/lib/section-guard'
 import { uploadToR2, deleteFromR2, r2ObjectKey } from '@/lib/r2-storage'
+import { logR2UploadError, r2UploadClientMessage } from '@/lib/r2-upload-diagnostics'
 
 const MAX_BYTES = 15 * 1024 * 1024
 const ALLOWED_TYPES = new Set([
@@ -77,8 +78,15 @@ export async function POST(request: NextRequest) {
     // const { error: uploadErr } = await admin.storage
     //   .from('lawyer-files')
     //   .upload(filePath, buffer, { contentType: file.type, upsert: false })
-    const msg = uploadErr instanceof Error ? uploadErr.message : 'فشل رفع الملف'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    logR2UploadError('upload-lawyer-file', uploadErr, {
+      lawyerId,
+      objectKey: r2Key,
+      fileName: file.name,
+      fileSize: file.size,
+      contentType: file.type,
+      role: callerRole,
+    })
+    return NextResponse.json({ error: r2UploadClientMessage(uploadErr) }, { status: 500 })
   }
 
   const { data: row, error: insertErr } = await admin

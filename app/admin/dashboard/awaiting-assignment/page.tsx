@@ -19,7 +19,7 @@ export default function DashboardAwaitingAssignmentPage() {
   const caseType = ctParam === 'civil' || ctParam === 'criminal' ? ctParam : undefined
 
   function refreshDashboardCache() {
-    cacheInvalidatePrefix('dashboard:v9:')
+    cacheInvalidatePrefix('dashboard:v10:')
   }
 
   if (!isAdmin(role) && !isLegalManager(role) && !canAssignTasks(role)) {

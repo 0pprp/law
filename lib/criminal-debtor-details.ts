@@ -85,6 +85,34 @@ function trimOrNull(v: string | null | undefined): string | null {
   return t || null
 }
 
+/** عرض مبلغ جزائي كنص حر — بدون toLocaleString */
+export function displayCriminalAmountText(
+  amountOwed: string | null | undefined,
+  ...fallbacks: Array<string | number | null | undefined>
+): string {
+  const primary = trimOrNull(amountOwed)
+  if (primary) return primary
+  for (const raw of fallbacks) {
+    if (raw == null || raw === '') continue
+    const text = String(raw).trim()
+    if (text) return text
+  }
+  return '—'
+}
+
+/**
+ * للأعمدة numeric فقط: رقم صالح → يُحفظ كما هو؛
+ * فارغ أو نص غير رقمي → null (لا يكسر قاعدة البيانات).
+ */
+export function optionalNumericAmountOrNull(value: unknown): number | null {
+  if (value == null) return null
+  const raw = String(value).trim().replace(/,/g, '')
+  if (!raw) return null
+  if (!/^\d+(\.\d+)?$/.test(raw)) return null
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
+
 export async function fetchCriminalDebtorDetails(
   supabase: SupabaseClient,
   debtorId: string,
@@ -150,6 +178,26 @@ export async function upsertCriminalDebtorDetails(
     .maybeSingle()
 
   if (error) {
+    // إن كان العمود ما زال numeric في بعض البيئات: احفظ الرقم فقط أو null
+    const msg = error.message ?? ''
+    if (/invalid input syntax for type numeric|22P02/i.test(msg) || error.code === '22P02') {
+      const numericValue = optionalNumericAmountOrNull(payload.amount_owed)
+      const retry = await supabase
+        .from('criminal_debtor_details')
+        .upsert(
+          {
+            debtor_id: debtorId,
+            ...payload,
+            amount_owed: numericValue as unknown as string | null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'debtor_id' },
+        )
+        .select(SELECT_COLS)
+        .maybeSingle()
+      if (retry.error) return { data: null, error: retry.error.message }
+      return { data: (retry.data as CriminalDebtorDetails | null) ?? null, error: null }
+    }
     return { data: null, error: error.message }
   }
   return { data: (data as CriminalDebtorDetails | null) ?? null, error: null }

@@ -30,6 +30,7 @@ import { resolveCourtName, resolveExecutionOffice } from '@/lib/awaiting-assignm
 import { resolveSpecialStatus } from '@/lib/special-statuses'
 import { fetchBranchCourtNames } from '@/lib/branch-lists'
 import MoveToMonitoringModal from '@/components/MoveToMonitoringModal'
+import { getDaysUntilHearing, getHearingDateStatus } from '@/lib/hearing-date-utils'
 
 type StageView = 'waiting' | 'assigned' | 'overdue'
 
@@ -54,6 +55,7 @@ interface StageDebtor {
   executionOffice: string | null
   specialStatusName: string | null
   specialStatusColor: string | null
+  firstHearingDate: string | null
 }
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
@@ -103,6 +105,7 @@ function DebtorStageRow({
   assigning,
   bulkLawyerId,
   bulkDueDate,
+  showHearingDate,
 }: {
   d: StageDebtor
   view: StageView
@@ -115,11 +118,20 @@ function DebtorStageRow({
   assigning: boolean
   bulkLawyerId: string
   bulkDueDate: string
+  showHearingDate: boolean
 }) {
   const isWaiting = view === 'waiting'
   const canSelect = canMonitor || (canAssign && isWaiting)
+  const hearingStatus = showHearingDate ? getHearingDateStatus(d.firstHearingDate) : null
+  const hearingDays = showHearingDate ? getDaysUntilHearing(d.firstHearingDate) : null
+  const rowBackground =
+    hearingStatus === 'red' ? 'bg-red-50 hover:bg-red-100/70'
+      : hearingStatus === 'yellow' ? 'bg-yellow-50 hover:bg-yellow-100/70'
+        : hearingStatus === 'gray' ? 'bg-gray-100 hover:bg-gray-200/70'
+          : 'hover:bg-[#F8F7F8]'
+  const grayText = hearingStatus === 'gray' ? ' text-gray-500' : ''
   return (
-    <div className="flex items-center gap-3 px-4 py-4 hover:bg-[#F8F7F8] transition-colors">
+    <div className={`flex items-center gap-3 px-4 py-4 transition-colors ${rowBackground}${grayText}`}>
       {canSelect && (
         <input
           type="checkbox"
@@ -189,6 +201,34 @@ function DebtorStageRow({
           {fmtMoney(d.remaining)}
         </span>
       )}
+      {showHearingDate && (
+        <div className="min-w-[7.5rem] shrink-0 text-center">
+          <p className="text-[10px] font-bold text-[#767676]">تاريخ المرافعة</p>
+          {d.firstHearingDate ? (
+            <>
+              <p className={`text-xs font-bold ${hearingStatus === 'gray' ? 'text-gray-500' : 'text-[#231F20]'}`} dir="ltr">
+                {fmtDate(d.firstHearingDate)}
+              </p>
+              <p className={`text-[10px] font-bold ${
+                hearingStatus === 'red' ? 'text-red-700'
+                  : hearingStatus === 'yellow' ? 'text-yellow-700'
+                    : hearingStatus === 'gray' ? 'text-gray-500'
+                      : 'text-[#2C8780]'
+              }`}>
+                {hearingDays == null
+                  ? '—'
+                  : hearingDays < 0
+                    ? `مضى منذ ${Math.abs(hearingDays)} يوم`
+                    : hearingDays === 0
+                      ? 'اليوم'
+                      : `متبقٍ ${hearingDays} يوم`}
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-[#767676]">—</p>
+          )}
+        </div>
+      )}
       <StatusBadge status={d.taskStatus} />
       {canAssign && isWaiting && (
         <button
@@ -231,6 +271,7 @@ function BranchStageBox({
   bulkLawyerId,
   bulkDueDate,
   matchingIds,
+  showHearingDate,
 }: {
   branchId: string
   branchName: string
@@ -246,6 +287,7 @@ function BranchStageBox({
   bulkLawyerId: string
   bulkDueDate: string
   matchingIds: string[] | null
+  showHearingDate: boolean
 }) {
   const [courtFilter, setCourtFilter] = useState('')
   const [branchCourts, setBranchCourts] = useState<string[]>([])
@@ -361,6 +403,7 @@ function BranchStageBox({
                     assigning={assigning}
                     bulkLawyerId={bulkLawyerId}
                     bulkDueDate={bulkDueDate}
+                    showHearingDate={showHearingDate}
                   />
                 ))}
               </div>
@@ -395,6 +438,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const allowPaymentInProgress = canMoveToPaymentInProgress(role)
   const { caseTypeFilter } = useCaseScope()
   const [stageLabel, setStageLabel] = useState('')
+  const [stageTaskType, setStageTaskType] = useState<string | null>(null)
   const [stageCaseType, setStageCaseType] = useState<'civil' | 'criminal' | null>(null)
   const [debtors, setDebtors] = useState<StageDebtor[]>([])
   const [loading, setLoading] = useState(true)
@@ -435,6 +479,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       .eq('id', stageId)
       .single()
     setStageLabel(def?.label ?? '—')
+    setStageTaskType(def?.task_type ?? null)
     setStageIsFindAddress(isFindAddressTaskType(def?.task_type))
     const stageCt = def?.case_type === 'criminal' ? 'criminal' : 'civil'
     setStageCaseType(stageCt)
@@ -466,7 +511,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       let q: any = supabase
         .from('debtors')
         .select(`
-          id, full_name, phone, receipt_type, receipt_number, branch_id, branch_list_id,
+          id, full_name, phone, receipt_type, receipt_number, first_hearing_date, branch_id, branch_list_id,
           remaining_amount, case_status, case_type, current_task_id,
           branch_list:branch_lists(name, court_name, execution_office),
           special_status:special_statuses(id, name, color),
@@ -557,6 +602,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
           executionOffice: resolveExecutionOffice(d.branch_list),
           specialStatusName: ss.name,
           specialStatusColor: ss.color,
+          firstHearingDate: d.first_hearing_date ? String(d.first_hearing_date).slice(0, 10) : null,
         }
       })
 
@@ -565,6 +611,9 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   }, [stageId, branchId, viewAllBranches, caseTypeFilter, view])
 
   useEffect(() => { void load() }, [load])
+
+  // تاريخ المرافعة يُلتقط من «إقامة دعوى» لكنه يُعرَض على كارد «مرافعات»
+  const showHearingDate = (role === 'admin' || role === 'viewer') && stageTaskType === 'pleading'
 
   useEffect(() => {
     if (!branchId && !viewAllBranches) {
@@ -696,7 +745,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       })
       setAssigning(false)
       setSuccessMsg(`تم تكليف ${taskIds.length} مهمة بنجاح`)
-      cacheInvalidatePrefix('dashboard:v9:')
+      cacheInvalidatePrefix('dashboard:v10:')
     })
   }
 
@@ -724,7 +773,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     preserveScrollDuring(() => {
       setDebtors(prev => prev.filter(d => d.taskId !== taskId))
       setSuccessMsg('تم إلغاء التكليف — عادت المهمة لغير المكلفة')
-      cacheInvalidatePrefix('dashboard:v9:')
+      cacheInvalidatePrefix('dashboard:v10:')
     })
   }
 
@@ -745,7 +794,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     setMoveModalOpen(false)
     const movedTaskIds = new Set(selected)
     setSelected(new Set())
-    cacheInvalidatePrefix('dashboard:v9:')
+    cacheInvalidatePrefix('dashboard:v10:')
     if (summary) {
       const parts = [`تم تحويل ${summary.moved} مدين إلى جاري التسديد`]
       if (summary.failed > 0) parts.push(`تعذّر تحويل ${summary.failed}`)
@@ -776,7 +825,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       })
       setError('')
       setSuccessMsg(`تم تحويل ${debtorIds.length} اسم إلى «${statusName}» في تبويب الأسماء التي تحتاج مراقبة`)
-      cacheInvalidatePrefix('dashboard:v9:')
+      cacheInvalidatePrefix('dashboard:v10:')
     })
   }
 
@@ -925,6 +974,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
               bulkLawyerId={bulkLawyerId}
               bulkDueDate={bulkDueDate}
               matchingIds={matchingIds}
+              showHearingDate={showHearingDate}
             />
           ))}
         </div>

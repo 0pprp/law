@@ -15,6 +15,11 @@ import {
   deleteFromR2,
   r2ObjectKey,
 } from '@/lib/r2-storage'
+import {
+  logR2UploadError,
+  missingR2EnvironmentVariables,
+  r2UploadClientMessage,
+} from '@/lib/r2-upload-diagnostics'
 
 const MAX_BYTES = 15 * 1024 * 1024
 
@@ -50,6 +55,19 @@ export async function POST(request: NextRequest) {
 
   if (!canStaffWriteBranch(auth.profile, debtor.branch_id)) {
     return safeClientError('صلاحية غير كافية', 403)
+  }
+
+  const missingR2Env = missingR2EnvironmentVariables()
+  if (missingR2Env.length) {
+    console.error('[upload-debtor-file:config] Missing R2 environment variables', {
+      missingEnvironmentVariables: missingR2Env,
+      debtorId,
+      role: auth.profile?.role,
+    })
+    return safeClientError(
+      `إعدادات تخزين R2 ناقصة في الخادم: ${missingR2Env.join(', ')}`,
+      500,
+    )
   }
 
   async function finalize(filePath: string, fileName: string, fileSize: number) {
@@ -106,11 +124,20 @@ export async function POST(request: NextRequest) {
     if (jsonBody.action === 'prepare') {
       const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
       const filePath = `${debtorId}/${safeName}`
-      const uploadUrl = await createR2PresignedUploadUrl(
-        r2ObjectKey('debtor-files', filePath),
-        'application/pdf',
-      )
-      return NextResponse.json({ uploadUrl, filePath, contentType: 'application/pdf' })
+      const objectKey = r2ObjectKey('debtor-files', filePath)
+      try {
+        const uploadUrl = await createR2PresignedUploadUrl(objectKey, 'application/pdf')
+        return NextResponse.json({ uploadUrl, filePath, contentType: 'application/pdf' })
+      } catch (uploadErr) {
+        logR2UploadError('upload-debtor-file:prepare', uploadErr, {
+          debtorId,
+          objectKey,
+          fileName,
+          fileSize,
+          role: auth.profile?.role,
+        })
+        return safeClientError(r2UploadClientMessage(uploadErr), 500)
+      }
     }
 
     if (jsonBody.action === 'commit') {
@@ -118,14 +145,22 @@ export async function POST(request: NextRequest) {
       if (!filePath.startsWith(`${debtorId}/`) || !filePath.toLowerCase().endsWith('.pdf')) {
         return safeClientError('مسار الملف غير صالح', 400)
       }
-      const metadata = await getR2ObjectMetadata(r2ObjectKey('debtor-files', filePath))
+      const objectKey = r2ObjectKey('debtor-files', filePath)
+      const metadata = await getR2ObjectMetadata(objectKey)
       if (
         !metadata
         || metadata.size <= 0
         || metadata.size > MAX_BYTES
         || metadata.contentType !== 'application/pdf'
-        || !(await isR2PdfObject(r2ObjectKey('debtor-files', filePath)))
+        || !(await isR2PdfObject(objectKey))
       ) {
+        console.error('[upload-debtor-file:commit] R2 object verification failed', {
+          debtorId,
+          objectKey,
+          expectedFileSize: fileSize,
+          metadata,
+          role: auth.profile?.role,
+        })
         return safeClientError('لم يكتمل رفع ملف PDF إلى التخزين', 400)
       }
       return finalize(filePath, fileName, metadata.size)
@@ -146,7 +181,15 @@ export async function POST(request: NextRequest) {
   try {
     await uploadToR2(buffer, r2ObjectKey('debtor-files', filePath), 'application/pdf')
   } catch (uploadErr) {
-    return apiServerError('upload-debtor-file', uploadErr, 'فشل رفع الملف')
+    logR2UploadError('upload-debtor-file:proxy', uploadErr, {
+      debtorId,
+      objectKey: r2ObjectKey('debtor-files', filePath),
+      fileName: file.name,
+      fileSize: file.size,
+      contentType: file.type,
+      role: auth.profile?.role,
+    })
+    return safeClientError(r2UploadClientMessage(uploadErr), 500)
   }
 
   return finalize(filePath, file.name, file.size)

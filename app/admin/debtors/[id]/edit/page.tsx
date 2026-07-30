@@ -112,6 +112,15 @@ export default function EditDebtorPage() {
           branch_list_id: data.branch_list_id ?? '',
         })
         if (criminalCase) {
+          const owedText = (details?.amount_owed ?? '').trim()
+          const receiptFallback =
+            data.receipt_amount != null && data.receipt_amount !== ''
+              ? String(data.receipt_amount)
+              : ''
+          const remainingFallback =
+            data.remaining_amount != null && data.remaining_amount !== ''
+              ? String(data.remaining_amount)
+              : ''
           setCriminal({
             job_title: details?.job_title ?? '',
             current_address: details?.current_address ?? '',
@@ -120,7 +129,7 @@ export default function EditDebtorPage() {
             contract_guarantor_status: details?.contract_guarantor_status ?? '',
             first_witness_name: details?.first_witness_name ?? '',
             second_witness_name: details?.second_witness_name ?? '',
-            amount_owed: details?.amount_owed ?? '',
+            amount_owed: owedText || receiptFallback || remainingFallback,
           })
         } else if (data.branch_id) {
           const supabase = createClient()
@@ -176,6 +185,7 @@ export default function EditDebtorPage() {
         submitLock.current = false
         return
       }
+      const criminalPayload = criminalDetailsPayload(criminal)
       const response = await fetch(`/api/admin/debtors/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -183,7 +193,9 @@ export default function EditDebtorPage() {
           full_name: form.full_name.trim(),
           notes: form.notes || null,
           branch_list_id: null,
-          criminal_details: criminalDetailsPayload(criminal),
+          // نص حر — الـ API يزامن الأعمدة الرقمية فقط إن كانت القيمة رقماً صالحاً
+          receipt_amount: criminalPayload.amount_owed,
+          criminal_details: criminalPayload,
         }),
       })
       const result = await response.json().catch(() => ({}))

@@ -107,6 +107,7 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
           case_type: 'criminal',
           full_name: fullName.trim(),
           remaining_amount: null,
+          receipt_amount: criminalDetailsPayload(criminal).amount_owed,
           branch_list_id: null,
           criminal_details: criminalDetailsPayload(criminal),
         }),

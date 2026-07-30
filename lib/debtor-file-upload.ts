@@ -46,7 +46,20 @@ export async function uploadDebtorPdfFile(
     headers: { 'Content-Type': 'application/pdf' },
     body: file,
   })
-  if (!uploadRes.ok) throw new Error(`فشل رفع الملف إلى التخزين (${uploadRes.status})`)
+  if (!uploadRes.ok) {
+    const responseText = await uploadRes.text().catch(() => '')
+    console.error('[uploadDebtorPdfFile:direct-r2] Upload failed', {
+      status: uploadRes.status,
+      statusText: uploadRes.statusText,
+      response: responseText.slice(0, 1000),
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+    })
+    throw new Error(
+      `فشل رفع الملف مباشرة إلى R2 (${uploadRes.status}${uploadRes.statusText ? ` ${uploadRes.statusText}` : ''}). تحقق من CORS الخاص بالباكت.`,
+    )
+  }
 
   const commitRes = await fetch('/api/admin/upload-debtor-file', {
     method: 'POST',

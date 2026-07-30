@@ -112,6 +112,7 @@ export function CriminalDebtorFields({
       {showAmount && (
         <FormField label="المبلغ الذي بذمته">
           <input
+            type="text"
             className={formInputClass}
             value={form.amount_owed}
             disabled={disabled}

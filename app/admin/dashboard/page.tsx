@@ -19,7 +19,9 @@ import PaymentOpsCards from '@/components/PaymentOpsCards'
 import {
   fetchDashboardData,
   fetchPendingReviewCount,
+  fetchPleadingHearingBadgeCounts,
   type UnassignedStageCount,
+  type PleadingHearingBadgeCounts,
 } from '@/lib/task-assignment'
 
 interface DashboardCache {
@@ -29,11 +31,14 @@ interface DashboardCache {
   criminalAssignedStages: UnassignedStageCount[]
   civilOverdueStages: UnassignedStageCount[]
   criminalOverdueStages: UnassignedStageCount[]
+  pleadingHearingBadges: PleadingHearingBadgeCounts
   unassigned: number
   assigned: number
   pendingReview: number
   recentActivity: { action: string; created_at: string }[]
 }
+
+const EMPTY_HEARING_BADGES: PleadingHearingBadgeCounts = { yellow: 0, red: 0, gray: 0 }
 
 const EMPTY_DASH = {
   stages: [] as UnassignedStageCount[],
@@ -69,6 +74,7 @@ function StageGrid({
   linkLabel = 'عرض غير المكلفة',
   hrefForStage,
   barClassName = 'bg-yellow-400',
+  hearingBadges = null,
 }: {
   stages: UnassignedStageCount[]
   loading: boolean
@@ -79,6 +85,7 @@ function StageGrid({
   linkLabel?: string
   hrefForStage?: (s: UnassignedStageCount) => string
   barClassName?: string
+  hearingBadges?: PleadingHearingBadgeCounts | null
 }) {
   const stageTotal = stages.reduce((sum, s) => sum + s.count, 0)
   if (loading) {
@@ -103,34 +110,61 @@ function StageGrid({
     )
   }
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 pt-2">
       {stages.map((s, i) => {
         const pct = stageTotal > 0 ? Math.round((s.count / stageTotal) * 100) : 0
         const href = hrefForStage?.(s) ?? `/admin/dashboard/stages/${s.id}`
+        const showHearingBadges = Boolean(hearingBadges && s.taskType === 'pleading')
         return (
-          <StatCard
-            key={`${s.id}-${countLabel}`}
-            label={s.label}
-            value={s.count}
-            sub={`${s.count} ${countLabel} · ${pct}%`}
-            accent={stageAccent(i)}
-            icon={<TaskStageIcon />}
-            iconBg={stageIconBg(i)}
-            footer={
-              <div className="space-y-2">
-                <div className="h-1.5 bg-[rgba(118,118,118,0.1)] rounded-full overflow-hidden">
-                  <div className={`h-full rounded-full transition-all ${barClassName}`} style={{ width: `${pct}%` }} />
-                </div>
-                <Link
-                  href={href}
-                  className="block w-full py-1.5 text-center text-[11px] font-bold text-white rounded-lg hover:opacity-90 transition-opacity"
-                  style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+          <div key={`${s.id}-${countLabel}`} className={showHearingBadges ? 'relative' : undefined}>
+            {showHearingBadges && hearingBadges && (
+              <div className="absolute -top-2 left-2 z-10 flex items-center gap-1" dir="ltr">
+                <span
+                  title="مرافعات خلال 3 أيام"
+                  aria-label={`مرافعات خلال 3 أيام: ${hearingBadges.yellow}`}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-yellow-400 text-xs font-bold text-white shadow-sm ring-2 ring-white"
                 >
-                  {linkLabel}
-                </Link>
+                  {hearingBadges.yellow}
+                </span>
+                <span
+                  title="مرافعات خلال يومين"
+                  aria-label={`مرافعات خلال يومين: ${hearingBadges.red}`}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white shadow-sm ring-2 ring-white"
+                >
+                  {hearingBadges.red}
+                </span>
+                <span
+                  title="مرافعات منتهية"
+                  aria-label={`مرافعات منتهية: ${hearingBadges.gray}`}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-400 text-xs font-bold text-white shadow-sm ring-2 ring-white"
+                >
+                  {hearingBadges.gray}
+                </span>
               </div>
-            }
-          />
+            )}
+            <StatCard
+              label={s.label}
+              value={s.count}
+              sub={`${s.count} ${countLabel} · ${pct}%`}
+              accent={stageAccent(i)}
+              icon={<TaskStageIcon />}
+              iconBg={stageIconBg(i)}
+              footer={
+                <div className="space-y-2">
+                  <div className="h-1.5 bg-[rgba(118,118,118,0.1)] rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full transition-all ${barClassName}`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <Link
+                    href={href}
+                    className="block w-full py-1.5 text-center text-[11px] font-bold text-white rounded-lg hover:opacity-90 transition-opacity"
+                    style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+                  >
+                    {linkLabel}
+                  </Link>
+                </div>
+              }
+            />
+          </div>
         )
       })}
     </div>
@@ -166,6 +200,7 @@ export default function DashboardPage() {
   const [criminalAssignedStages, setCriminalAssignedStages] = useState<UnassignedStageCount[]>([])
   const [civilOverdueStages, setCivilOverdueStages] = useState<UnassignedStageCount[]>([])
   const [criminalOverdueStages, setCriminalOverdueStages] = useState<UnassignedStageCount[]>([])
+  const [pleadingHearingBadges, setPleadingHearingBadges] = useState<PleadingHearingBadgeCounts>(EMPTY_HEARING_BADGES)
   const [totalPendingReview, setTotalPendingReview] = useState(0)
   const [totalWaiting, setTotalWaiting] = useState(0)
   const [totalAssigned, setTotalAssigned] = useState(0)
@@ -182,6 +217,7 @@ export default function DashboardPage() {
       setCriminalAssignedStages([])
       setCivilOverdueStages([])
       setCriminalOverdueStages([])
+      setPleadingHearingBadges(EMPTY_HEARING_BADGES)
       setTotalWaiting(0)
       setTotalAssigned(0)
       setTotalPendingReview(0)
@@ -190,7 +226,7 @@ export default function DashboardPage() {
       return
     }
 
-    const cacheKey = `dashboard:v9:${branchId ?? 'all'}:${listId ?? 'all'}:${ct ?? 'both'}`
+    const cacheKey = `dashboard:v10:${branchId ?? 'all'}:${listId ?? 'all'}:${ct ?? 'both'}`
     const cached = cacheGet<DashboardCache>(cacheKey)
     if (cached) {
       setCivilStages(cached.civilStages)
@@ -199,6 +235,7 @@ export default function DashboardPage() {
       setCriminalAssignedStages(cached.criminalAssignedStages)
       setCivilOverdueStages(cached.civilOverdueStages)
       setCriminalOverdueStages(cached.criminalOverdueStages)
+      setPleadingHearingBadges(cached.pleadingHearingBadges ?? EMPTY_HEARING_BADGES)
       setTotalWaiting(cached.unassigned)
       setTotalAssigned(cached.assigned)
       setTotalPendingReview(cached.pendingReview)
@@ -214,6 +251,7 @@ export default function DashboardPage() {
     setCriminalAssignedStages([])
     setCivilOverdueStages([])
     setCriminalOverdueStages([])
+    setPleadingHearingBadges(EMPTY_HEARING_BADGES)
     setTotalWaiting(0)
     setTotalAssigned(0)
     setTotalPendingReview(0)
@@ -240,7 +278,13 @@ export default function DashboardPage() {
         ? fetchDashboardData(supabase, branchId, { caseType: 'criminal', branchListId: null })
         : Promise.resolve(EMPTY_DASH)
 
-      const [civilData, criminalData, pendingReview, activityRes] = await Promise.all([
+      const fetchHearingBadges = showCivilStages && (role === 'admin' || role === 'viewer')
+        ? fetchPleadingHearingBadgeCounts(supabase, branchId, {
+            branchListId: viewAllBranches ? null : listId,
+          })
+        : Promise.resolve(EMPTY_HEARING_BADGES)
+
+      const [civilData, criminalData, pendingReview, activityRes, hearingBadges] = await Promise.all([
         fetchCivil,
         fetchCriminal,
         fetchPendingReviewCount(
@@ -250,6 +294,7 @@ export default function DashboardPage() {
           ct,
         ),
         aq,
+        fetchHearingBadges,
       ])
 
       const next: DashboardCache = {
@@ -259,6 +304,7 @@ export default function DashboardPage() {
         criminalAssignedStages: criminalData.assignedStages,
         civilOverdueStages: civilData.overdueStages,
         criminalOverdueStages: criminalData.overdueStages,
+        pleadingHearingBadges: hearingBadges,
         unassigned: civilData.unassigned + criminalData.unassigned,
         assigned: civilData.assigned + criminalData.assigned,
         pendingReview,
@@ -272,6 +318,7 @@ export default function DashboardPage() {
       setCriminalAssignedStages(next.criminalAssignedStages)
       setCivilOverdueStages(next.civilOverdueStages)
       setCriminalOverdueStages(next.criminalOverdueStages)
+      setPleadingHearingBadges(next.pleadingHearingBadges)
       setTotalWaiting(next.unassigned)
       setTotalAssigned(next.assigned)
       setTotalPendingReview(next.pendingReview)
@@ -280,7 +327,7 @@ export default function DashboardPage() {
       console.error('[admin/dashboard] load error:', e)
     }
     setLoading(false)
-  }, [branchId, viewAllBranches, listId, ct, showCivilStages, showCriminalStages])
+  }, [branchId, viewAllBranches, listId, ct, showCivilStages, showCriminalStages, role])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -462,6 +509,7 @@ export default function DashboardPage() {
             emptyHref="/admin/debtors/new"
             showAddLink={showAddDebtorLink}
             hrefForStage={(s) => `/admin/dashboard/stages/${encodeURIComponent(s.id)}?view=waiting`}
+            hearingBadges={(role === 'admin' || role === 'viewer') ? pleadingHearingBadges : null}
           />
         </div>
       )}
