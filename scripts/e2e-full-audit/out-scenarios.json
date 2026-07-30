@@ -1,0 +1,112 @@
+[
+  {
+    "id": "s1:admin_assign",
+    "ok": true,
+    "detail": "status=200 {\"ok\":true}"
+  },
+  {
+    "id": "s1:lawyer_accept",
+    "ok": true,
+    "detail": "status=200 {\"success\":true}"
+  },
+  {
+    "id": "s1:modal_order_expenses_then_fields",
+    "ok": false,
+    "detail": "expense=true hybrid=false err=locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: /تأكيد|متابعة|حفظ|تم|التالي/ }).first()\n    - locator resolved to <button type=\"submit\" class=\"w-full font-bold py-2.5 rounded-lg transition-colors text-sm text-white disabled:opacity-60\">حفظ الملاحظات</button>\n  - attempting click action\n    - waiting for element to be visible, enabled and stable\n    - element is visible, enabled and stable\n    - scrolling into view if needed\n    - done scrolling\n    - <textarea rows=\"2\" placeholder=\"اختياري عند المبلغ 0\" class=\"w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500/25 focus:border-sky-500 transition-all resize-none\"></textarea> from <div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"task-expense-modal-title\" class=\"fixed inset-0 flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\n  - retrying click action\n    - waiting for element to be visible, enabled and stable\n    - element is visible, enabled and stable\n    - scrolling into view if needed\n    - done scrolling\n    - <div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"task-expense-modal-title\" class=\"fixed inset-0 flex items-center justify-center p-4\">…</div> intercepts pointer events\n  - retrying click action\n    - waiting 20ms\n    2 × waiting for element to be visible, enabled and stable\n      - element is visible, enabled and stable\n      - scrolling into view if needed\n      - done scrolling\n      - <textarea rows=\"2\" placeholder=\"اختياري عند المبلغ 0\" class=\"w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500/25 focus:border-sky-500 transition-all resize-none\"></textarea> from <div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"task-expense-modal-title\" class=\"fixed inset-0 flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\n    - retrying click action\n      - waiting 100ms\n    14 × waiting for element to be visible, enabled and stable\n       - element is visible, enabled and stable\n       - scrolling into view if needed\n       - done scrolling\n       - <textarea rows=\"2\" placeholder=\"اختياري عند المبلغ 0\" class=\"w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500/25 focus:border-sky-500 transition-all resize-none\"></textarea> from <div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"task-expense-modal-title\" class=\"fixed inset-0 flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\n     - retrying click action\n       - waiting 500ms\n       - waiting for element to be visible, enabled and stable\n       - element is visible, enabled and stable\n       - scrolling into view if needed\n       - done scrolling\n       - <div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"task-expense-modal-title\" class=\"fixed inset-0 flex items-center justify-center p-4\">…</div> intercepts pointer events\n     - retrying click action\n       - waiting 500ms\n       - waiting for element to be visible, enabled and stable\n       - element is visible, enabled and stable\n       - scrolling into view if needed\n       - done scrolling\n       - <textarea rows=\"2\" placeholder=\"اختياري عند المبلغ 0\" class=\"w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500/25 focus:border-sky-500 transition-all resize-none\"></textarea> from <div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"task-expense-modal-title\" class=\"fixed inset-0 flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\n     - retrying click action\n       - waiting 500ms\n       - waiting for element to be visible, enabled and stable\n       - element is visible, enabled and stable\n       - scrolling into view if needed\n       - done scrolling\n       - <textarea rows=\"2\" placeholder=\"اختياري عند المبلغ 0\" class=\"w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500/25 focus:border-sky-500 transition-all resize-none\"></textarea> from <div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"task-expense-modal-title\" class=\"fixed inset-0 flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\n     - retrying click action\n       - waiting 500ms\n    - waiting for element to be visible, enabled and stable\n    - element is visible, enabled and stable\n    - scrolling into view if needed\n    - done scrolling\n    - <textarea rows=\"2\" placeholder=\"اختياري عند المبلغ 0\" class=\"w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500/25 focus:border-sky-500 transition-all resize-none\"></textarea> from <div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"task-expense-modal-title\" class=\"fixed inset-0 flex items-center justify-center p-4\">…</div> subtree intercepts pointer events\n  - retrying click action\n    - waiting 500ms\n"
+  },
+  {
+    "id": "s1:fallback_submit",
+    "ok": true,
+    "detail": "status was assigned, forced pending_review"
+  },
+  {
+    "id": "s1:admin_approve",
+    "ok": true,
+    "detail": "status=200 {\"ok\":true,\"feeAmount\":0,\"legalManagerBonus\":0}"
+  },
+  {
+    "id": "s1:fee_credited",
+    "ok": true,
+    "detail": "delta=0 feeBefore=0 feeAfter=0 task_status=approved fee_status=approved_pending_next reward=15000"
+  },
+  {
+    "id": "s2:hybrid_enabled",
+    "ok": true,
+    "detail": "is_hybrid=true links=1"
+  },
+  {
+    "id": "s2:admin_assign",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "id": "s2:hybrid_modal_first",
+    "ok": true,
+    "detail": "hybridModal=true next=false"
+  },
+  {
+    "id": "s2:two_independent_records",
+    "ok": true,
+    "detail": "count=2 child=2685d309-3ed1-4714-b8b3-fe0238fb6778 err=none rows=[{\"id\":\"2685d309-3ed1-4714-b8b3-fe0238fb6778\",\"hybrid_parent_task_id\":\"f0d0bad9-fe52-484b-8a9a-2db1b1065612\",\"task_definition_id\":\"fc9cc6f4-b256-461a-969f-d555e0994cbc\",\"task_status\":\"pending_review\"},{\"id\":\"f0d0bad9-fe52-484b-8a9a-2db1b1065612\",\"hybrid_parent_task_id\":null,\"task_definition_id\":\"f9787f4f-a0b6-494f-ae32-52cbe023fb56\",\"task_status\":\"pending_review\"}]"
+  },
+  {
+    "id": "s3:move_to_duplicate_status",
+    "ok": true,
+    "detail": "status=200 {\"ok\":true,\"updated\":3,\"statusId\":\"9788c4e5-3c83-4f00-8187-e77e534ec7c5\"}"
+  },
+  {
+    "id": "s3:appear_in_duplicate_status",
+    "ok": true,
+    "detail": "moved=3/3"
+  },
+  {
+    "id": "s3:undo_one",
+    "ok": true,
+    "detail": "status=200 special_status_id=null"
+  },
+  {
+    "id": "s3:legacy_ui_removed",
+    "ok": true,
+    "detail": "WARNING: زر «نقل للأسماء المكررة» وكارد التراجع القديم حُذفا سابقاً — الوظيفة أصبحت صفة «الأسماء المكررة» + تحويل للمراقبة"
+  },
+  {
+    "id": "s4:admin_assign_status",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "id": "s4:status_persisted",
+    "ok": true,
+    "detail": "special_status_id=c3a88413-8a2d-4ea8-b71a-f816c9629ae0"
+  },
+  {
+    "id": "s4:status_debtors_list",
+    "ok": true,
+    "detail": "status=200 listed=true"
+  },
+  {
+    "id": "s4:viewer_change_status",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "id": "s4:viewer_delete_denied",
+    "ok": true,
+    "detail": "status=403"
+  },
+  {
+    "id": "s5:upload_api",
+    "ok": true,
+    "detail": "status=200 {\"ok\":true,\"filePath\":\"f0d0bad9-fe52-484b-8a9a-2db1b1065612/TEST-مرفق-1785368584787-55nbeuh5349.pdf\",\"attachment\":{\"id\":\"0ea63373-00c4-41c0-8f18-1a63633bc5b7\",\"file_name\":\"[TEST]-upload-68431333.pdf\",\"file_path\":\"f0d0bad9-fe52-484b-8a9a-2db1b1065612/TEST-مرفق-1785368584787-55nbeuh5349.pdf\",\"file_siz"
+  },
+  {
+    "id": "s5:r2_url",
+    "ok": false,
+    "detail": "url=f0d0bad9-fe52-484b-8a9a-2db1b1065612/TEST-مرفق-1785368584787-55nbeuh5349.pdf"
+  },
+  {
+    "id": "s5:file_opens",
+    "ok": false,
+    "detail": "guess=https://pub-029fa309232c423fbacd7723c644d28f.r2.dev/f0d0bad9-fe52-484b-8a9a-2db1b1065612/TEST-مرفق-1785368584787-55nbeuh5349.pdf status=404"
+  }
+]

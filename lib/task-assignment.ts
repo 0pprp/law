@@ -1259,7 +1259,7 @@ export async function fetchLawyerAssignedTasksPaginated(
   const [{ data: debtors }, { data: definitions }] = await Promise.all([
     supabase
       .from('debtors')
-      .select('id, full_name, governorate, remaining_amount, phone, receipt_number, branch_id')
+      .select('id, full_name, governorate, remaining_amount, phone, receipt_number, branch_id, branch_list_id, branch_list:branch_lists(name, court_name, execution_office)')
       .in('id', debtorIds),
     defIds.length
       ? supabase.from('task_definitions').select('id, label').in('id', defIds)
@@ -1403,6 +1403,16 @@ export interface LawyerTaskRow {
     remaining_amount?: number | null
     phone?: string | null
     receipt_number?: string | null
+    branch_list_id?: string | null
+    branch_list?: {
+      name?: string | null
+      court_name?: string | null
+      execution_office?: string | null
+    } | {
+      name?: string | null
+      court_name?: string | null
+      execution_office?: string | null
+    }[] | null
   } | null
 }
 

@@ -1,0 +1,578 @@
+[
+  {
+    "role": "admin",
+    "landed": "/admin/dashboard",
+    "links": [
+      "/admin/dashboard",
+      "/admin/debtors",
+      "/admin/special-statuses",
+      "/admin/tasks",
+      "/admin/tasks/review",
+      "/admin/closed-cases",
+      "/admin/lawyers",
+      "/admin/delegates",
+      "/admin/payments",
+      "/admin/finance",
+      "/admin/legal-manager-wallet",
+      "/admin/expenses",
+      "/admin/reports",
+      "/admin/task-management",
+      "/admin/settings",
+      "/admin/activity"
+    ],
+    "checks": [
+      {
+        "page": "لوحة التحكم",
+        "href": "/admin/dashboard",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "المدينون",
+        "href": "/admin/debtors",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "تكليف المهام",
+        "href": "/admin/tasks",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "مراجعة الإنجازات",
+        "href": "/admin/tasks/review",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "الأسماء التي تحتاج مراقبة (الحالات الخاصة)",
+        "href": "/admin/special-statuses",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "إدارة المهام",
+        "href": "/admin/task-management",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "التسديدات",
+        "href": "/admin/payments",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "الصرفيات",
+        "href": "/admin/expenses",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "أتعاب المحامين",
+        "href": "/admin/finance",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "التقارير",
+        "href": "/admin/reports",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "إعدادات الفرع",
+        "href": "/admin/settings",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      }
+    ],
+    "portalOk": true,
+    "error": null
+  },
+  {
+    "role": "viewer",
+    "landed": "/admin/dashboard",
+    "links": [
+      "/admin/dashboard",
+      "/admin/debtors",
+      "/admin/special-statuses",
+      "/admin/tasks",
+      "/admin/tasks/review",
+      "/admin/closed-cases",
+      "/admin/lawyers",
+      "/admin/delegates",
+      "/admin/payments",
+      "/admin/finance",
+      "/admin/expenses",
+      "/admin/reports",
+      "/admin/settings",
+      "/admin/activity"
+    ],
+    "checks": [
+      {
+        "page": "لوحة التحكم",
+        "href": "/admin/dashboard",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "المدينون",
+        "href": "/admin/debtors",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "تكليف المهام",
+        "href": "/admin/tasks",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "مراجعة الإنجازات",
+        "href": "/admin/tasks/review",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "الأسماء التي تحتاج مراقبة (الحالات الخاصة)",
+        "href": "/admin/special-statuses",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "إدارة المهام",
+        "href": "/admin/task-management",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "التسديدات",
+        "href": "/admin/payments",
+        "expected": false,
+        "actual": true,
+        "ok": false
+      },
+      {
+        "page": "الصرفيات",
+        "href": "/admin/expenses",
+        "expected": false,
+        "actual": true,
+        "ok": false
+      },
+      {
+        "page": "أتعاب المحامين",
+        "href": "/admin/finance",
+        "expected": false,
+        "actual": true,
+        "ok": false
+      },
+      {
+        "page": "التقارير",
+        "href": "/admin/reports",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "إعدادات الفرع",
+        "href": "/admin/settings",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      }
+    ],
+    "portalOk": true,
+    "error": null
+  },
+  {
+    "role": "criminal_legal_manager",
+    "landed": "/admin/dashboard",
+    "links": [
+      "/admin/dashboard",
+      "/admin/debtors",
+      "/admin/tasks",
+      "/admin/tasks/review",
+      "/admin/closed-cases",
+      "/admin/lawyers",
+      "/admin/reports",
+      "/admin/settings",
+      "/admin/activity"
+    ],
+    "checks": [
+      {
+        "page": "لوحة التحكم",
+        "href": "/admin/dashboard",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "المدينون",
+        "href": "/admin/debtors",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "تكليف المهام",
+        "href": "/admin/tasks",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "مراجعة الإنجازات",
+        "href": "/admin/tasks/review",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "الأسماء التي تحتاج مراقبة (الحالات الخاصة)",
+        "href": "/admin/special-statuses",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "إدارة المهام",
+        "href": "/admin/task-management",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "التسديدات",
+        "href": "/admin/payments",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "الصرفيات",
+        "href": "/admin/expenses",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "أتعاب المحامين",
+        "href": "/admin/finance",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "التقارير",
+        "href": "/admin/reports",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "إعدادات الفرع",
+        "href": "/admin/settings",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      }
+    ],
+    "portalOk": true,
+    "error": null
+  },
+  {
+    "role": "accountant",
+    "landed": "/admin/dashboard",
+    "links": [
+      "/admin/dashboard",
+      "/admin/debtors",
+      "/admin/payments",
+      "/admin/finance",
+      "/admin/expenses",
+      "/admin/reports",
+      "/admin/task-management",
+      "/admin/settings",
+      "/admin/activity"
+    ],
+    "checks": [
+      {
+        "page": "لوحة التحكم",
+        "href": "/admin/dashboard",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "المدينون",
+        "href": "/admin/debtors",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "تكليف المهام",
+        "href": "/admin/tasks",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "مراجعة الإنجازات",
+        "href": "/admin/tasks/review",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "الأسماء التي تحتاج مراقبة (الحالات الخاصة)",
+        "href": "/admin/special-statuses",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "إدارة المهام",
+        "href": "/admin/task-management",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "التسديدات",
+        "href": "/admin/payments",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "الصرفيات",
+        "href": "/admin/expenses",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "أتعاب المحامين",
+        "href": "/admin/finance",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "التقارير",
+        "href": "/admin/reports",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      },
+      {
+        "page": "إعدادات الفرع",
+        "href": "/admin/settings",
+        "expected": true,
+        "actual": true,
+        "ok": true
+      }
+    ],
+    "portalOk": true,
+    "error": null
+  },
+  {
+    "role": "delegate",
+    "landed": "/delegate",
+    "links": [],
+    "checks": [
+      {
+        "page": "لوحة التحكم",
+        "href": "/admin/dashboard",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "المدينون",
+        "href": "/admin/debtors",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "تكليف المهام",
+        "href": "/admin/tasks",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "مراجعة الإنجازات",
+        "href": "/admin/tasks/review",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "الأسماء التي تحتاج مراقبة (الحالات الخاصة)",
+        "href": "/admin/special-statuses",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "إدارة المهام",
+        "href": "/admin/task-management",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "التسديدات",
+        "href": "/admin/payments",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "الصرفيات",
+        "href": "/admin/expenses",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "أتعاب المحامين",
+        "href": "/admin/finance",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "التقارير",
+        "href": "/admin/reports",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "إعدادات الفرع",
+        "href": "/admin/settings",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      }
+    ],
+    "portalOk": true,
+    "error": null,
+    "delegatePath": "/delegate",
+    "delegateOk": true,
+    "adminGuardPath": "/delegate/tasks",
+    "adminGuardOk": true
+  },
+  {
+    "role": "lawyer",
+    "landed": "/lawyer",
+    "links": [],
+    "checks": [
+      {
+        "page": "لوحة التحكم",
+        "href": "/admin/dashboard",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "المدينون",
+        "href": "/admin/debtors",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "تكليف المهام",
+        "href": "/admin/tasks",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "مراجعة الإنجازات",
+        "href": "/admin/tasks/review",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "الأسماء التي تحتاج مراقبة (الحالات الخاصة)",
+        "href": "/admin/special-statuses",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "إدارة المهام",
+        "href": "/admin/task-management",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "التسديدات",
+        "href": "/admin/payments",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "الصرفيات",
+        "href": "/admin/expenses",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "أتعاب المحامين",
+        "href": "/admin/finance",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "التقارير",
+        "href": "/admin/reports",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      },
+      {
+        "page": "إعدادات الفرع",
+        "href": "/admin/settings",
+        "expected": false,
+        "actual": false,
+        "ok": true
+      }
+    ],
+    "portalOk": true,
+    "error": null,
+    "lawyerTasksPath": "/lawyer/tasks",
+    "lawyerTasksOk": true,
+    "adminGuardPath": "/lawyer/tasks",
+    "adminGuardOk": true
+  }
+]

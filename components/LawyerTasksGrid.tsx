@@ -75,6 +75,18 @@ function isBatchSelectable(status: string): boolean {
   return ACCEPT_STATUSES.has(status) || COMPLETE_STATUSES.has(status)
 }
 
+function debtorCourtExecutionLine(task: any): string | null {
+  const raw = task.debtors?.branch_list
+  const branchList = Array.isArray(raw) ? raw[0] : raw
+  const court = branchList?.court_name?.trim()
+  const execution = branchList?.execution_office?.trim()
+  const parts = [
+    court ? `🏛 المحكمة: ${court}` : null,
+    execution ? `⚖️ التنفيذ: ${execution}` : null,
+  ].filter(Boolean)
+  return parts.length ? parts.join(' | ') : null
+}
+
 interface ReqField {
   id: string
   field_key: string
@@ -357,6 +369,7 @@ export default function LawyerTasksGrid({
                   task.debtors?.case_type,
                   'lawyer',
                 )
+                const courtExecution = debtorCourtExecutionLine(task)
                 const selectable = isBatchSelectable(task.task_status)
                 return (
                   <div
@@ -387,6 +400,11 @@ export default function LawyerTasksGrid({
                           </Badge>
                         </div>
                       <p className="text-xs text-slate-400 mb-2.5 font-semibold">{resolveTaskLabel(task.task_type, task.task_label)}</p>
+                      {courtExecution && (
+                        <p className="text-sm font-semibold text-[#1D6365] mb-2.5">
+                          {courtExecution}
+                        </p>
+                      )}
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400 mb-auto">
                         {showBranch && task.branch_name && <span>🏢 {task.branch_name}</span>}
                         {task.debtors?.governorate && <span>📍 {task.debtors.governorate}</span>}

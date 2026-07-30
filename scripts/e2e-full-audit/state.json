@@ -1,0 +1,71 @@
+{
+  "stamp": "68431333",
+  "adminId": "d9a482c0-26be-4ac6-b98f-fbce4ea1e7da",
+  "lawyerId": "de585309-772f-4e4d-b751-1c438f584407",
+  "branchId": "726654de-9037-471a-bb3e-353e8fb5065b",
+  "defs": {
+    "cycle": "563c09b9-429b-4d4c-b9f8-43a2309bb6c9",
+    "hybridParent": "f9787f4f-a0b6-494f-ae32-52cbe023fb56",
+    "hybridChild": "fc9cc6f4-b256-461a-969f-d555e0994cbc"
+  },
+  "hybridLinkId": "64405e75-3c77-4cde-be6c-4b1cc487a1aa",
+  "cycle": {
+    "debtorId": "d0b9eef4-6a88-4897-9ccc-a12f9597e867",
+    "taskId": "aa9f3eef-3e52-4299-ae3a-5d0c12c97ce7",
+    "name": "[TEST] دورة مهمة 68431333"
+  },
+  "hybrid": {
+    "debtorId": "3cf86a06-8c39-461f-a3e2-eabf8bef8def",
+    "taskId": "f0d0bad9-fe52-484b-8a9a-2db1b1065612",
+    "name": "[TEST] مهمة هجينة 68431333"
+  },
+  "monitor": {
+    "debtorIds": [
+      "0010ca04-9c97-43c8-bd0a-f840d24faf48",
+      "746cefd8-0721-40b2-9971-686e019f53cd",
+      "4ecf31ff-539c-4500-8277-e4cd1b8371ba"
+    ],
+    "names": [
+      "[TEST] مراقبة 1 68431333",
+      "[TEST] مراقبة 2 68431333",
+      "[TEST] مراقبة 3 68431333"
+    ]
+  },
+  "awaiting": {
+    "debtorIds": [
+      "b044564a-24b3-4ac8-a026-4b978fd99f6a",
+      "f9f1cf19-9ffb-4df3-8484-3454b973cffc",
+      "eb4d685a-1691-44c6-a106-9cacdd1615bf"
+    ],
+    "taskIds": [
+      "a4b0394e-8191-45f5-878a-37dfe90ffde9",
+      "e01bbbb5-f3d1-4d1d-9bf9-aebd2b32810a",
+      "f5cca7c2-0515-4060-a50e-76526b6c7c2e"
+    ],
+    "names": [
+      "[TEST] تحت إسناد 1 68431333",
+      "[TEST] تحت إسناد 2 68431333",
+      "[TEST] تحت إسناد 3 68431333"
+    ]
+  },
+  "statuses": {
+    "a": {
+      "id": "c3a88413-8a2d-4ea8-b71a-f816c9629ae0",
+      "name": "[TEST] صفة اختبار",
+      "color": "red"
+    },
+    "b": {
+      "id": "c884cbc3-252f-4ec5-bb6e-35aea64557e7",
+      "name": "[TEST] صفة ثانية",
+      "color": "blue"
+    }
+  },
+  "accounts": {
+    "admin": "test.admin@test.local",
+    "viewer": "test.viewer@test.local",
+    "criminal_legal_manager": "test.criminal_legal_manager@test.local",
+    "accountant": "test.accountant@test.local",
+    "delegate": "test.delegate@test.local",
+    "lawyer": "test.lawyer@test.local"
+  }
+}
