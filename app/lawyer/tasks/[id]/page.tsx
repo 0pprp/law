@@ -19,8 +19,8 @@ import LawyerDebtorGPS from '@/components/LawyerDebtorGPS'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
-import { fmtMoney, fmtDate } from '@/lib/utils'
-import { RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { fmtDate } from '@/lib/utils'
+import { RECEIPT_TYPE_LABEL } from '@/lib/ui-labels'
 import { storedFileUrl } from '@/lib/stored-file-url'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
@@ -101,7 +101,7 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
 
   const { data: debtor } = await supabase
     .from('debtors')
-    .select('full_name, phone, address, governorate, receipt_type, receipt_amount, remaining_amount, latitude, longitude, location_captured_at, case_type, branch_list:branch_lists(name)')
+    .select('full_name, phone, address, governorate, receipt_type, receipt_amount, remaining_amount, latitude, longitude, location_captured_at, case_type, branch_list:branch_lists(name, court_name)')
     .eq('id', task.debtor_id)
     .single()
 
@@ -179,12 +179,17 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     latitude?: number | null
     longitude?: number | null
     location_captured_at?: string | null
-    branch_list?: { name?: string } | { name?: string }[] | null
+    branch_list?: { name?: string; court_name?: string | null } | { name?: string; court_name?: string | null }[] | null
   } | null
 
   const debtorListName = (() => {
     const bl = Array.isArray(d?.branch_list) ? d.branch_list[0] : d?.branch_list
     return bl?.name?.trim() || null
+  })()
+
+  const debtorCourtName = (() => {
+    const bl = Array.isArray(d?.branch_list) ? d.branch_list[0] : d?.branch_list
+    return bl?.court_name?.trim() || task.court_name?.trim() || null
   })()
 
   const primaryDebtorFile =
@@ -253,9 +258,8 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
             label={RECEIPT_TYPE_LABEL}
             value={d ? (RECEIPT_TYPE_LABELS[d.receipt_type as keyof typeof RECEIPT_TYPE_LABELS] ?? d.receipt_type) : null}
           />
-          {Number(d?.receipt_amount) > 0 && <InfoRow label={RECEIPT_AMOUNT_LABEL} value={fmtMoney(d!.receipt_amount!)} />}
-          {Number(d?.remaining_amount) > 0 && <InfoRow label="المبلغ المتبقي" value={fmtMoney(d!.remaining_amount!)} />}
           {debtorListName && <InfoRow label="القائمة" value={debtorListName} />}
+          {debtorCourtName && <InfoRow label="المحكمة" value={debtorCourtName} />}
           {d?.address && <InfoRow label="العنوان" value={d.address} />}
           {d?.governorate && <InfoRow label="المحافظة" value={d.governorate} />}
           <div className="flex justify-between items-center gap-4 py-2.5 border-b border-slate-100 last:border-0">

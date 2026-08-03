@@ -10,7 +10,7 @@ import { TASK_TYPE_LABELS } from '@/lib/types'
 import { isLawyerAchievedTask, lawyerTaskStatusLabel } from '@/lib/lawyer-task-display'
 import { isTaskOverdue } from '@/lib/local-date'
 import { Badge } from '@/components/ui/badge'
-import { fmtMoney, fmtDate } from '@/lib/utils'
+import { fmtDate } from '@/lib/utils'
 import TaskCompletionExpenseModal from '@/components/TaskCompletionExpenseModal'
 import { LawyerTaskCompletionModal } from '@/components/TaskUpdateForm'
 import { fetchLawyerTaskExpenses, mergeExpenseSources } from '@/lib/fetch-lawyer-task-expenses'
@@ -362,7 +362,6 @@ export default function LawyerTasksGrid({
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {tasks.map((task: any) => {
-                const remaining = Number(task.debtors?.remaining_amount ?? 0)
                 const isOverdue = task.due_date && isTaskOverdue(task.due_date) && !['completed', 'closed', 'failed', 'approved'].includes(task.task_status)
                 const courtExecution = debtorCourtExecutionLine(task)
                 const selectable = isBatchSelectable(task.task_status)
@@ -410,11 +409,6 @@ export default function LawyerTasksGrid({
                           </span>
                         )}
                       </div>
-                      {remaining > 0 && (
-                        <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-end gap-2">
-                          <span className="text-xs font-black text-red-600 tabular-nums" dir="ltr">{fmtMoney(remaining)}</span>
-                        </div>
-                      )}
                       <div className="mt-3 text-[11px] font-bold text-[#2C8780] flex items-center gap-0.5">
                         تفاصيل المهمة ←
                       </div>
