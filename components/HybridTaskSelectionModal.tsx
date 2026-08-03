@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from 'react'
 import CenteredModalPortal from '@/components/ui/centered-modal-portal'
-import { formatMoney } from '@/lib/money-input'
 import type { HybridLinkInfo } from '@/lib/hybrid-task-links'
 
 export type HybridSelectionResult = {
@@ -23,7 +22,7 @@ interface Props {
 
 export default function HybridTaskSelectionModal({
   parentLabel,
-  parentFee,
+  parentFee: _parentFee,
   parentDefinitionId,
   links,
   onClose,
@@ -94,9 +93,6 @@ export default function HybridTaskSelectionModal({
                   أساسية
                 </span>
               </span>
-              <span className="block text-[11px] text-[#767676] tabular-nums mt-1" dir="ltr">
-                {formatMoney(parentFee, { suffix: false })} د.ع
-              </span>
             </span>
           </label>
 
@@ -132,9 +128,6 @@ export default function HybridTaskSelectionModal({
                         اختيارية
                       </span>
                     )}
-                  </span>
-                  <span className="block text-[11px] text-[#767676] tabular-nums mt-1" dir="ltr">
-                    {formatMoney(Number(link.fee_amount), { suffix: false })} د.ع
                   </span>
                 </span>
               </label>

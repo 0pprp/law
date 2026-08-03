@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranch, useBranchId } from '@/context/branch'
 import Link from 'next/link'
@@ -206,9 +206,12 @@ export default function DashboardPage() {
   const [totalAssigned, setTotalAssigned] = useState(0)
   const [loading, setLoading] = useState(true)
   const [recentActivity, setRecentActivity] = useState<{ action: string; created_at: string }[]>([])
+  const loadGenRef = useRef(0)
 
   const loadData = useCallback(async () => {
     const supabase = createClient()
+    const gen = ++loadGenRef.current
+    const isStale = () => gen !== loadGenRef.current
 
     if (!branchId && !viewAllBranches) {
       setCivilStages([])
@@ -226,9 +229,11 @@ export default function DashboardPage() {
       return
     }
 
-    const cacheKey = `dashboard:v10:${branchId ?? 'all'}:${listId ?? 'all'}:${ct ?? 'both'}`
+    // v11: يشمل caseType صراحةً لمنع خلط أرقام المدني/الجزائي
+    const cacheKey = `dashboard:v11:${branchId ?? 'all'}:${listId ?? 'all'}:${ct ?? 'both'}`
     const cached = cacheGet<DashboardCache>(cacheKey)
     if (cached) {
+      if (isStale()) return
       setCivilStages(cached.civilStages)
       setCriminalStages(cached.criminalStages)
       setCivilAssignedStages(cached.civilAssignedStages)
@@ -260,6 +265,7 @@ export default function DashboardPage() {
     scheduleBranchMaintenance(supabase, branchId)
 
     try {
+      console.time('[dashboard] loadData')
       let aq = supabase
         .from('activity_logs')
         .select('action, created_at')
@@ -267,20 +273,21 @@ export default function DashboardPage() {
         .limit(5)
       if (branchId) aq = (aq as any).eq('branch_id', branchId)
 
+      const branchListForCivil = viewAllBranches ? null : listId
       const fetchCivil = showCivilStages
         ? fetchDashboardData(supabase, branchId, {
             caseType: 'civil',
-            branchListId: viewAllBranches ? null : listId,
+            branchListId: branchListForCivil,
           })
         : Promise.resolve(EMPTY_DASH)
-      // الجزائي لا يستخدم قائمة الفرع
+      // الجزائي لا يستخدم قائمة الفرع — caseType صريح دائماً
       const fetchCriminal = showCriminalStages
         ? fetchDashboardData(supabase, branchId, { caseType: 'criminal', branchListId: null })
         : Promise.resolve(EMPTY_DASH)
 
       const fetchHearingBadges = showCivilStages && (role === 'admin' || role === 'viewer')
         ? fetchPleadingHearingBadgeCounts(supabase, branchId, {
-            branchListId: viewAllBranches ? null : listId,
+            branchListId: branchListForCivil,
           })
         : Promise.resolve(EMPTY_HEARING_BADGES)
 
@@ -297,16 +304,18 @@ export default function DashboardPage() {
         fetchHearingBadges,
       ])
 
+      if (isStale()) return
+
       const next: DashboardCache = {
-        civilStages: civilData.stages,
-        criminalStages: criminalData.stages,
-        civilAssignedStages: civilData.assignedStages,
-        criminalAssignedStages: criminalData.assignedStages,
-        civilOverdueStages: civilData.overdueStages,
-        criminalOverdueStages: criminalData.overdueStages,
-        pleadingHearingBadges: hearingBadges,
-        unassigned: civilData.unassigned + criminalData.unassigned,
-        assigned: civilData.assigned + criminalData.assigned,
+        civilStages: showCivilStages ? civilData.stages : [],
+        criminalStages: showCriminalStages ? criminalData.stages : [],
+        civilAssignedStages: showCivilStages ? civilData.assignedStages : [],
+        criminalAssignedStages: showCriminalStages ? criminalData.assignedStages : [],
+        civilOverdueStages: showCivilStages ? civilData.overdueStages : [],
+        criminalOverdueStages: showCriminalStages ? criminalData.overdueStages : [],
+        pleadingHearingBadges: showCivilStages ? hearingBadges : EMPTY_HEARING_BADGES,
+        unassigned: (showCivilStages ? civilData.unassigned : 0) + (showCriminalStages ? criminalData.unassigned : 0),
+        assigned: (showCivilStages ? civilData.assigned : 0) + (showCriminalStages ? criminalData.assigned : 0),
         pendingReview,
         recentActivity: activityRes.data ?? [],
       }
@@ -323,10 +332,12 @@ export default function DashboardPage() {
       setTotalAssigned(next.assigned)
       setTotalPendingReview(next.pendingReview)
       setRecentActivity(next.recentActivity)
+      console.timeEnd('[dashboard] loadData')
     } catch (e: unknown) {
       console.error('[admin/dashboard] load error:', e)
+      console.timeEnd('[dashboard] loadData')
     }
-    setLoading(false)
+    if (!isStale()) setLoading(false)
   }, [branchId, viewAllBranches, listId, ct, showCivilStages, showCriminalStages, role])
 
   useEffect(() => { loadData() }, [loadData])

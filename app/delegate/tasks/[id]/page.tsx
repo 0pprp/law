@@ -22,7 +22,6 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
-import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 import { storedFileUrl } from '@/lib/stored-file-url'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
@@ -196,11 +195,6 @@ export default async function DelegateTaskDetailPage({ params }: { params: Promi
   const isLastDay = task.due_date && isTaskDueToday(task.due_date) && !isOverdue
   const awaitingAcceptance = status === 'assignment_pending_acceptance'
   const taskLabel = resolveTaskLabel(task.task_type, taskDefinition?.label)
-  const taskFee = visibleTaskFeeAmount(
-    task.reward_amount ?? taskDefinition?.fee_amount ?? 0,
-    (debtor as { case_type?: string | null } | null)?.case_type,
-    'delegate',
-  )
 
   return (
     <div className="max-w-lg mx-auto px-0 sm:px-2 pt-2 pb-24 space-y-3">
@@ -232,7 +226,6 @@ export default async function DelegateTaskDetailPage({ params }: { params: Promi
       <LawyerTaskRequirements
         taskLabel={taskLabel}
         requiredFields={requiredFields}
-        feeAmount={taskFee > 0 ? taskFee : null}
       />
 
       {awaitingAcceptance && (

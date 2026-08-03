@@ -386,11 +386,13 @@ function BranchAwaitingBox({
   const load = useCallback(async (offset = 0, append = false, fetchLimit?: number) => {
     if (append) setLoadingMore(true)
     else setLoading(true)
+    // الجزائي لا يستخدم قائمة الفرع — وإلا تُخفى الأسماء ذات branch_list_id = null
+    const effectiveListId = caseTypeFilter === 'criminal' ? null : (listId || null)
     const res = await fetchAwaitingAssignmentDebtors(createClient(), summary.branchId, {
       search,
       offset,
       limit: fetchLimit ?? PAGE_SIZE,
-      branchListId: listId || null,
+      branchListId: effectiveListId,
       caseType: caseTypeFilter,
     })
     if (res.error) {
@@ -601,38 +603,45 @@ export default function AwaitingAssignmentCard({
     }
     const soft = Boolean(opts?.soft)
     if (!soft) setLoading(true)
-    const res = await fetchAwaitingAssignmentBranchSummaries(createClient(), scopeBranchId, {
-      search: term,
-      caseType: caseTypeFilter,
-    })
-    if (res.error) {
+    try {
+      const res = await fetchAwaitingAssignmentBranchSummaries(createClient(), scopeBranchId, {
+        search: term,
+        caseType: caseTypeFilter,
+      })
+      if (res.error) {
+        if (!soft) {
+          setError(res.error || 'فشل تحميل الفروع')
+          setBranches([])
+          setGrandTotal(0)
+        }
+      } else {
+        setError('')
+        // تحديث العدادات دون تفريغ القائمة أثناء soft (يحافظ على «عرض المزيد» وموضع التمرير)
+        if (soft) {
+          setBranches(prev => {
+            const byId = new Map(res.branches.map(b => [b.branchId, b]))
+            const next = prev
+              .map(b => {
+                const fresh = byId.get(b.branchId)
+                return fresh ? { ...b, count: fresh.count } : b
+              })
+              .filter(b => b.count > 0 || byId.has(b.branchId))
+            for (const b of res.branches) {
+              if (!next.some(x => x.branchId === b.branchId)) next.push(b)
+            }
+            return next.filter(b => (byId.get(b.branchId)?.count ?? 0) > 0 || term)
+          })
+        } else {
+          setBranches(res.branches)
+        }
+        setGrandTotal(res.branches.reduce((s, b) => s + b.count, 0))
+      }
+    } catch (e: unknown) {
       if (!soft) {
-        setError('فشل تحميل الفروع')
+        setError(e instanceof Error ? e.message : 'فشل تحميل الفروع')
         setBranches([])
         setGrandTotal(0)
       }
-    } else {
-      setError('')
-      // تحديث العدادات دون تفريغ القائمة أثناء soft (يحافظ على «عرض المزيد» وموضع التمرير)
-      if (soft) {
-        setBranches(prev => {
-          const byId = new Map(res.branches.map(b => [b.branchId, b]))
-          const next = prev
-            .map(b => {
-              const fresh = byId.get(b.branchId)
-              return fresh ? { ...b, count: fresh.count } : b
-            })
-            .filter(b => b.count > 0 || byId.has(b.branchId))
-          // أضف فروعاً جديدة ظهرت
-          for (const b of res.branches) {
-            if (!next.some(x => x.branchId === b.branchId)) next.push(b)
-          }
-          return next.filter(b => (byId.get(b.branchId)?.count ?? 0) > 0 || term)
-        })
-      } else {
-        setBranches(res.branches)
-      }
-      setGrandTotal(res.branches.reduce((s, b) => s + b.count, 0))
     }
     setLoading(false)
   }, [branchId, viewAllBranches, scopeBranchId, caseTypeFilter])
@@ -647,7 +656,7 @@ export default function AwaitingAssignmentCard({
 
   if (!branchId && !viewAllBranches) return null
 
-  const initialListForBox = viewAllBranches ? '' : (listId ?? '')
+  const initialListForBox = viewAllBranches || caseTypeFilter === 'criminal' ? '' : (listId ?? '')
 
   return (
     <div className="space-y-4">

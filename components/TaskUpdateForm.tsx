@@ -55,7 +55,7 @@ const INP = 'w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-l
 export function LawyerTaskCompletionModal({
   task,
   reqFields,
-  fee,
+  fee: _fee,
   onClose,
   onSubmitted,
   skipRouterRefresh,
@@ -295,8 +295,8 @@ export function LawyerTaskCompletionModal({
       entity_type: 'task',
       entity_id: task.id,
       description: isHybridSubmit
-        ? `إرسال مهمة هجينة للاعتماد (+${hybridSelectedLinked.length} مرتبطة) — أتعاب: ${fee.toLocaleString('en-US')} د.ع`
-        : `إرسال المهمة للاعتماد — أتعاب: ${fee.toLocaleString('en-US')} د.ع`,
+        ? `إرسال مهمة هجينة للاعتماد (+${hybridSelectedLinked.length} مرتبطة)`
+        : 'إرسال المهمة للاعتماد',
     }, supabase)
 
     onSubmitted()
@@ -520,11 +520,6 @@ export function LawyerTaskCompletionModal({
         <div className="px-5 py-4 border-b border-[rgba(118,118,118,0.1)] flex items-start justify-between shrink-0">
           <div className="min-w-0 pr-2">
             <h2 id="task-completion-modal-title" className="font-black text-[#231F20] text-base">تأكيد الإنجاز{taskLabel ? `: ${taskLabel}` : ''}</h2>
-            {fee > 0 && (
-              <p className="text-xs text-[#2C8780] font-bold mt-1">
-                الأتعاب: {fee.toLocaleString('en-US')} د.ع — تُضاف لمحفظة الأتعاب فور اعتماد الإنجاز
-              </p>
-            )}
           </div>
           <button type="button" onClick={onClose}
             className="w-8 h-8 rounded-xl bg-[#F3F1F2] text-[#767676] flex items-center justify-center text-xl leading-none hover:bg-slate-200 transition-colors shrink-0"

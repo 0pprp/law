@@ -12,7 +12,7 @@ import { RECEIPT_TYPE_LABELS, assigneePersonLabel } from '@/lib/types'
 import type { ReceiptType } from '@/lib/types'
 import { fetchAssignmentLawyers, fetchBranchDelegates } from '@/lib/branch-profiles'
 import { isFindAddressTaskType } from '@/lib/delegate'
-import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
+import { DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DatePicker } from '@/components/ui/date-picker'
 import { useAdminRole } from '@/context/admin-role'
@@ -391,7 +391,7 @@ function BranchStageBox({
               <div className="divide-y divide-[rgba(118,118,118,0.07)]">
                 {section.rows.map(d => (
                   <DebtorStageRow
-                    key={d.taskId}
+                    key={`${d.debtorId}-${d.taskId}`}
                     d={d}
                     view={view}
                     canAssign={canAssign}
@@ -442,10 +442,13 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const [stageCaseType, setStageCaseType] = useState<'civil' | 'criminal' | null>(null)
   const [debtors, setDebtors] = useState<StageDebtor[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [listTotal, setListTotal] = useState(0)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [matchingIds, setMatchingIds] = useState<string[] | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const loadGenRef = useRef(0)
+  const loadedCountRef = useRef(0)
 
   const [lawyers, setLawyers] = useState<Lawyer[]>([])
   const [delegates, setDelegates] = useState<Lawyer[]>([])
@@ -459,18 +462,29 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const [moveModalOpen, setMoveModalOpen] = useState(false)
   const [monitorModalOpen, setMonitorModalOpen] = useState(false)
 
-  const load = useCallback(async (opts?: { soft?: boolean }) => {
+  const STAGE_PAGE = 200
+
+  const load = useCallback(async (opts?: { soft?: boolean; append?: boolean }) => {
     if (!branchId && !viewAllBranches) {
       setDebtors([])
+      setListTotal(0)
+      loadedCountRef.current = 0
       setLoading(false)
       return
     }
 
     const soft = Boolean(opts?.soft)
-    if (!soft) {
+    const append = Boolean(opts?.append)
+    // soft/append لا يلغيان طلباً جارياً لنفس السياق؛ تغيير الفرع/الفلاتر يزيد gen عبر إعادة إنشاء load
+    const gen = append || soft ? loadGenRef.current : ++loadGenRef.current
+    const isStale = () => gen !== loadGenRef.current
+
+    if (!soft && !append) {
       setLoading(true)
       setSelected(new Set())
     }
+    if (append) setLoadingMore(true)
+
     const supabase = createClient()
 
     const { data: def } = await supabase
@@ -478,6 +492,8 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       .select('id, label, task_type, case_type')
       .eq('id', stageId)
       .single()
+    if (isStale()) return
+
     setStageLabel(def?.label ?? '—')
     setStageTaskType(def?.task_type ?? null)
     setStageIsFindAddress(isFindAddressTaskType(def?.task_type))
@@ -485,135 +501,178 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     setStageCaseType(stageCt)
     if (caseTypeFilter && caseTypeFilter !== stageCt) {
       setDebtors([])
+      setListTotal(0)
+      loadedCountRef.current = 0
       setLoading(false)
+      setLoadingMore(false)
       return
     }
 
-    const matchingDefIds = new Set<string>([stageId])
-    if (viewAllBranches && def?.label) {
-      const { data: sameLabel } = await supabase
+    const matchingDefIds = new Set<string>()
+    if (def?.label) {
+      let sameLabelQ = supabase
         .from('task_definitions')
         .select('id')
         .eq('is_active', true)
         .eq('label', def.label)
+      if (branchId) sameLabelQ = sameLabelQ.eq('branch_id', branchId)
+      const { data: sameLabel } = await sameLabelQ
+      if (isStale()) return
       for (const row of sameLabel ?? []) matchingDefIds.add(row.id)
+    }
+    if (!matchingDefIds.size) {
+      if (branchId) {
+        setDebtors([])
+        setListTotal(0)
+        loadedCountRef.current = 0
+        setLoading(false)
+        setLoadingMore(false)
+        return
+      }
+      matchingDefIds.add(stageId)
     }
     const defIds = [...matchingDefIds]
     const terminalFilter = `(${OVERDUE_TERMINAL_STATUSES.join(',')})`
-    const PAGE = 500
-    const rawRows: any[] = []
-    let offset = 0
+    const offset = append ? loadedCountRef.current : 0
+    const searchTerm = debouncedSearch.trim().replace(/[%_,]/g, '')
 
-    // فلترة المرحلة على السيرفر + صفحات — لا نعتمد على جلب كل المدينين ثم الفلترة محلياً
-    // (حد Supabase الافتراضي ~1000 صف كان يخفي مراحل مثل «ابطال»)
-    while (true) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let q: any = supabase
-        .from('debtors')
-        .select(`
-          id, full_name, phone, receipt_type, receipt_number, first_hearing_date, branch_id, branch_list_id,
-          remaining_amount, case_status, case_type, current_task_id,
-          branch_list:branch_lists(name, court_name, execution_office),
-          special_status:special_statuses(id, name, color),
-          current_task:tasks!current_task_id!inner(
-            id, task_status, assigned_to, created_at, due_date, task_definition_id, branch_id,
-            lawyer:profiles!tasks_assigned_to_fkey(full_name, role)
-          )
-        `)
-        .not('case_status', 'eq', 'closed')
-        .not('current_task_id', 'is', null)
-        .is('special_status_id', null)
-        .eq('case_type', stageCt)
-        .in('current_task.task_definition_id', defIds)
-        .not('current_task.task_status', 'in', terminalFilter)
-        .order('full_name')
-        .range(offset, offset + PAGE - 1)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q: any = supabase
+      .from('debtors')
+      .select(`
+        id, full_name, phone, receipt_type, receipt_number, first_hearing_date, branch_id, branch_list_id,
+        remaining_amount, case_status, case_type, current_task_id,
+        branch_list:branch_lists(name, court_name, execution_office),
+        special_status:special_statuses(id, name, color),
+        current_task:tasks!current_task_id!inner(
+          id, task_status, assigned_to, created_at, due_date, task_definition_id, branch_id,
+          lawyer:profiles!tasks_assigned_to_fkey(full_name, role)
+        )
+      `, { count: append ? undefined : 'exact' })
+      .not('case_status', 'eq', 'closed')
+      .not('current_task_id', 'is', null)
+      .is('special_status_id', null)
+      .eq('case_type', stageCt)
+      .in('current_task.task_definition_id', defIds)
+      .not('current_task.task_status', 'in', terminalFilter)
+      .order('full_name')
+      .order('id')
+      .range(offset, offset + STAGE_PAGE - 1)
 
-      if (branchId) q = q.eq('branch_id', branchId)
+    if (branchId) q = q.eq('branch_id', branchId)
+    if (searchTerm) q = q.ilike('full_name', `%${searchTerm}%`)
 
-      if (view === 'waiting') {
-        q = q.is('current_task.assigned_to', null)
-      } else if (view === 'assigned') {
-        q = q.not('current_task.assigned_to', 'is', null)
-      } else if (view === 'overdue') {
-        q = q
-          .not('current_task.assigned_to', 'is', null)
-          .not('current_task.due_date', 'is', null)
-          .lt('current_task.due_date', localTodayYmd())
-      }
-
-      const { data, error } = await q
-      if (error) {
-        console.error('[stage-detail:load]', error.message ?? error)
-        break
-      }
-      const chunk = data ?? []
-      rawRows.push(...chunk)
-      if (chunk.length < PAGE) break
-      offset += PAGE
+    if (view === 'waiting') {
+      q = q.is('current_task.assigned_to', null)
+    } else if (view === 'assigned') {
+      q = q.not('current_task.assigned_to', 'is', null)
+    } else if (view === 'overdue') {
+      q = q
+        .not('current_task.assigned_to', 'is', null)
+        .not('current_task.due_date', 'is', null)
+        .lt('current_task.due_date', localTodayYmd())
     }
 
-    const branchIds = [...new Set(rawRows.map(d => d.branch_id).filter(Boolean))] as string[]
+    const { data, error: qErr, count } = await q
+    if (isStale()) return
+    if (qErr) {
+      console.error('[stage-detail:load]', qErr.message ?? qErr)
+      setError(qErr.message || 'فشل تحميل أسماء المرحلة')
+      setLoading(false)
+      setLoadingMore(false)
+      return
+    }
+
+    const rawRows = data ?? []
+    if (!append && typeof count === 'number') setListTotal(count)
+
+    const branchIds = [...new Set(rawRows.map((d: { branch_id?: string | null }) => d.branch_id).filter(Boolean))] as string[]
     const branchNames = new Map<string, string>()
     if (branchIds.length) {
       const { data: branches } = await supabase.from('branches').select('id, name').in('id', branchIds)
+      if (isStale()) return
       for (const b of branches ?? []) branchNames.set(b.id, b.name)
     }
 
-    const mapped: StageDebtor[] = rawRows
-      .filter((d: any) => {
-        const t = d.current_task
-        if (!t || d.current_task_id !== t.id) return false
-        if (branchId && (t.branch_id ?? d.branch_id) !== branchId) return false
-        // دفاع إضافي لو وُجد lawyer_id بدون assigned_to
-        const assigned = Boolean(taskLawyerId(t))
-        if (view === 'waiting') return !assigned
-        if (view === 'assigned') return assigned
-        if (view === 'overdue') {
-          const due = t.due_date ? String(t.due_date).slice(0, 10) : null
-          return assigned && isTaskOverdue(due)
-        }
-        return false
-      })
-      .map((d: any) => {
-        const t = d.current_task
-        const bl = Array.isArray(d.branch_list) ? d.branch_list[0] : d.branch_list
-        const lawyer = Array.isArray(t.lawyer) ? t.lawyer[0] : t.lawyer
-        const bId = (d.branch_id ?? t.branch_id ?? null) as string | null
-        const ss = resolveSpecialStatus(d.special_status)
-        return {
-          debtorId: d.id,
-          debtorName: d.full_name,
-          taskId: t.id,
-          taskStatus: t.task_status,
-          lawyerName: lawyer?.full_name ?? null,
-          lawyerRole: lawyer?.role ?? null,
-          phone: d.phone ?? null,
-          receiptType: d.receipt_type ?? null,
-          receiptNumber: d.receipt_number ?? null,
-          remaining: Number(d.remaining_amount ?? 0),
-          taskCreatedAt: t.created_at ?? null,
-          dueDate: t.due_date ? String(t.due_date).slice(0, 10) : null,
-          branchId: bId,
-          branchName: bId ? branchNames.get(bId) ?? 'فرع' : 'بدون فرع',
-          branchListId: d.branch_list_id ?? null,
-          branchListName: bl?.name?.trim() ?? null,
-          courtName: resolveCourtName(d.branch_list),
-          executionOffice: resolveExecutionOffice(d.branch_list),
-          specialStatusName: ss.name,
-          specialStatusColor: ss.color,
-          firstHearingDate: d.first_hearing_date ? String(d.first_hearing_date).slice(0, 10) : null,
-        }
-      })
+    const mapped: StageDebtor[] = []
+    const seenTaskIds = new Set<string>()
+    for (const d of rawRows) {
+      const t = d.current_task
+      if (!t || d.current_task_id !== t.id) continue
+      if (seenTaskIds.has(t.id)) continue
+      if (branchId && (t.branch_id ?? d.branch_id) !== branchId) continue
+      const assigned = Boolean(taskLawyerId(t))
+      if (view === 'waiting') {
+        if (assigned) continue
+      } else if (view === 'assigned') {
+        if (!assigned) continue
+      } else if (view === 'overdue') {
+        const due = t.due_date ? String(t.due_date).slice(0, 10) : null
+        if (!(assigned && isTaskOverdue(due))) continue
+      } else {
+        continue
+      }
 
-    setDebtors(mapped)
+      seenTaskIds.add(t.id)
+      const bl = Array.isArray(d.branch_list) ? d.branch_list[0] : d.branch_list
+      const lawyer = Array.isArray(t.lawyer) ? t.lawyer[0] : t.lawyer
+      const bId = (d.branch_id ?? t.branch_id ?? null) as string | null
+      const ss = resolveSpecialStatus(d.special_status)
+      mapped.push({
+        debtorId: d.id,
+        debtorName: d.full_name,
+        taskId: t.id,
+        taskStatus: t.task_status,
+        lawyerName: lawyer?.full_name ?? null,
+        lawyerRole: lawyer?.role ?? null,
+        phone: d.phone ?? null,
+        receiptType: d.receipt_type ?? null,
+        receiptNumber: d.receipt_number ?? null,
+        remaining: Number(d.remaining_amount ?? 0),
+        taskCreatedAt: t.created_at ?? null,
+        dueDate: t.due_date ? String(t.due_date).slice(0, 10) : null,
+        branchId: bId,
+        branchName: bId ? branchNames.get(bId) ?? 'فرع' : 'بدون فرع',
+        branchListId: d.branch_list_id ?? null,
+        branchListName: bl?.name?.trim() ?? null,
+        courtName: resolveCourtName(d.branch_list),
+        executionOffice: resolveExecutionOffice(d.branch_list),
+        specialStatusName: ss.name,
+        specialStatusColor: ss.color,
+        firstHearingDate: d.first_hearing_date ? String(d.first_hearing_date).slice(0, 10) : null,
+      })
+    }
+
+    if (isStale()) return
+    if (append) {
+      setDebtors(prev => {
+        const seen = new Set(prev.map(r => r.taskId))
+        const next = [...prev, ...mapped.filter(r => !seen.has(r.taskId))]
+        loadedCountRef.current = offset + rawRows.length
+        return next
+      })
+    } else {
+      loadedCountRef.current = rawRows.length
+      setDebtors(mapped)
+    }
     setLoading(false)
-  }, [stageId, branchId, viewAllBranches, caseTypeFilter, view])
+    setLoadingMore(false)
+  }, [stageId, branchId, viewAllBranches, caseTypeFilter, view, debouncedSearch])
 
   useEffect(() => { void load() }, [load])
 
   // تاريخ المرافعة يُلتقط من «إقامة دعوى» لكنه يُعرَض على كارد «مرافعات»
   const showHearingDate = (role === 'admin' || role === 'viewer') && stageTaskType === 'pleading'
+
+  useEffect(() => {
+    setBulkLawyerId('')
+    setSelected(new Set())
+    setError('')
+    setSuccessMsg('')
+    setDebtors([])
+    setListTotal(0)
+    loadedCountRef.current = 0
+  }, [branchId, viewAllBranches])
 
   useEffect(() => {
     if (!branchId && !viewAllBranches) {
@@ -626,12 +685,17 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       setDelegates([])
       return
     }
+    if (!branchId) {
+      setLawyers([])
+      setDelegates([])
+      return
+    }
     const supabase = createClient()
     const lawyerCase = stageCaseType ?? caseTypeFilter
     fetchAssignmentLawyers(supabase, branchId, {
       caseType: lawyerCase === 'criminal' || lawyerCase === 'civil' ? lawyerCase : null,
     }).then(({ lawyers: list }) => setLawyers(list))
-    if (stageIsFindAddress && branchId && lawyerCase !== 'criminal') {
+    if (stageIsFindAddress && lawyerCase !== 'criminal') {
       fetchBranchDelegates(supabase, branchId).then(({ delegates: list }) => setDelegates(list))
     } else {
       setDelegates([])
@@ -646,22 +710,9 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [search])
 
-  useEffect(() => {
-    if (!debouncedSearch.trim()) {
-      setMatchingIds(null)
-      return
-    }
-    let cancelled = false
-    resolveDebtorIdsBySearch(createClient(), debouncedSearch, branchId).then(ids => {
-      if (!cancelled) setMatchingIds(ids ?? [])
-    })
-    return () => { cancelled = true }
-  }, [debouncedSearch, branchId])
-
   const branchGroups = useMemo(() => {
     const map = new Map<string, { branchId: string; branchName: string; rows: StageDebtor[] }>()
     for (const d of debtors) {
-      if (matchingIds !== null && !matchingIds.includes(d.debtorId)) continue
       const id = d.branchId ?? '__none__'
       const name = d.branchName ?? 'بدون فرع'
       const prev = map.get(id)
@@ -671,12 +722,10 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     return [...map.values()]
       .filter(g => g.rows.length > 0 && g.branchId)
       .sort((a, b) => a.branchName.localeCompare(b.branchName, 'ar'))
-  }, [debtors, matchingIds])
+  }, [debtors])
 
-  const visibleCount = useMemo(() => {
-    if (matchingIds === null) return debtors.length
-    return debtors.filter(d => matchingIds.includes(d.debtorId)).length
-  }, [debtors, matchingIds])
+  const visibleCount = debtors.length
+  const hasMore = listTotal > 0 ? debtors.length < listTotal : false
 
   const assignmentMinDate = useMemo(() => {
     const ids = selected.size > 0 ? Array.from(selected) : []
@@ -704,14 +753,16 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   }
 
   function toggleAllVisible() {
-    const ids = debtors
-      .filter(d => matchingIds === null || matchingIds.includes(d.debtorId))
-      .map(d => d.taskId)
+    const ids = debtors.map(d => d.taskId)
     const allOn = ids.length > 0 && ids.every(id => selected.has(id))
     setSelected(allOn ? new Set() : new Set(ids))
   }
 
   async function assignTasks(taskIds: string[], lawyerId: string) {
+    if (!branchId) {
+      setError('للتكليف اختر فرعاً محدداً من القائمة العلوية')
+      return
+    }
     const taskRefs = taskIds.map(id => {
       const d = debtors.find(x => x.taskId === id)
       return { id, created_at: d?.taskCreatedAt ?? new Date().toISOString() }
@@ -745,7 +796,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       })
       setAssigning(false)
       setSuccessMsg(`تم تكليف ${taskIds.length} مهمة بنجاح`)
-      cacheInvalidatePrefix('dashboard:v10:')
+      cacheInvalidatePrefix('dashboard:v')
     })
   }
 
@@ -773,7 +824,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     preserveScrollDuring(() => {
       setDebtors(prev => prev.filter(d => d.taskId !== taskId))
       setSuccessMsg('تم إلغاء التكليف — عادت المهمة لغير المكلفة')
-      cacheInvalidatePrefix('dashboard:v10:')
+      cacheInvalidatePrefix('dashboard:v')
     })
   }
 
@@ -786,15 +837,13 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     allowPaymentInProgress && view === 'waiting' && stageCaseType !== 'criminal'
   const allVisibleSelected =
     visibleCount > 0
-    && debtors
-      .filter(d => matchingIds === null || matchingIds.includes(d.debtorId))
-      .every(d => selected.has(d.taskId))
+    && debtors.every(d => selected.has(d.taskId))
 
   function handleMoveSuccess(summary?: { moved: number; failed: number }) {
     setMoveModalOpen(false)
     const movedTaskIds = new Set(selected)
     setSelected(new Set())
-    cacheInvalidatePrefix('dashboard:v10:')
+    cacheInvalidatePrefix('dashboard:v')
     if (summary) {
       const parts = [`تم تحويل ${summary.moved} مدين إلى جاري التسديد`]
       if (summary.failed > 0) parts.push(`تعذّر تحويل ${summary.failed}`)
@@ -825,7 +874,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       })
       setError('')
       setSuccessMsg(`تم تحويل ${debtorIds.length} اسم إلى «${statusName}» في تبويب الأسماء التي تحتاج مراقبة`)
-      cacheInvalidatePrefix('dashboard:v10:')
+      cacheInvalidatePrefix('dashboard:v')
     })
   }
 
@@ -833,7 +882,9 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     <div className="space-y-5">
       <PageHeader
         title={viewTitle(view, stageLabel || '…')}
-        subtitle={loading ? 'جارٍ التحميل...' : viewSubtitle(view, visibleCount)}
+        subtitle={loading
+          ? 'جارٍ التحميل...'
+          : `${viewSubtitle(view, listTotal > 0 ? listTotal : visibleCount)}${hasMore ? ` · معروض ${visibleCount}` : ''}`}
         actions={<BackButton fallback="/admin/dashboard" />}
         breadcrumb={[
           { label: 'لوحة التحكم', href: '/admin/dashboard' },
@@ -973,10 +1024,24 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
               assigning={assigning}
               bulkLawyerId={bulkLawyerId}
               bulkDueDate={bulkDueDate}
-              matchingIds={matchingIds}
+              matchingIds={null}
               showHearingDate={showHearingDate}
             />
           ))}
+          {hasMore && (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={() => void load({ append: true })}
+                disabled={loadingMore}
+                className="text-sm font-semibold text-[#2C8780] border border-[#2C8780]/30 hover:bg-[#2C8780]/5 px-5 py-2.5 rounded-xl transition-colors disabled:opacity-60"
+              >
+                {loadingMore
+                  ? 'جارٍ التحميل...'
+                  : `عرض المزيد (${Math.max(0, listTotal - debtors.length)} متبقٍ)`}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

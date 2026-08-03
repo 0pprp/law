@@ -75,6 +75,30 @@ function applyNotDuplicateFilter(q: any, columnReady: boolean): any {
   return q.is('duplicate_flagged_at', null)
 }
 
+/**
+ * قائمة الفرع تخص المدني فقط.
+ * الجزائيون عادةً branch_list_id IS NULL — فلتر القائمة كان يخفيهم بالكامل.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyAwaitingBranchListFilter(
+  q: any,
+  branchListId: string | null | undefined,
+  caseType: 'civil' | 'criminal' | null,
+): any {
+  const listId = typeof branchListId === 'string' ? branchListId.trim() : ''
+  if (!listId) return q
+  if (caseType === 'criminal') return q
+  if (caseType === 'civil') return q.eq('branch_list_id', listId)
+  // الكل: مدنيو القائمة + جزائيون بلا قائمة
+  return q.or(`branch_list_id.eq.${listId},and(case_type.eq.criminal,branch_list_id.is.null)`)
+}
+
+/** حالة مفتوحة للإسناد: active أو null — يستثني closed و payment_in_progress */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyAwaitingCaseStatusFilter(q: any): any {
+  return q.or('case_status.is.null,case_status.eq.active,and(case_status.neq.closed,case_status.neq.payment_in_progress)')
+}
+
 type BranchListEmbed =
   | { name?: string | null; court_name?: string | null; execution_office?: string | null }
   | { name?: string | null; court_name?: string | null; execution_office?: string | null }[]
@@ -163,6 +187,7 @@ async function loadBranchNames(
 
 /**
  * مدينون بمهمة حالية بلا تعريف وغير مكلّفة — يُعاملون كحاجة لإسناد مهمة.
+ * فلترة على الـ join بدل مسح كل المدينين ثم التصفية محلياً.
  */
 async function fetchUntypedUnassignedDebtors(
   supabase: SupabaseClient,
@@ -172,77 +197,72 @@ async function fetchUntypedUnassignedDebtors(
   const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
   const branchListId = options?.branchListId?.trim() || null
   const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
-  const STATS_CHUNK = 500
-  const out: RawDebtor[] = []
+  const PAGE = 500
+  const terminalFilter = `(${[...TERMINAL_TASK_STATUSES].join(',')})`
   let noteColumnMissing = false
   let duplicateColumnReady = true
-  let offset = 0
 
-  while (true) {
-    const colsWithNote = `${BASE_COLS}, assignment_note, current_task_id`
-    const colsBase = `${BASE_COLS}, current_task_id`
+  const colsWithNote = `${BASE_COLS}, assignment_note, current_task_id`
+  const colsBase = `${BASE_COLS}, current_task_id`
 
-    const build = (cols: string) => {
-      let q = supabase
-        .from('debtors')
-        .select(cols)
-        .not('current_task_id', 'is', null)
-        .is('special_status_id', null)
-        .or('case_status.is.null,and(case_status.neq.closed,case_status.neq.payment_in_progress)')
-        .order('id')
-        .range(offset, offset + STATS_CHUNK - 1)
-      if (branchId) q = q.eq('branch_id', branchId)
-      if (branchListId) q = q.eq('branch_list_id', branchListId)
-      if (caseType) q = q.eq('case_type', caseType)
-      if (search) q = q.ilike('full_name', `%${search}%`)
-      q = applyNotDuplicateFilter(q, duplicateColumnReady)
-      return q
-    }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const build = (cols: string, from: number, to: number): any => {
+    let q = supabase
+      .from('debtors')
+      .select(`${cols}, current_task:tasks!current_task_id!inner(id, task_definition_id, assigned_to, task_status)`)
+      .is('special_status_id', null)
+    q = applyAwaitingCaseStatusFilter(q)
+      .is('current_task.task_definition_id', null)
+      .is('current_task.assigned_to', null)
+      .not('current_task.task_status', 'in', terminalFilter)
+      .order('id')
+      .range(from, to)
+    if (branchId) q = q.eq('branch_id', branchId)
+    q = applyAwaitingBranchListFilter(q, branchListId, caseType)
+    if (caseType) q = q.eq('case_type', caseType)
+    if (search) q = q.ilike('full_name', `%${search}%`)
+    q = applyNotDuplicateFilter(q, duplicateColumnReady)
+    return q
+  }
 
-    let res = await build(colsWithNote)
+  async function runPage(from: number, to: number) {
+    let res = await build(colsWithNote, from, to)
     if (res.error && isMissingDuplicateColumnError(res.error.message)) {
       duplicateColumnReady = false
-      res = await build(colsWithNote)
+      res = await build(colsWithNote, from, to)
     }
     if (res.error && isMissingNoteColumnError(res.error.message)) {
       noteColumnMissing = true
-      res = await build(colsBase)
+      res = await build(colsBase, from, to)
       if (res.error && isMissingDuplicateColumnError(res.error.message)) {
         duplicateColumnReady = false
-        res = await build(colsBase)
+        res = await build(colsBase, from, to)
       }
     }
-    if (res.error) return { rows: [], error: res.error.message, noteColumnMissing }
+    return res
+  }
 
-    const debtors = (res.data ?? []) as unknown as Array<RawDebtor & { current_task_id: string }>
-    if (!debtors.length) break
+  const first = await runPage(0, PAGE - 1)
+  if (first.error) return { rows: [], error: first.error.message, noteColumnMissing }
 
-    const taskIds = debtors.map(d => d.current_task_id).filter(Boolean)
-    const { data: tasks, error: tErr } = await supabase
-      .from('tasks')
-      .select('id, task_definition_id, assigned_to, task_status')
-      .in('id', taskIds)
+  const firstRows = (first.data ?? []) as unknown as RawDebtor[]
+  const out: RawDebtor[] = firstRows.map(r => ({ ...r, needs_task_definition: true }))
 
-    if (tErr) return { rows: [], error: tErr.message, noteColumnMissing }
-
-    const untypedIds = new Set(
-      (tasks ?? [])
-        .filter(t =>
-          !t.task_definition_id
-          && !t.assigned_to
-          && !TERMINAL_TASK_STATUSES.has(String(t.task_status ?? '')),
-        )
-        .map(t => t.id),
+  // إن تجاوزت الصفحة الأولى: صفحات متوازية بدل while متسلسل
+  if (firstRows.length >= PAGE) {
+    const extraPages = 3
+    const results = await Promise.all(
+      Array.from({ length: extraPages }, (_, i) => {
+        const from = (i + 1) * PAGE
+        return runPage(from, from + PAGE - 1)
+      }),
     )
-
-    for (const d of debtors) {
-      if (untypedIds.has(d.current_task_id)) {
-        out.push({ ...d, needs_task_definition: true })
-      }
+    for (const res of results) {
+      if (res.error) return { rows: [], error: res.error.message, noteColumnMissing }
+      const rows = (res.data ?? []) as unknown as RawDebtor[]
+      for (const r of rows) out.push({ ...r, needs_task_definition: true })
+      if (rows.length < PAGE) break
     }
-
-    if (debtors.length < STATS_CHUNK) break
-    offset += STATS_CHUNK
   }
 
   return { rows: out, error: null, noteColumnMissing }
@@ -269,10 +289,10 @@ export async function fetchAwaitingAssignmentDebtors(
       .select(cols)
       .is('current_task_id', null)
       .is('special_status_id', null)
-      .or('case_status.is.null,and(case_status.neq.closed,case_status.neq.payment_in_progress)')
+    q = applyAwaitingCaseStatusFilter(q)
       .order('created_at', { ascending: true })
     if (branchId) q = q.eq('branch_id', branchId)
-    if (branchListId) q = q.eq('branch_list_id', branchListId)
+    q = applyAwaitingBranchListFilter(q, branchListId, caseType)
     if (caseType) q = q.eq('case_type', caseType)
     if (search) q = q.ilike('full_name', `%${search}%`)
     q = applyNotDuplicateFilter(q, duplicateColumnReady)
@@ -283,21 +303,24 @@ export async function fetchAwaitingAssignmentDebtors(
 
   const untypedRes = await fetchUntypedUnassignedDebtors(supabase, branchId, options)
   if (untypedRes.error) {
-    return { rows: [], total: 0, noteColumnMissing: untypedRes.noteColumnMissing, error: untypedRes.error }
+    // لا تُصفَّر أسماء بلا مهمة بسبب فشل مسار المهام اليتيمة
+    console.warn('[fetchAwaitingAssignmentDebtors] untyped scan skipped:', untypedRes.error)
   }
   noteColumnMissing = untypedRes.noteColumnMissing
-  const untypedSorted = [...untypedRes.rows].sort(
-    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-  )
+  const untypedSorted = untypedRes.error
+    ? []
+    : [...untypedRes.rows].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    )
 
   let countQ = supabase
     .from('debtors')
     .select('id', { count: 'exact', head: true })
     .is('current_task_id', null)
     .is('special_status_id', null)
-    .or('case_status.is.null,and(case_status.neq.closed,case_status.neq.payment_in_progress)')
+  countQ = applyAwaitingCaseStatusFilter(countQ)
   if (branchId) countQ = countQ.eq('branch_id', branchId)
-  if (branchListId) countQ = countQ.eq('branch_list_id', branchListId)
+  countQ = applyAwaitingBranchListFilter(countQ, branchListId, caseType)
   if (caseType) countQ = countQ.eq('case_type', caseType)
   if (search) countQ = countQ.ilike('full_name', `%${search}%`)
   countQ = applyNotDuplicateFilter(countQ, duplicateColumnReady)
@@ -309,9 +332,9 @@ export async function fetchAwaitingAssignmentDebtors(
       .select('id', { count: 'exact', head: true })
       .is('current_task_id', null)
       .is('special_status_id', null)
-      .or('case_status.is.null,and(case_status.neq.closed,case_status.neq.payment_in_progress)')
+    countQ = applyAwaitingCaseStatusFilter(countQ)
     if (branchId) countQ = countQ.eq('branch_id', branchId)
-    if (branchListId) countQ = countQ.eq('branch_list_id', branchListId)
+    countQ = applyAwaitingBranchListFilter(countQ, branchListId, caseType)
     if (caseType) countQ = countQ.eq('case_type', caseType)
     if (search) countQ = countQ.ilike('full_name', `%${search}%`)
     ;({ count: noTaskTotal, error: countErr } = await countQ)
@@ -367,88 +390,145 @@ export interface AwaitingBranchSummary {
   count: number
 }
 
+async function countNoTaskAwaiting(
+  supabase: SupabaseClient,
+  branchId: string,
+  search: string,
+  caseType: 'civil' | 'criminal' | null,
+  duplicateColumnReady: boolean,
+): Promise<{ count: number; error: string | null; duplicateColumnReady: boolean }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const build = (dupReady: boolean): any => {
+    let q = supabase
+      .from('debtors')
+      .select('id', { count: 'exact', head: true })
+      .is('current_task_id', null)
+      .is('special_status_id', null)
+    q = applyAwaitingCaseStatusFilter(q)
+      .eq('branch_id', branchId)
+    if (caseType) q = q.eq('case_type', caseType)
+    if (search) q = q.ilike('full_name', `%${search}%`)
+    q = applyNotDuplicateFilter(q, dupReady)
+    return q
+  }
+
+  let ready = duplicateColumnReady
+  let res = await build(ready)
+  if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+    ready = false
+    res = await build(false)
+  }
+  if (res.error) return { count: 0, error: res.error.message, duplicateColumnReady: ready }
+  return { count: res.count ?? 0, error: null, duplicateColumnReady: ready }
+}
+
+async function countUntypedAwaiting(
+  supabase: SupabaseClient,
+  branchId: string,
+  search: string,
+  caseType: 'civil' | 'criminal' | null,
+  duplicateColumnReady: boolean,
+): Promise<{ count: number; error: string | null; duplicateColumnReady: boolean }> {
+  const terminalFilter = `(${[...TERMINAL_TASK_STATUSES].join(',')})`
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const build = (dupReady: boolean): any => {
+    let q = supabase
+      .from('debtors')
+      .select('id, current_task:tasks!current_task_id!inner(id)', { count: 'exact', head: true })
+      .is('special_status_id', null)
+    q = applyAwaitingCaseStatusFilter(q)
+      .eq('branch_id', branchId)
+      .is('current_task.task_definition_id', null)
+      .is('current_task.assigned_to', null)
+      .not('current_task.task_status', 'in', terminalFilter)
+    if (caseType) q = q.eq('case_type', caseType)
+    if (search) q = q.ilike('full_name', `%${search}%`)
+    q = applyNotDuplicateFilter(q, dupReady)
+    return q
+  }
+
+  let ready = duplicateColumnReady
+  let res = await build(ready)
+  if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+    ready = false
+    res = await build(false)
+  }
+  if (res.error) return { count: 0, error: res.error.message, duplicateColumnReady: ready }
+  return { count: res.count ?? 0, error: null, duplicateColumnReady: ready }
+}
+
 /**
  * فروع تحتوي أسماء تحت إسناد مهمة فقط (لا يُرجع فرعاً بعدد 0).
- * branchId المحدد → ملخص ذلك الفرع إن وُجدت أسماء؛ null → كل الفروع ذات الأسماء.
+ * branchId المحدد → ملخص ذلك الفرع؛ null (الكل) → كل الفروع النشطة ثم عدّاد لكل فرع.
  */
 export async function fetchAwaitingAssignmentBranchSummaries(
   supabase: SupabaseClient,
   branchId: string | null,
   options?: Pick<FetchAwaitingAssignmentOptions, 'search' | 'caseType'>,
 ): Promise<{ branches: AwaitingBranchSummary[]; error: string | null }> {
-  const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
-  const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
-  const counts = new Map<string, number>()
-  let duplicateColumnReady = true
+  try {
+    const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
+    const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
 
-  const add = (id: string | null | undefined) => {
-    if (!id) return
-    counts.set(id, (counts.get(id) ?? 0) + 1)
-  }
-
-  // 1) بلا مهمة مطلوبة
-  {
-    let offset = 0
-    const CHUNK = 1000
-    while (true) {
-      let q = supabase
-        .from('debtors')
-        .select('branch_id')
-        .is('current_task_id', null)
-        .is('special_status_id', null)
-        .or('case_status.is.null,and(case_status.neq.closed,case_status.neq.payment_in_progress)')
-        .order('id')
-        .range(offset, offset + CHUNK - 1)
-      if (branchId) q = q.eq('branch_id', branchId)
-      if (caseType) q = q.eq('case_type', caseType)
-      if (search) q = q.ilike('full_name', `%${search}%`)
-      q = applyNotDuplicateFilter(q, duplicateColumnReady)
-      let { data, error } = await q
-      if (error && isMissingDuplicateColumnError(error.message)) {
-        duplicateColumnReady = false
-        q = supabase
-          .from('debtors')
-          .select('branch_id')
-          .is('current_task_id', null)
-          .is('special_status_id', null)
-          .or('case_status.is.null,and(case_status.neq.closed,case_status.neq.payment_in_progress)')
-          .order('id')
-          .range(offset, offset + CHUNK - 1)
-        if (branchId) q = q.eq('branch_id', branchId)
-        if (caseType) q = q.eq('case_type', caseType)
-        if (search) q = q.ilike('full_name', `%${search}%`)
-        ;({ data, error } = await q)
+    let branchRows: { id: string; name: string }[] = []
+    if (branchId) {
+      const { data, error } = await supabase
+        .from('branches')
+        .select('id, name')
+        .eq('id', branchId)
+        .maybeSingle()
+      if (error) return { branches: [], error: error.message || 'فشل تحميل الفرع' }
+      if (data) branchRows = [{ id: data.id, name: data.name }]
+    } else {
+      const { fetchSelectableBranches } = await import('@/lib/branches-cache')
+      branchRows = await fetchSelectableBranches(supabase)
+      if (!branchRows.length) {
+        const { data, error } = await supabase
+          .from('branches')
+          .select('id, name')
+          .eq('is_active', true)
+          .order('name')
+        if (error) return { branches: [], error: error.message || 'فشل تحميل الفروع' }
+        branchRows = (data ?? []).map(b => ({ id: b.id as string, name: b.name as string }))
       }
-      if (error) return { branches: [], error: error.message }
-      const rows = data ?? []
-      for (const r of rows) add(r.branch_id as string | null)
-      if (rows.length < CHUNK) break
-      offset += CHUNK
     }
+
+    if (!branchRows.length) return { branches: [], error: null }
+
+    let duplicateColumnReady = true
+    const summaries: AwaitingBranchSummary[] = []
+
+    // دفعات متوازية لتفادي ضغط الشبكة عند «الكل»
+    const BATCH = 6
+    for (let i = 0; i < branchRows.length; i += BATCH) {
+      const chunk = branchRows.slice(i, i + BATCH)
+      const counted = await Promise.all(
+        chunk.map(async b => {
+          const noTask = await countNoTaskAwaiting(supabase, b.id, search, caseType, duplicateColumnReady)
+          if (noTask.error) return { error: noTask.error as string | null, summary: null as AwaitingBranchSummary | null }
+          duplicateColumnReady = noTask.duplicateColumnReady
+          const untyped = await countUntypedAwaiting(supabase, b.id, search, caseType, duplicateColumnReady)
+          if (untyped.error) return { error: untyped.error as string | null, summary: null as AwaitingBranchSummary | null }
+          duplicateColumnReady = untyped.duplicateColumnReady
+          const count = noTask.count + untyped.count
+          if (count <= 0) return { error: null, summary: null }
+          return {
+            error: null,
+            summary: { branchId: b.id, branchName: b.name, count },
+          }
+        }),
+      )
+      for (const row of counted) {
+        if (row.error) return { branches: [], error: row.error }
+        if (row.summary) summaries.push(row.summary)
+      }
+    }
+
+    summaries.sort((a, b) => a.branchName.localeCompare(b.branchName, 'ar'))
+    return { branches: summaries, error: null }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'فشل تحميل الفروع'
+    console.error('[fetchAwaitingAssignmentBranchSummaries]', msg)
+    return { branches: [], error: msg }
   }
-
-  // 2) مهمة بلا تعريف وغير مكلّفة
-  {
-    const untyped = await fetchUntypedUnassignedDebtors(supabase, branchId, {
-      search,
-      caseType,
-      branchListId: null,
-    })
-    if (untyped.error) return { branches: [], error: untyped.error }
-    for (const r of untyped.rows) add(r.branch_id)
-  }
-
-  const ids = [...counts.entries()].filter(([, n]) => n > 0).map(([id]) => id)
-  if (!ids.length) return { branches: [], error: null }
-
-  const { data: branches } = await supabase.from('branches').select('id, name').in('id', ids)
-  const nameMap = new Map((branches ?? []).map(b => [b.id as string, b.name as string]))
-
-  const result: AwaitingBranchSummary[] = ids.map(id => ({
-    branchId: id,
-    branchName: nameMap.get(id) ?? 'فرع',
-    count: counts.get(id) ?? 0,
-  }))
-  result.sort((a, b) => a.branchName.localeCompare(b.branchName, 'ar'))
-  return { branches: result, error: null }
 }

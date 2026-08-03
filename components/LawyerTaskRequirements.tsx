@@ -1,14 +1,14 @@
 import { Card } from '@/components/ui/card'
-import { fmtMoney } from '@/lib/utils'
 import type { TaskRequiredFieldDisplay } from '@/lib/task-display-label'
 
 interface Props {
   taskLabel: string
   requiredFields: TaskRequiredFieldDisplay[]
+  /** @deprecated لم يعد يُعرض للمحامي — يبقى اختيارياً للتوافق */
   feeAmount?: number | null
 }
 
-export default function LawyerTaskRequirements({ taskLabel, requiredFields, feeAmount }: Props) {
+export default function LawyerTaskRequirements({ taskLabel, requiredFields }: Props) {
   const required = requiredFields.filter(f => f.isRequired)
   const optional = requiredFields.filter(f => !f.isRequired)
 
@@ -17,11 +17,6 @@ export default function LawyerTaskRequirements({ taskLabel, requiredFields, feeA
       <div className="px-4 py-3 bg-[#2C8780]/10 border-b border-[#2C8780]/15">
         <p className="text-[10px] font-bold text-[#2C8780] uppercase tracking-wide mb-0.5">اسم المهمة</p>
         <h2 className="font-black text-[#1D6365] text-base leading-snug">{taskLabel}</h2>
-        {Number(feeAmount) > 0 && (
-          <p className="text-xs text-[#2C8780] font-semibold mt-1" dir="ltr">
-            أتعاب المهمة: {fmtMoney(feeAmount!)}
-          </p>
-        )}
       </div>
 
       <div className="px-4 py-3 space-y-3">

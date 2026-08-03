@@ -364,11 +364,6 @@ export default function LawyerTasksGrid({
               {tasks.map((task: any) => {
                 const remaining = Number(task.debtors?.remaining_amount ?? 0)
                 const isOverdue = task.due_date && isTaskOverdue(task.due_date) && !['completed', 'closed', 'failed', 'approved'].includes(task.task_status)
-                const fee = visibleTaskFeeAmount(
-                  task.reward_amount,
-                  task.debtors?.case_type,
-                  'lawyer',
-                )
                 const courtExecution = debtorCourtExecutionLine(task)
                 const selectable = isBatchSelectable(task.task_status)
                 return (
@@ -415,10 +410,9 @@ export default function LawyerTasksGrid({
                           </span>
                         )}
                       </div>
-                      {(remaining > 0 || fee > 0) && (
-                        <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
-                          {fee > 0 && <span className="text-[11px] font-bold text-[#2C8780] tabular-nums" dir="ltr">أتعاب: {fmtMoney(fee)}</span>}
-                          {remaining > 0 && <span className="text-xs font-black text-red-600 tabular-nums" dir="ltr">{fmtMoney(remaining)}</span>}
+                      {remaining > 0 && (
+                        <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-end gap-2">
+                          <span className="text-xs font-black text-red-600 tabular-nums" dir="ltr">{fmtMoney(remaining)}</span>
                         </div>
                       )}
                       <div className="mt-3 text-[11px] font-bold text-[#2C8780] flex items-center gap-0.5">

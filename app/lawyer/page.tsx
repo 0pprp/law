@@ -10,10 +10,9 @@ import LawyerWalletSummary from '@/components/LawyerWalletSummary'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
-import { fmtMoney, fmtDate } from '@/lib/utils'
+import { fmtDate } from '@/lib/utils'
 import { isTaskOverdue } from '@/lib/local-date'
 import { lawyerTaskStatusLabel, isLawyerAchievedTask } from '@/lib/lawyer-task-display'
-import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   assignment_pending_acceptance: 'warning',
@@ -185,11 +184,6 @@ export default async function LawyerDashboardPage() {
           <div className="px-3 pb-3 space-y-2">
             {latestTasks.map((task: any) => {
               const isOverdue = task.due_date && isTaskOverdue(task.due_date) && !['completed', 'closed', 'failed', 'approved'].includes(task.task_status)
-              const fee = visibleTaskFeeAmount(
-                task.reward_amount,
-                task.debtors?.case_type,
-                profile?.role ?? 'lawyer',
-              )
               return (
                 <Link key={task.id} href={`/lawyer/tasks/${task.id}`} className="block">
                   <div className={`rounded-2xl border p-4 transition-colors active:bg-[#2C8780]/[0.03] ${isOverdue ? 'border-red-200 bg-red-50/40' : 'border-[rgba(118,118,118,0.1)] bg-[#F3F1F2]/50'}`}>
@@ -208,11 +202,6 @@ export default async function LawyerDashboardPage() {
                       {task.due_date && (
                         <span className={isOverdue ? 'text-red-500 font-semibold' : ''} dir="ltr">
                           📅 {fmtDate(task.due_date)}
-                        </span>
-                      )}
-                      {fee > 0 && (
-                        <span className="text-[#2C8780] font-bold tabular-nums" dir="ltr">
-                          أتعاب: {fmtMoney(fee)}
                         </span>
                       )}
                     </div>

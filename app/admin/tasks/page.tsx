@@ -454,7 +454,7 @@ function TasksPageInner() {
         setAssignedTotal(t => t + n)
       }
       cacheInvalidatePrefix('tasks:assign:')
-      cacheInvalidatePrefix('dashboard:v10:')
+      cacheInvalidatePrefix('dashboard:v')
     })
   }
 
@@ -508,7 +508,7 @@ function TasksPageInner() {
       setUnassignedTotal(t => t + n)
       if (taskView === 'overdue') setOverdueTotal(t => Math.max(0, t - n))
       cacheInvalidatePrefix('tasks:assign:')
-      cacheInvalidatePrefix('dashboard:v10:')
+      cacheInvalidatePrefix('dashboard:v')
     })
   }
 

@@ -437,7 +437,7 @@ export type PleadingHearingBadgeCounts = {
   gray: number
 }
 
-export const CURRENT_TASK_PAGE_SIZE = 50
+export const CURRENT_TASK_PAGE_SIZE = 200
 export const REVIEW_TASK_PAGE_SIZE = 20
 export const LAWYER_TASK_PAGE_SIZE = 30
 
@@ -626,8 +626,8 @@ function applyCurrentTaskListFilters(
   return query
 }
 
-/** Chunked scan — counts only, minimal columns. branchId=null → كل الفروع. */
-async function scanCurrentTaskMeta(
+/** Chunked scan — fallback إذا لم تُطبَّق دالة get_stage_counts بعد. */
+async function scanCurrentTaskMetaLegacy(
   supabase: SupabaseClient,
   branchId: string | null,
   caseType?: 'civil' | 'criminal' | null,
@@ -663,7 +663,6 @@ async function scanCurrentTaskMeta(
     if (!debtors?.length) break
 
     const taskIds = debtors.map(d => d.current_task_id).filter(Boolean) as string[]
-    // تمرير مئات المعرّفات في `in(...)` يُنتج رابطاً ضخماً قد يفشل ويُسقط العدّ بصمت
     for (let i = 0; i < taskIds.length; i += TASK_ID_BATCH_SIZE) {
       const batch = taskIds.slice(i, i + TASK_ID_BATCH_SIZE)
       let tasksQ = supabase
@@ -692,11 +691,9 @@ async function scanCurrentTaskMeta(
             }
           }
         } else if (defId) {
-          // غير مكلفة بتعريف مهمة → بطاقات المراحل
           unassigned++
           stageCounts.set(defId, (stageCounts.get(defId) ?? 0) + 1)
         }
-        // بلا task_definition_id → تُحسب ضمن «الأسماء التي تحت إسناد مهمة» لا هنا
       }
     }
 
@@ -704,6 +701,60 @@ async function scanCurrentTaskMeta(
     offset += STATS_CHUNK_SIZE
   }
 
+  return { unassigned, assigned, stageCounts, assignedStageCounts, overdueStageCounts }
+}
+
+/**
+ * إحصائيات المراحل بطلب واحد عبر RPC get_stage_counts.
+ * نفس شكل CurrentTaskMeta — لا يغيّر واجهة لوحة التحكم.
+ */
+async function scanCurrentTaskMeta(
+  supabase: SupabaseClient,
+  branchId: string | null,
+  caseType?: 'civil' | 'criminal' | null,
+  branchListId?: string | null,
+): Promise<CurrentTaskMeta> {
+  const empty: CurrentTaskMeta = {
+    unassigned: 0,
+    assigned: 0,
+    stageCounts: new Map(),
+    assignedStageCounts: new Map(),
+    overdueStageCounts: new Map(),
+  }
+
+  // p_case_type يُمرَّر دائماً (civil|criminal|null) — يجب أن يطابق فلتر الدالة في SQL
+  const { data, error } = await supabase.rpc('get_stage_counts', {
+    p_branch_id: branchId ?? null,
+    p_case_type: caseType === 'civil' || caseType === 'criminal' ? caseType : null,
+    p_branch_list_id: branchListId ?? null,
+    p_today: localTodayYmd(),
+  })
+
+  if (error) {
+    console.warn('[scanCurrentTaskMeta] RPC unavailable, falling back to legacy scan:', error.message)
+    return scanCurrentTaskMetaLegacy(supabase, branchId, caseType, branchListId)
+  }
+
+  const stageCounts = new Map<string, number>()
+  const assignedStageCounts = new Map<string, number>()
+  const overdueStageCounts = new Map<string, number>()
+  let unassigned = 0
+  let assigned = 0
+
+  for (const row of data ?? []) {
+    const defId = row.task_definition_id as string | null
+    if (!defId) continue
+    const u = Number(row.unassigned_count ?? 0)
+    const a = Number(row.assigned_count ?? 0)
+    const o = Number(row.overdue_count ?? 0)
+    if (u > 0) stageCounts.set(defId, u)
+    if (a > 0) assignedStageCounts.set(defId, a)
+    if (o > 0) overdueStageCounts.set(defId, o)
+    unassigned += u
+    assigned += a
+  }
+
+  if (!data) return empty
   return { unassigned, assigned, stageCounts, assignedStageCounts, overdueStageCounts }
 }
 
@@ -974,7 +1025,6 @@ export async function fetchPleadingHearingBadgeCounts(
   branchId: string | null,
   options?: { branchListId?: string | null },
 ): Promise<PleadingHearingBadgeCounts> {
-  const { getHearingDateStatus } = await import('@/lib/hearing-date-utils')
   const empty: PleadingHearingBadgeCounts = { yellow: 0, red: 0, gray: 0 }
 
   let defsQ = supabase
@@ -993,52 +1043,53 @@ export async function fetchPleadingHearingBadgeCounts(
   const defIds = (defs ?? []).map(d => d.id)
   if (!defIds.length) return empty
 
+  const today = localTodayYmd()
+  const todayDate = new Date(`${today}T12:00:00`)
+  const plusDays = (n: number) => {
+    const d = new Date(todayDate)
+    d.setDate(d.getDate() + n)
+    return localTodayYmd(d)
+  }
+  const redEnd = plusDays(2)
+  const yellowDay = plusDays(3)
   const terminalFilter = `(${OVERDUE_TERMINAL_STATUSES.join(',')})`
-  const PAGE = 500
-  let offset = 0
-  const counts: PleadingHearingBadgeCounts = { yellow: 0, red: 0, gray: 0 }
 
-  while (true) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q: any = supabase
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const baseCountQuery = (): any => {
+    let q = supabase
       .from('debtors')
-      .select(`
-        first_hearing_date,
-        current_task:tasks!current_task_id!inner(
-          id, assigned_to, task_status, task_definition_id
-        )
-      `)
+      .select('id, current_task:tasks!current_task_id!inner(id)', { count: 'exact', head: true })
       .not('case_status', 'eq', 'closed')
       .not('case_status', 'eq', 'payment_in_progress')
       .is('special_status_id', null)
       .eq('case_type', 'civil')
+      .not('first_hearing_date', 'is', null)
       .in('current_task.task_definition_id', defIds)
       .is('current_task.assigned_to', null)
       .not('current_task.task_status', 'in', terminalFilter)
-      .order('id')
-      .range(offset, offset + PAGE - 1)
-
     if (branchId) q = q.eq('branch_id', branchId)
     if (options?.branchListId) q = q.eq('branch_list_id', options.branchListId)
-
-    const { data, error } = await q
-    if (error) {
-      console.error('[fetchPleadingHearingBadgeCounts]', error.message)
-      break
-    }
-    const chunk = data ?? []
-    for (const row of chunk) {
-      const date = row.first_hearing_date ? String(row.first_hearing_date).slice(0, 10) : null
-      const status = getHearingDateStatus(date)
-      if (status === 'yellow') counts.yellow += 1
-      else if (status === 'red') counts.red += 1
-      else if (status === 'gray') counts.gray += 1
-    }
-    if (chunk.length < PAGE) break
-    offset += PAGE
+    return q
   }
 
-  return counts
+  const [grayRes, redRes, yellowRes] = await Promise.all([
+    baseCountQuery().lt('first_hearing_date', today),
+    baseCountQuery().gte('first_hearing_date', today).lte('first_hearing_date', redEnd),
+    baseCountQuery().eq('first_hearing_date', yellowDay),
+  ])
+
+  for (const res of [grayRes, redRes, yellowRes]) {
+    if (res.error) {
+      console.error('[fetchPleadingHearingBadgeCounts]', res.error.message)
+      return empty
+    }
+  }
+
+  return {
+    gray: grayRes.count ?? 0,
+    red: redRes.count ?? 0,
+    yellow: yellowRes.count ?? 0,
+  }
 }
 
 export async function fetchUnassignedCurrentTasks(
