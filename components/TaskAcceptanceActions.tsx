@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatLocalDeadlineFromIso } from '@/lib/local-date'
 import { formatErrorMessage } from '@/lib/format-error'
+import { invalidateLawyerTasksCache } from '@/lib/task-assignment'
 
 interface Props {
   taskId: string
@@ -37,6 +38,7 @@ export default function TaskAcceptanceActions({ taskId, taskLabel, expiresAt }: 
         setLoading(null)
         return
       }
+      invalidateLawyerTasksCache()
       router.refresh()
       if (action === 'reject') router.push('/lawyer/tasks')
     } catch (e: unknown) {

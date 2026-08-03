@@ -25,6 +25,7 @@ import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressMo
 import SpecialStatusBadge from '@/components/SpecialStatusBadge'
 import { cacheInvalidatePrefix } from '@/lib/query-cache'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
+import { useScrollRestore } from '@/hooks/use-scroll-restore'
 import { appConfirm } from '@/lib/app-dialog'
 import { resolveCourtName, resolveExecutionOffice } from '@/lib/awaiting-assignment'
 import { resolveSpecialStatus } from '@/lib/special-statuses'
@@ -121,7 +122,10 @@ function DebtorStageRow({
   showHearingDate: boolean
 }) {
   const isWaiting = view === 'waiting'
-  const canSelect = canMonitor || (canAssign && isWaiting)
+  const canSelect =
+    isWaiting
+      ? (canMonitor || canAssign)
+      : (canAssign && (view === 'assigned' || view === 'overdue'))
   const hearingStatus = showHearingDate ? getHearingDateStatus(d.firstHearingDate) : null
   const hearingDays = showHearingDate ? getDaysUntilHearing(d.firstHearingDate) : null
   const rowBackground =
@@ -461,6 +465,8 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const [successMsg, setSuccessMsg] = useState('')
   const [moveModalOpen, setMoveModalOpen] = useState(false)
   const [monitorModalOpen, setMonitorModalOpen] = useState(false)
+
+  useScrollRestore(`admin-stage:${stageId}:${view}:${branchId ?? 'all'}`, { ready: !loading })
 
   const STAGE_PAGE = 200
 
@@ -828,6 +834,56 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     })
   }
 
+  async function unassignSelected() {
+    const taskIds = Array.from(selected)
+    if (!taskIds.length || !canAssign) return
+
+    const ok = await appConfirm({
+      title: 'إلغاء التكليف الجماعي',
+      message: `ستُعاد ${taskIds.length} مهمة إلى غير المكلفة وتُزال من قائمة المكلَّف. هل تريد المتابعة؟`,
+      confirmLabel: 'إلغاء التكليف',
+      danger: true,
+    })
+    if (!ok) return
+
+    setAssigning(true)
+    setError('')
+    setSuccessMsg('')
+
+    const results = await Promise.all(
+      taskIds.map(taskId =>
+        executeTaskUnassign({
+          taskIds: [taskId],
+          branchId,
+          canAssign,
+          caseType: stageCaseType,
+        }),
+      ),
+    )
+
+    setAssigning(false)
+
+    const failed = results
+      .map((r, i) => (!r.ok ? { id: taskIds[i], error: r.error } : null))
+      .filter(Boolean) as { id: string; error: string | null }[]
+
+    if (failed.length) {
+      setError(
+        failed.length === taskIds.length
+          ? (failed[0]?.error ?? 'فشل إلغاء التكليف')
+          : `تعذّر إلغاء تكليف ${failed.length} من ${taskIds.length} مهمة${failed[0]?.error ? `: ${failed[0].error}` : ''} — لم يُزل أي صف`,
+      )
+      return
+    }
+
+    preserveScrollDuring(() => {
+      setDebtors(prev => prev.filter(d => !taskIds.includes(d.taskId)))
+      setSelected(new Set())
+      cacheInvalidatePrefix('dashboard:v')
+      setSuccessMsg(`تم إلغاء تكليف ${taskIds.length} مهمة — عادت لغير المكلفة`)
+    })
+  }
+
   const selectedCount = selected.size
   const selectedDebtorIds = useMemo(
     () => debtors.filter(d => selected.has(d.taskId)).map(d => d.debtorId),
@@ -988,6 +1044,32 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
             <p className="text-[11px] text-orange-600 bg-orange-50 px-3 py-1.5 rounded-lg">
               للتكليف اختر فرعاً محدداً من القائمة العلوية
             </p>
+          )}
+        </div>
+      )}
+
+      {canAssign && (view === 'assigned' || view === 'overdue') && visibleCount > 0 && (
+        <div className="bg-white rounded-xl border border-orange-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <label className="flex items-center gap-2 text-xs font-semibold text-[#231F20] cursor-pointer shrink-0">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              onChange={toggleAllVisible}
+              className="w-4 h-4 accent-[#2C8780]"
+            />
+            تحديد الكل ({visibleCount})
+          </label>
+          {selectedCount > 0 && (
+            <button
+              type="button"
+              onClick={() => void unassignSelected()}
+              disabled={assigning}
+              className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold text-orange-800 bg-orange-50 border border-orange-200 hover:bg-orange-100 disabled:opacity-50"
+            >
+              {assigning
+                ? 'جارٍ إلغاء التكليف...'
+                : `إلغاء التكليف (${selectedCount})`}
+            </button>
           )}
         </div>
       )}

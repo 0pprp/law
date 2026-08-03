@@ -28,6 +28,7 @@ import { CASE_STATUS_PAYMENT_IN_PROGRESS } from '@/lib/types'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
 import SpecialStatusBadge from '@/components/SpecialStatusBadge'
 import { resolveSpecialStatus } from '@/lib/special-statuses'
+import { useScrollRestore } from '@/hooks/use-scroll-restore'
 
 const PAGE_SIZE = 50
 
@@ -121,6 +122,7 @@ export default function DebtorsPage() {
     { value: '__none__', label: 'بدون صفة' },
   ])
 
+  useScrollRestore(`admin-debtors:${branchId ?? 'all'}:${filterListId ?? ''}`, { ready: !loading })
   useEffect(() => {
     setFilterCaseType(lockedCaseType ?? '')
     setSearch('')

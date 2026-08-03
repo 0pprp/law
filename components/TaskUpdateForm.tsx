@@ -26,6 +26,7 @@ import {
   partitionCompletionDataByDefinition,
   type HybridLinkInfo,
 } from '@/lib/hybrid-task-links'
+import { invalidateLawyerTasksCache } from '@/lib/task-assignment'
 
 interface Attachment {
   id: string
@@ -299,6 +300,7 @@ export function LawyerTaskCompletionModal({
         : 'إرسال المهمة للاعتماد',
     }, supabase)
 
+    invalidateLawyerTasksCache()
     onSubmitted()
     onClose()
     if (!skipRouterRefresh) router.refresh()

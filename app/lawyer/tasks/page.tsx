@@ -7,13 +7,15 @@ import type { TaskStatus } from '@/lib/types'
 import {
   fetchLawyerAssignedTasksPaginated,
   fetchLawyerTaskStatusCounts,
+  invalidateLawyerTasksCache,
   LAWYER_TASK_PAGE_SIZE,
 } from '@/lib/task-assignment'
 import LawyerWalletSummary from '@/components/LawyerWalletSummary'
 import LawyerTasksGrid from '@/components/LawyerTasksGrid'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { isGeneralLawyerType } from '@/lib/lawyer-type'
-import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
+import { DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
+import { cacheGet, cacheSet, CACHE_TTL } from '@/lib/query-cache'
 
 const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
   { key: 'all', label: 'الكل' },
@@ -24,6 +26,16 @@ const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
   { key: 'rejected', label: 'مرفوضة' },
   { key: 'completed', label: 'منجزة' },
 ]
+
+function lawyerTasksCacheKey(
+  lawyerId: string,
+  filter: string,
+  search: string,
+  branchId: string,
+  offset: number,
+) {
+  return `lawyer-tasks:v1:${lawyerId}:${filter}:${search}:${branchId}:${offset}`
+}
 
 export default function LawyerTasksPage() {
   const searchParams = useSearchParams()
@@ -61,27 +73,29 @@ export default function LawyerTasksPage() {
     if (append) setLoadingMore(true)
     else setLoading(true)
 
-    const supabase = createClient()
-    const debtorIds = debouncedSearch.trim()
-      ? await resolveDebtorIdsBySearch(supabase, debouncedSearch)
-      : null
-
-    if (debtorIds && !debtorIds.length) {
-      setTasks([])
-      setTotal(0)
-      setPageOffset(0)
-      setLoading(false)
-      setLoadingMore(false)
-      return
+    const cacheKey = lawyerTasksCacheKey(uid, filter, debouncedSearch.trim(), branchFilter || '', offset)
+    if (!append) {
+      const cached = cacheGet<{ tasks: any[]; total: number }>(cacheKey)
+      if (cached) {
+        setTasks(cached.tasks)
+        setTotal(cached.total)
+        setPageOffset(offset + cached.tasks.length)
+        setLoading(false)
+        setLoadingMore(false)
+        return
+      }
     }
 
+    const supabase = createClient()
+    console.time('[lawyer-tasks] page-load')
     const page = await fetchLawyerAssignedTasksPaginated(supabase, uid, {
       offset,
       limit: LAWYER_TASK_PAGE_SIZE,
       status: filter,
-      debtorIds,
+      search: debouncedSearch.trim() || null,
       branchId: branchFilter || null,
     })
+    console.timeEnd('[lawyer-tasks] page-load')
 
     if (page.error) {
       setLoading(false)
@@ -89,12 +103,20 @@ export default function LawyerTasksPage() {
       return
     }
 
+    cacheSet(cacheKey, { tasks: page.tasks, total: page.total }, CACHE_TTL.lawyerTasks)
     setTasks(prev => (append ? [...prev, ...page.tasks] : page.tasks))
     setTotal(page.total)
     setPageOffset(offset + page.tasks.length)
     setLoading(false)
     setLoadingMore(false)
   }, [lawyerId, filter, debouncedSearch, branchFilter])
+
+  const reloadAfterMutation = useCallback(() => {
+    if (!lawyerId) return
+    invalidateLawyerTasksCache(lawyerId)
+    setPageOffset(0)
+    void loadPage(false, 0)
+  }, [lawyerId, loadPage])
 
   useEffect(() => {
     const supabase = createClient()
@@ -219,6 +241,7 @@ export default function LawyerTasksPage() {
         hasMore={hasMore}
         total={total}
         onLoadMore={() => loadPage(true, pageOffset)}
+        onTasksMutated={reloadAfterMutation}
         showBranch={isGeneralLawyer}
         lawyerId={lawyerId}
         emptyMessage={

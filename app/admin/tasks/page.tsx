@@ -20,6 +20,7 @@ import { formatErrorMessage } from '@/lib/format-error'
 import { ensureAutoAcceptAllAssignments, scheduleBranchMaintenance } from '@/lib/branch-maintenance'
 import { cacheGet, cacheSet, cacheInvalidatePrefix, CACHE_TTL } from '@/lib/query-cache'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
+import { useScrollRestore } from '@/hooks/use-scroll-restore'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -139,6 +140,11 @@ function TasksPageInner() {
   const [bulkDueDate, setBulkDueDate] = useState('')
   const [singleAssignId, setSingleAssignId] = useState<string | null>(null)
   const [singleLawyerId, setSingleLawyerId] = useState('')
+
+  useScrollRestore(
+    `admin-tasks:${taskView}:${branchId ?? 'all'}:${filterListId ?? ''}:${filterDef}`,
+    { ready: !loading },
+  )
 
   const lawyersRef = useRef(lawyers)
   const delegatesRef = useRef(delegates)

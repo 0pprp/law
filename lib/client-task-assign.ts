@@ -38,6 +38,7 @@ export function invalidateAssignmentCaches(branchId: string | null, taskView?: s
   cacheInvalidatePrefix('dashboard:')
   cacheInvalidatePrefix('tasks:assign:')
   cacheInvalidatePrefix('tasks:review:')
+  cacheInvalidatePrefix('lawyer-tasks:v1:')
   if (taskView) {
     cacheDelete(`tasks:assign:${branchKey}:${taskView}:${filterDef ?? ''}:${filterListId ?? ''}:${debouncedSearch ?? ''}:0`)
   }

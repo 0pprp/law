@@ -15,7 +15,7 @@ import { lawyerTaskStatusLabel, isLawyerAchievedTask } from '@/lib/lawyer-task-d
 import { isTaskOverdue } from '@/lib/local-date'
 import { Badge } from '@/components/ui/badge'
 import { fmtDate } from '@/lib/utils'
-import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
+import { DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
 import TaskAcceptanceActions from '@/components/TaskAcceptanceActions'
 
 const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
@@ -79,24 +79,11 @@ function DelegateTasksInner() {
     else setLoading(true)
 
     const supabase = createClient()
-    const debtorIds = debouncedSearch.trim()
-      ? await resolveDebtorIdsBySearch(supabase, debouncedSearch)
-      : null
-
-    if (debtorIds && !debtorIds.length) {
-      setTasks([])
-      setTotal(0)
-      setPageOffset(0)
-      setLoading(false)
-      setLoadingMore(false)
-      return
-    }
-
     const page = await fetchLawyerAssignedTasksPaginated(supabase, uid, {
       offset,
       limit: LAWYER_TASK_PAGE_SIZE,
       status: filter,
-      debtorIds,
+      search: debouncedSearch.trim() || null,
     })
 
     if (page.error) {

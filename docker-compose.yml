@@ -1,0 +1,22 @@
+# Production: run pre-built Next standalone — do NOT build inside the container on restart.
+# Build on the host via scripts/deploy.sh, then restart this service.
+services:
+  qalatlaw:
+    image: node:20-alpine
+    container_name: qalatlaw
+    working_dir: /app/.next/standalone
+    command: node server.js
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - /var/www/qalat-aldhaman/.env.local
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    volumes:
+      - /var/www/qalat-aldhaman:/app
+      - /var/www/qalat-aldhaman/.next:/app/.next:ro
+      - /var/www/qalat-aldhaman/public:/app/.next/standalone/public:ro
+      - /var/www/qalat-aldhaman/.next/static:/app/.next/standalone/.next/static:ro

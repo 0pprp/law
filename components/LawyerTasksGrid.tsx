@@ -22,6 +22,7 @@ import {
 } from '@/lib/task-definition-expenses'
 import type { PendingTaskExpense } from '@/lib/persist-task-expenses'
 import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
+import { invalidateLawyerTasksCache } from '@/lib/task-assignment'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   assignment_pending_acceptance: 'warning',
@@ -114,6 +115,7 @@ interface Props {
   emptyMessage?: string
   showBranch?: boolean
   lawyerId?: string | null
+  onTasksMutated?: () => void
 }
 
 export default function LawyerTasksGrid({
@@ -126,6 +128,7 @@ export default function LawyerTasksGrid({
   emptyMessage = 'لا توجد مهام',
   showBranch = false,
   lawyerId = null,
+  onTasksMutated,
 }: Props) {
   const router = useRouter()
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -248,9 +251,11 @@ export default function LawyerTasksGrid({
     } else {
       setQueue([])
       setQueueIndex(0)
+      invalidateLawyerTasksCache(lawyerId)
+      onTasksMutated?.()
       router.refresh()
     }
-  }, [queue, queueIndex, router])
+  }, [queue, queueIndex, router, lawyerId, onTasksMutated])
 
   async function runBatch() {
     if (!selectedCount || batchRunning) return
@@ -297,6 +302,8 @@ export default function LawyerTasksGrid({
       }
     } else {
       setBatchReport({ ok, fails })
+      invalidateLawyerTasksCache(lawyerId)
+      onTasksMutated?.()
       router.refresh()
     }
 

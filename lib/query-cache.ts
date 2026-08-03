@@ -13,6 +13,8 @@ export const CACHE_TTL = {
   dashboard: 60_000,
   notifications: 45_000,
   list: 60_000,
+  /** قائمة مهام المحامي — قصيرة لأن الحالة تتغير بعد قبول/إنجاز */
+  lawyerTasks: 30_000,
 } as const
 
 export function cacheGet<T>(key: string): T | null {

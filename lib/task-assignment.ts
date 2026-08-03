@@ -9,6 +9,8 @@ import { fetchAssignmentLawyers } from '@/lib/branch-profiles'
 import { isGeneralLawyerType } from '@/lib/lawyer-type'
 import { formatErrorMessage } from '@/lib/format-error'
 import { isFindAddressTaskType } from '@/lib/delegate'
+import { debtorSearchOrFilter } from '@/lib/debtor-search'
+import { cacheInvalidatePrefix } from '@/lib/query-cache'
 
 const LAWYER_TASK_LIST_COLS =
   'id, task_type, task_definition_id, task_status, due_date, court_name, governorate, created_at, debtor_id, assignment_expires_at, admin_notes, assigned_to, reward_amount, branch_id'
@@ -1299,7 +1301,10 @@ export interface FetchLawyerTasksOptions {
   offset?: number
   limit?: number
   status?: TaskStatus | 'all' | 'completed'
+  /** @deprecated تفضيل `search` عبر join — يُبقى للتوافق */
   debtorIds?: string[] | null
+  /** بحث مباشر على المدين (اسم / هاتف / رقم وصل) عبر نفس استعلام المهام */
+  search?: string | null
   branchId?: string | null
 }
 
@@ -1319,8 +1324,95 @@ export interface LawyerTaskStatusCounts {
   completed: number
 }
 
-/** Lawyer task list — paginated, branch-safe debtor fetch. */
-async function queryLawyerTasksPage(
+export function invalidateLawyerTasksCache(lawyerId?: string | null): void {
+  if (lawyerId) cacheInvalidatePrefix(`lawyer-tasks:v1:${lawyerId}`)
+  else cacheInvalidatePrefix('lawyer-tasks:v1:')
+}
+
+function unwrapEmbedOne<T>(value: T | T[] | null | undefined): T | null {
+  if (value == null) return null
+  return Array.isArray(value) ? (value[0] ?? null) : value
+}
+
+const LAWYER_DEBTOR_EMBED_COLS =
+  'id, full_name, governorate, remaining_amount, phone, receipt_number, branch_id, branch_list_id, branch_list:branch_lists(name, court_name, execution_office)'
+
+type LawyerTaskDebtorEmbed = NonNullable<LawyerTaskRow['debtors']> & { id?: string }
+
+type LawyerTaskJoinedRaw = LawyerTaskListRaw & {
+  debtors?: LawyerTaskDebtorEmbed | LawyerTaskDebtorEmbed[] | null
+  task_definitions?: { id: string; label: string } | { id: string; label: string }[] | null
+}
+
+function applyLawyerTaskStatusFilters(
+  q: any,
+  lawyerId: string,
+  status: FetchLawyerTasksOptions['status'],
+  trackAssignmentRejections: boolean,
+) {
+  if (trackAssignmentRejections && status === 'rejected') {
+    // مرفوضة = رفض إنجاز (needs_revision/rejected) للمهام المسندة
+    return q.eq('assigned_to', lawyerId).in('task_status', ['needs_revision', 'rejected'])
+  }
+  if (status && status !== 'all') {
+    q = q.eq('assigned_to', lawyerId)
+    if (status === 'completed') return q.in('task_status', ['approved', 'completed'])
+    return q.eq('task_status', status)
+  }
+  return q.eq('assigned_to', lawyerId)
+}
+
+function filterActiveLawyerTasks(rawTasks: LawyerTaskListRaw[], lawyerId: string): LawyerTaskListRaw[] {
+  return rawTasks.filter((t) => {
+    if (t.assigned_to !== lawyerId) return false
+    if (t.assignment_rejected_by === lawyerId) return false
+    if (t.task_status === 'waiting_assignment' && t.give_up_reason) return false
+    return true
+  })
+}
+
+/** استعلام واحد: مهام + مدين + تعريف + فرع (مع !inner عند البحث) */
+async function queryLawyerTasksPageJoined(
+  supabase: SupabaseClient,
+  lawyerId: string,
+  options: FetchLawyerTasksOptions | undefined,
+  trackAssignmentRejections: boolean,
+) {
+  const limit = options?.limit ?? LAWYER_TASK_PAGE_SIZE
+  const offset = options?.offset ?? 0
+  const status = options?.status
+  const search = options?.search?.trim() ?? ''
+  const taskCols = trackAssignmentRejections
+    ? `${LAWYER_TASK_LIST_COLS}${LAWYER_TASK_REJECTION_COL}`
+    : LAWYER_TASK_LIST_COLS
+
+  const debtorRel = search
+    ? `debtors!tasks_debtor_id_fkey!inner(${LAWYER_DEBTOR_EMBED_COLS})`
+    : `debtors!tasks_debtor_id_fkey(${LAWYER_DEBTOR_EMBED_COLS})`
+
+  const select = `${taskCols}, ${debtorRel}, task_definitions(id, label)`
+
+  let q = supabase
+    .from('tasks')
+    .select(select, { count: 'exact' })
+    .not('task_status', 'eq', 'draft')
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1)
+
+  q = applyLawyerTaskStatusFilters(q, lawyerId, status, trackAssignmentRejections)
+
+  if (search) {
+    q = q.or(debtorSearchOrFilter(search), { foreignTable: 'debtors' })
+  } else if (options?.debtorIds?.length) {
+    q = q.in('debtor_id', options.debtorIds)
+  }
+  if (options?.branchId) q = q.eq('branch_id', options.branchId)
+
+  return q
+}
+
+/** استعلام أعمدة المهام فقط — مسار احتياطي عند فشل الـ join / RLS */
+async function queryLawyerTasksPageFlat(
   supabase: SupabaseClient,
   lawyerId: string,
   options: FetchLawyerTasksOptions | undefined,
@@ -1340,26 +1432,84 @@ async function queryLawyerTasksPage(
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
-  if (trackAssignmentRejections && status === 'rejected') {
-    // مرفوضة = رفض إنجاز (needs_revision/rejected) للمهام المسندة
-    // عدّ رفض التكليف يُضاف في العدادات فقط عبر fetchLawyerTaskStatusCounts
-    q = q.eq('assigned_to', lawyerId).in('task_status', ['needs_revision', 'rejected'])
-  } else if (status && status !== 'all') {
-    q = q.eq('assigned_to', lawyerId)
-    if (status === 'completed') {
-      q = q.in('task_status', ['approved', 'completed'])
-    } else {
-      q = q.eq('task_status', status)
-    }
-  } else {
-    // الكل / الرئيسية — المكلف بها فقط
-    q = q.eq('assigned_to', lawyerId)
-  }
+  q = applyLawyerTaskStatusFilters(q, lawyerId, status, trackAssignmentRejections)
 
   if (options?.debtorIds?.length) q = q.in('debtor_id', options.debtorIds)
   if (options?.branchId) q = q.eq('branch_id', options.branchId)
 
   return q
+}
+
+function mapJoinedLawyerTasks(
+  rows: LawyerTaskJoinedRaw[],
+  lawyerId: string,
+  branchNameMap: Map<string, string>,
+): LawyerTaskRow[] {
+  const active = filterActiveLawyerTasks(rows, lawyerId) as LawyerTaskJoinedRaw[]
+  return active.map((t) => {
+    const def = unwrapEmbedOne(t.task_definitions)
+    const debtor = unwrapEmbedOne(t.debtors)
+    const branchId = t.branch_id as string | null
+    const {
+      debtors: _debtors,
+      task_definitions: _defs,
+      ...taskFields
+    } = t
+    void _debtors
+    void _defs
+    return {
+      ...taskFields,
+      task_label: def?.label ?? null,
+      branch_name: branchId ? branchNameMap.get(branchId) ?? null : null,
+      debtors: debtor
+        ? {
+            full_name: debtor.full_name,
+            governorate: debtor.governorate,
+            remaining_amount: debtor.remaining_amount,
+            phone: debtor.phone,
+            receipt_number: debtor.receipt_number,
+            branch_list_id: debtor.branch_list_id,
+            branch_list: debtor.branch_list,
+          }
+        : null,
+    } as LawyerTaskRow
+  })
+}
+
+async function enrichLawyerTasksLegacy(
+  supabase: SupabaseClient,
+  activeTasks: LawyerTaskListRaw[],
+): Promise<LawyerTaskRow[]> {
+  const debtorIds = [...new Set(activeTasks.map(t => t.debtor_id))]
+  const defIds = [...new Set(activeTasks.map(t => t.task_definition_id).filter(Boolean))] as string[]
+  const branchIds = [...new Set(activeTasks.map(t => t.branch_id).filter(Boolean))] as string[]
+
+  const [{ data: debtors }, { data: definitions }, { data: branchRows }] = await Promise.all([
+    supabase
+      .from('debtors')
+      .select(`id, full_name, governorate, remaining_amount, phone, receipt_number, branch_id, branch_list_id, branch_list:branch_lists(name, court_name, execution_office)`)
+      .in('id', debtorIds),
+    defIds.length
+      ? supabase.from('task_definitions').select('id, label').in('id', defIds)
+      : Promise.resolve({ data: [] as { id: string; label: string }[] }),
+    branchIds.length
+      ? supabase.from('branches').select('id, name').in('id', branchIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+  ])
+
+  const debtorMap = new Map((debtors ?? []).map(d => [d.id, d]))
+  const defMap = new Map((definitions ?? []).map(d => [d.id, d.label]))
+  const branchNameMap = new Map((branchRows ?? []).map(b => [b.id, b.name]))
+
+  return activeTasks.map(t => {
+    const branchId = t.branch_id as string | null
+    return {
+      ...t,
+      task_label: t.task_definition_id ? defMap.get(t.task_definition_id) ?? null : null,
+      branch_name: branchId ? branchNameMap.get(branchId) ?? null : null,
+      debtors: debtorMap.get(t.debtor_id) ?? null,
+    } as LawyerTaskRow
+  })
 }
 
 export async function fetchLawyerAssignedTasksPaginated(
@@ -1368,62 +1518,80 @@ export async function fetchLawyerAssignedTasksPaginated(
   options?: FetchLawyerTasksOptions,
 ): Promise<PaginatedLawyerTasksResult> {
   // لا تُنفَّذ كتابات auto-accept عند كل قراءة — الصيانة عبر scheduleBranchMaintenance فقط
+  const timingLabel = `[lawyer-tasks] fetch ${lawyerId.slice(0, 8)}`
+  console.time(timingLabel)
 
-  let { data: tasks, count, error } = await queryLawyerTasksPage(supabase, lawyerId, options, true)
-  if (error && isMissingAssignmentRejectionColumn(error)) {
-    ;({ data: tasks, count, error } = await queryLawyerTasksPage(supabase, lawyerId, options, false))
-  }
-  if (error) {
-    console.error('[fetchLawyerAssignedTasksPaginated]', error.message ?? error)
-    return { tasks: [], total: 0, error }
-  }
-  if (!tasks?.length) return { tasks: [], total: count ?? 0, error: null }
+  try {
+    let joined = await queryLawyerTasksPageJoined(supabase, lawyerId, options, true)
+    if (joined.error && isMissingAssignmentRejectionColumn(joined.error)) {
+      joined = await queryLawyerTasksPageJoined(supabase, lawyerId, options, false)
+    }
 
-  const rawTasks = tasks as unknown as LawyerTaskListRaw[]
-  // لا تعرض مهاماً رفضها المحامي حتى لو بقيت حالة قديمة في قاعدة البيانات
-  const activeTasks = rawTasks.filter((t) => {
-      if (t.assigned_to !== lawyerId) return false
-      if (t.assignment_rejected_by === lawyerId) return false
-      if (t.task_status === 'waiting_assignment' && t.give_up_reason) return false
-      return true
-    })
-  if (!activeTasks.length) return { tasks: [], total: count ?? 0, error: null }
+    if (!joined.error) {
+      const rows = (joined.data ?? []) as unknown as LawyerTaskJoinedRaw[]
+      if (!rows.length) return { tasks: [], total: joined.count ?? 0, error: null }
 
-  const debtorIds = [...new Set(activeTasks.map(t => t.debtor_id))]
-  const defIds = [...new Set(activeTasks.map(t => t.task_definition_id).filter(Boolean))] as string[]
+      const branchIds = [...new Set(
+        filterActiveLawyerTasks(rows, lawyerId)
+          .map(t => t.branch_id)
+          .filter(Boolean),
+      )] as string[]
+      const { data: branchRows } = branchIds.length
+        ? await supabase.from('branches').select('id, name').in('id', branchIds)
+        : { data: [] as { id: string; name: string }[] }
+      const branchNameMap = new Map((branchRows ?? []).map(b => [b.id, b.name]))
 
-  const [{ data: debtors }, { data: definitions }] = await Promise.all([
-    supabase
-      .from('debtors')
-      .select('id, full_name, governorate, remaining_amount, phone, receipt_number, branch_id, branch_list_id, branch_list:branch_lists(name, court_name, execution_office)')
-      .in('id', debtorIds),
-    defIds.length
-      ? supabase.from('task_definitions').select('id, label').in('id', defIds)
-      : Promise.resolve({ data: [] as { id: string; label: string }[] }),
-  ])
-
-  const debtorMap = new Map((debtors ?? []).map(d => [d.id, d]))
-  const defMap = new Map((definitions ?? []).map(d => [d.id, d.label]))
-
-  const branchIds = [...new Set(activeTasks.map(t => t.branch_id).filter(Boolean))] as string[]
-  const { data: branchRows } = branchIds.length
-    ? await supabase.from('branches').select('id, name').in('id', branchIds)
-    : { data: [] as { id: string; name: string }[] }
-  const branchNameMap = new Map((branchRows ?? []).map(b => [b.id, b.name]))
-
-  return {
-    tasks: activeTasks.map(t => {
-      const defLabel = t.task_definition_id ? defMap.get(t.task_definition_id) ?? null : null
-      const branchId = t.branch_id as string | null
       return {
-        ...t,
-        task_label: defLabel,
-        branch_name: branchId ? branchNameMap.get(branchId) ?? null : null,
-        debtors: debtorMap.get(t.debtor_id) ?? null,
+        tasks: mapJoinedLawyerTasks(rows, lawyerId, branchNameMap),
+        total: joined.count ?? rows.length,
+        error: null,
       }
-    }) as LawyerTaskRow[],
-    total: count ?? tasks.length,
-    error: null,
+    }
+
+    // join فشل (RLS / FK / schema) — استعلامات متوازية آمنة
+    console.warn(
+      '[fetchLawyerAssignedTasksPaginated] join failed, falling back to Promise.all:',
+      formatErrorMessage(joined.error),
+    )
+
+    // عند البحث بدون join: حل IDs أولاً ثم فلتر المهام
+    let flatOptions = options
+    const search = options?.search?.trim()
+    if (search && !options?.debtorIds?.length) {
+      const { data: matchRows, error: searchErr } = await supabase
+        .from('debtors')
+        .select('id')
+        .or(debtorSearchOrFilter(search))
+        .limit(200)
+      if (searchErr) {
+        console.error('[fetchLawyerAssignedTasksPaginated] search fallback', searchErr.message)
+        return { tasks: [], total: 0, error: searchErr }
+      }
+      const ids = (matchRows ?? []).map((r: { id: string }) => r.id)
+      if (!ids.length) return { tasks: [], total: 0, error: null }
+      flatOptions = { ...options, debtorIds: ids, search: null }
+    }
+
+    let flat = await queryLawyerTasksPageFlat(supabase, lawyerId, flatOptions, true)
+    if (flat.error && isMissingAssignmentRejectionColumn(flat.error)) {
+      flat = await queryLawyerTasksPageFlat(supabase, lawyerId, flatOptions, false)
+    }
+    if (flat.error) {
+      console.error('[fetchLawyerAssignedTasksPaginated]', flat.error.message ?? flat.error)
+      return { tasks: [], total: 0, error: flat.error }
+    }
+    if (!flat.data?.length) return { tasks: [], total: flat.count ?? 0, error: null }
+
+    const activeTasks = filterActiveLawyerTasks(flat.data as unknown as LawyerTaskListRaw[], lawyerId)
+    if (!activeTasks.length) return { tasks: [], total: flat.count ?? 0, error: null }
+
+    return {
+      tasks: await enrichLawyerTasksLegacy(supabase, activeTasks),
+      total: flat.count ?? flat.data.length,
+      error: null,
+    }
+  } finally {
+    console.timeEnd(timingLabel)
   }
 }
 
