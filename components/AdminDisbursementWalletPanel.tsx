@@ -78,9 +78,7 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setSaving(false); return }
-    const referenceId = typeof crypto !== 'undefined' && crypto.randomUUID
-      ? `dep-${selectedId}-${crypto.randomUUID()}`
-      : `dep-${selectedId}-${Date.now()}`
+    const referenceId = crypto.randomUUID()
     const result = await creditLawyerSavingsWallet(supabase, {
       lawyerId: selectedId,
       amount: amt,
@@ -109,9 +107,7 @@ export default function AdminDisbursementWalletPanel({ readOnly = false }: { rea
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setSaving(false); return }
-    const referenceId = typeof crypto !== 'undefined' && crypto.randomUUID
-      ? `wd-${selectedId}-${crypto.randomUUID()}`
-      : `wd-${selectedId}-${Date.now()}`
+    const referenceId = crypto.randomUUID()
     const result = await withdrawLawyerSavings(supabase, {
       lawyerId: selectedId,
       amount: amt,

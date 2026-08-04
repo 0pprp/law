@@ -25,6 +25,17 @@ const TX_SELECT_LEGACY = 'id, type, amount, notes, reference_id, created_at, cre
 
 const SCHEMA_RELOAD_HINT = 'نفّذ NOTIFY pgrst, \'reload schema\'; من Supabase SQL Editor ثم أعد المحاولة.'
 
+/** reference_id عمود uuid — ارفض المفاتيح المركّبة القديمة مثل dep-{lawyerId}-{uuid} */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function normalizeWalletReferenceId(value?: string | null): string | null {
+  if (value == null) return null
+  const s = String(value).trim()
+  if (!s) return null
+  return UUID_RE.test(s) ? s : null
+}
+
 /** Cached: true = column usable, false = legacy (no column), null = unchecked */
 let walletColumnReady: boolean | null = null
 
@@ -387,15 +398,21 @@ export async function insertWalletTransaction(
   row: Record<string, unknown>,
 ): Promise<InsertResult> {
   const hasWallet = await probeWalletColumn(supabase)
+  const safeRow: Record<string, unknown> = {
+    ...row,
+    reference_id: normalizeWalletReferenceId(
+      typeof row.reference_id === 'string' ? row.reference_id : null,
+    ),
+  }
 
   if (!hasWallet) {
-    const { wallet: _w, ...legacy } = row
+    const { wallet: _w, ...legacy } = safeRow
     const { error } = await supabase.from('lawyer_wallet_transactions').insert(legacy)
     if (error) return { ok: false, error: error.message }
     return { ok: true }
   }
 
-  const { error } = await supabase.from('lawyer_wallet_transactions').insert(row)
+  const { error } = await supabase.from('lawyer_wallet_transactions').insert(safeRow)
   if (error) {
     if (isWalletSchemaCacheError(error)) {
       return { ok: false, error: `${error.message} — ${SCHEMA_RELOAD_HINT}` }
@@ -436,11 +453,13 @@ export async function creditLawyerWallet(
 ): Promise<{ ok: boolean; error?: string; alreadyCredited?: boolean }> {
   if (params.amount <= 0) return { ok: false, error: 'المبلغ يجب أن يكون أكبر من صفر' }
 
-  if (params.referenceId) {
+  const referenceId = normalizeWalletReferenceId(params.referenceId)
+
+  if (referenceId) {
     const { data: existing } = await supabase
       .from('lawyer_wallet_transactions')
       .select('id')
-      .eq('reference_id', params.referenceId)
+      .eq('reference_id', referenceId)
       .limit(1)
       .maybeSingle()
     if (existing) return { ok: true, alreadyCredited: true }
@@ -458,7 +477,7 @@ export async function creditLawyerWallet(
     wallet,
     amount: params.amount,
     notes: params.notes ?? null,
-    reference_id: params.referenceId ?? null,
+    reference_id: referenceId,
     created_by: params.createdBy,
   }
 
@@ -504,11 +523,13 @@ export async function withdrawLawyerSavings(
 ): Promise<{ ok: boolean; error?: string; newBalance?: number; alreadyWithdrawn?: boolean }> {
   if (params.amount <= 0) return { ok: false, error: 'المبلغ يجب أن يكون أكبر من صفر' }
 
-  if (params.referenceId) {
+  const referenceId = normalizeWalletReferenceId(params.referenceId)
+
+  if (referenceId) {
     const { data: existing } = await supabase
       .from('lawyer_wallet_transactions')
       .select('id')
-      .eq('reference_id', params.referenceId)
+      .eq('reference_id', referenceId)
       .limit(1)
       .maybeSingle()
     if (existing) return { ok: true, alreadyWithdrawn: true }
@@ -529,7 +550,7 @@ export async function withdrawLawyerSavings(
     amount: -params.amount,
     notes: note,
     created_by: params.createdBy,
-    reference_id: params.referenceId ?? null,
+    reference_id: referenceId,
   }
 
   const result = await insertWalletTransaction(supabase, {
@@ -553,11 +574,13 @@ export async function payoutLawyerFees(
 ): Promise<{ ok: boolean; error?: string; newBalance?: number; alreadyWithdrawn?: boolean }> {
   if (params.amount <= 0) return { ok: false, error: 'المبلغ يجب أن يكون أكبر من صفر' }
 
-  if (params.referenceId) {
+  const referenceId = normalizeWalletReferenceId(params.referenceId)
+
+  if (referenceId) {
     const { data: existing } = await supabase
       .from('lawyer_wallet_transactions')
       .select('id')
-      .eq('reference_id', params.referenceId)
+      .eq('reference_id', referenceId)
       .limit(1)
       .maybeSingle()
     if (existing) return { ok: true, alreadyWithdrawn: true }
@@ -578,7 +601,7 @@ export async function payoutLawyerFees(
     amount: -params.amount,
     notes: note,
     created_by: params.createdBy,
-    reference_id: params.referenceId ?? null,
+    reference_id: referenceId,
   }
 
   const result = await insertWithTypeFallback(

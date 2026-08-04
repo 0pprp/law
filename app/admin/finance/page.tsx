@@ -326,9 +326,7 @@ export default function FinancePage() {
     const { data: me } = await supabase.auth.getUser()
     if (!me.user) { setSaving(false); return }
 
-    const referenceId = typeof crypto !== 'undefined' && crypto.randomUUID
-      ? `fee-dep-${selectedId}-${crypto.randomUUID()}`
-      : `fee-dep-${selectedId}-${Date.now()}`
+    const referenceId = crypto.randomUUID()
 
     const result = await creditLawyerWallet(supabase, {
       lawyerId: selectedId,
@@ -369,9 +367,7 @@ export default function FinancePage() {
     const { data: me } = await supabase.auth.getUser()
     if (!me.user) { setSaving(false); return }
 
-    const referenceId = typeof crypto !== 'undefined' && crypto.randomUUID
-      ? `fee-wd-${selectedId}-${crypto.randomUUID()}`
-      : `fee-wd-${selectedId}-${Date.now()}`
+    const referenceId = crypto.randomUUID()
 
     const result = await payoutLawyerFees(supabase, {
       lawyerId: selectedId,

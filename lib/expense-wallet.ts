@@ -272,7 +272,7 @@ export async function reverseTaskExpenseDeductionOnFailure(
         amount: reverseAmount,
         type: 'manual_adjustment',
         notes: `عكس خصم صرفيات بسبب فشل اعتماد الأتعاب — مهمة ${taskId}`,
-        reference_id: `${taskId}:expense-reverse`,
+        reference_id: crypto.randomUUID(),
         created_by: reviewerId,
       })
       if (!reverse.ok) {
