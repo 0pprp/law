@@ -3,6 +3,7 @@ import { TASK_TYPE_LABELS } from '@/lib/types'
 import type { TaskType } from '@/lib/types'
 import { Card, CardHeader } from '@/components/ui/card'
 import DebtorTasksHistoryList, { type DebtorTaskHistoryRow } from '@/components/DebtorTasksHistoryList'
+import { extractHearingDateFromCompletion } from '@/lib/hearing-date-from-completion'
 
 function lawyerLabel(assignedTo: string | null, lawyerMap: Map<string, string>): string {
   if (!assignedTo) return 'غير مكلفة بعد'
@@ -46,7 +47,7 @@ export default async function DebtorTasksHistory({
     : 'id, task_type, task_status, assigned_to, assigned_at, accepted_at, completed_at, updated_at, created_at, task_definition_id'
 
   const [{ data: debtor }, { data: tasks }] = await Promise.all([
-    supabase.from('debtors').select('current_task_id').eq('id', debtorId).single(),
+    supabase.from('debtors').select('current_task_id, first_hearing_date').eq('id', debtorId).single(),
     supabase
       .from('tasks')
       .select(selectCols)
@@ -55,6 +56,10 @@ export default async function DebtorTasksHistory({
   ])
 
   const currentTaskId = debtor?.current_task_id ?? null
+  let debtorHearingDate = debtor?.first_hearing_date
+    ? String(debtor.first_hearing_date).slice(0, 10)
+    : null
+
   const taskList = (tasks ?? []) as unknown as Array<{
     id: string
     task_type: string | null
@@ -70,6 +75,21 @@ export default async function DebtorTasksHistory({
     lawyer_notes?: string | null
     legal_result?: string | null
   }>
+
+  // مزامنة ناقصة: إن وُجد تاريخ جلسة في إنجاز سابق ولم يُحفظ على المدين
+  if (!debtorHearingDate && fullArchive) {
+    const lawsuit = taskList.find(t => t.task_type === 'file_lawsuit')
+      ?? taskList.find(t => extractHearingDateFromCompletion(t.completion_data ?? null))
+    const fromTask = extractHearingDateFromCompletion(lawsuit?.completion_data ?? null)
+    if (fromTask) {
+      debtorHearingDate = fromTask
+      await supabase
+        .from('debtors')
+        .update({ first_hearing_date: fromTask } as any)
+        .eq('id', debtorId)
+    }
+  }
+
   const taskIds = taskList.map(t => t.id)
 
   const lawyerIds = [...new Set(taskList.map(t => t.assigned_to).filter(Boolean))] as string[]
@@ -112,19 +132,35 @@ export default async function DebtorTasksHistory({
   }
 
   const rows: DebtorTaskHistoryRow[] = taskList
-    .map(t => ({
-      id: t.id,
-      label: taskName(t, defMap),
-      lawyerName: lawyerLabel(t.assigned_to, lawyerMap),
-      assigneeRole: t.assigned_to ? (roleMap.get(t.assigned_to) ?? null) : null,
-      task_status: t.task_status,
-      assignedAt: t.assigned_at ?? t.accepted_at ?? null,
-      completedAt: completionDate(t),
-      approvedAt: approvalDate(t),
-      isCurrent: !!currentTaskId && t.id === currentTaskId,
-      completionData: fullArchive ? ((t as { completion_data?: Record<string, string> | null }).completion_data ?? null) : null,
-      attachments: fullArchive ? (attByTask.get(t.id) ?? []) : [],
-    }))
+    .map(t => {
+      const completionData = fullArchive
+        ? ((t.completion_data ?? null) as Record<string, string> | null)
+        : null
+      const fromCompletion = extractHearingDateFromCompletion(completionData)
+      const defLabel = t.task_definition_id ? (defMap.get(t.task_definition_id) ?? '') : ''
+      const isPleading = t.task_type === 'pleading' || defLabel.includes('مرافع')
+      const isLawsuit = t.task_type === 'file_lawsuit' || defLabel.includes('إقامة دعوى')
+      const hearingDate = isPleading
+        ? (debtorHearingDate ?? fromCompletion)
+        : fromCompletion
+
+      return {
+        id: t.id,
+        label: taskName(t, defMap),
+        lawyerName: lawyerLabel(t.assigned_to, lawyerMap),
+        assigneeRole: t.assigned_to ? (roleMap.get(t.assigned_to) ?? null) : null,
+        task_status: t.task_status,
+        taskType: t.task_type,
+        assignedAt: t.assigned_at ?? t.accepted_at ?? null,
+        completedAt: completionDate(t),
+        approvedAt: approvalDate(t),
+        isCurrent: !!currentTaskId && t.id === currentTaskId,
+        hearingDate,
+        canEditHearingDate: isLawsuit,
+        completionData,
+        attachments: fullArchive ? (attByTask.get(t.id) ?? []) : [],
+      }
+    })
     .sort((a, b) => {
       if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1
       return 0
@@ -133,7 +169,7 @@ export default async function DebtorTasksHistory({
   return (
     <Card>
       <CardHeader title={`سجل المهام (${rows.length})`} />
-      <DebtorTasksHistoryList rows={rows} fullArchive={fullArchive} />
+      <DebtorTasksHistoryList rows={rows} fullArchive={fullArchive} debtorId={debtorId} />
     </Card>
   )
 }

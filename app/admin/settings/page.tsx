@@ -464,7 +464,7 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
 // ══════════════════════════════════════════════════════════════
 const ALL_FIELDS: RequiredField[] = [
   'note', 'image', 'pdf', 'decision_number', 'case_number',
-  'date', 'gps', 'receipt', 'legal_result',
+  'date', 'gps', 'receipt', 'legal_result', 'court_name',
 ]
 
 const FIELD_TYPE_OPTIONS = [
@@ -478,6 +478,7 @@ const FIELD_TYPE_OPTIONS = [
   { value: 'receipt',         label: 'وصل / إيصال' },
   { value: 'decision_number', label: 'رقم قرار' },
   { value: 'case_number',     label: 'رقم دعوى' },
+  { value: 'court_name',      label: 'اسم المحكمة' },
   { value: 'legal_result',    label: 'نتيجة قانونية' },
   { value: 'court_decision',  label: 'قرار المحكمة' },
   { value: 'team',            label: 'الفريق (قائمة)' },

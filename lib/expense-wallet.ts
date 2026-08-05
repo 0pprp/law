@@ -1,6 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { fetchLawyerSavingsBalance, insertWalletTransaction } from '@/lib/lawyer-wallet'
-import { resolveTaskLabel } from '@/lib/task-display-label'
 
 export interface TaskExpenseRow {
   id: string
@@ -48,15 +47,16 @@ export async function sumPendingTaskExpenses(
 export async function checkDisbursementBalanceForTask(
   supabase: SupabaseClient,
   taskId: string,
+  knownLawyerId?: string | null,
 ): Promise<{ ok: boolean; required: number; available: number; lawyerId: string | null; error?: string }> {
-  const lawyerId = await resolveTaskLawyerId(supabase, taskId)
+  const lawyerId = knownLawyerId ?? await resolveTaskLawyerId(supabase, taskId)
   if (!lawyerId) {
     return { ok: false, required: 0, available: 0, lawyerId: null, error: 'لا يمكن تحديد المحامي' }
   }
 
   const required = await sumPendingTaskExpenses(supabase, taskId)
   if (required <= 0) {
-    return { ok: true, required: 0, available: await fetchLawyerSavingsBalance(supabase, lawyerId), lawyerId }
+    return { ok: true, required: 0, available: 0, lawyerId }
   }
 
   const available = await fetchLawyerSavingsBalance(supabase, lawyerId)
@@ -78,10 +78,12 @@ async function findTaskDeductionTransaction(
 ): Promise<{ id: string } | null> {
   const { data } = await supabase
     .from('lawyer_wallet_transactions')
-    .select('id')
+    .select('id, type')
     .eq('reference_id', taskId)
     .eq('wallet', 'savings')
-    .eq('type', DEDUCTION_TX_TYPE)
+    .in('type', [DEDUCTION_TX_TYPE, 'task_expense_deduction'])
+    .lt('amount', 0)
+    .limit(1)
     .maybeSingle()
   return data ?? null
 }
@@ -105,39 +107,12 @@ async function markExpensesApproved(
 }
 
 async function buildDeductionNotes(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   taskId: string,
   expenses: TaskExpenseRow[],
   total: number,
-  approvedBy: string,
+  _approvedBy: string,
 ): Promise<string> {
-  const { data: task } = await supabase
-    .from('tasks')
-    .select('task_type, debtor_id, task_definitions(label)')
-    .eq('id', taskId)
-    .maybeSingle()
-
-  const defs = task?.task_definitions as { label?: string } | { label?: string }[] | null
-  const defLabel = Array.isArray(defs) ? defs[0]?.label : defs?.label
-  const taskLabel = resolveTaskLabel(task?.task_type ?? null, defLabel)
-
-  let debtorName = '—'
-  if (task?.debtor_id) {
-    const { data: debtor } = await supabase
-      .from('debtors')
-      .select('full_name')
-      .eq('id', task.debtor_id)
-      .maybeSingle()
-    debtorName = debtor?.full_name ?? '—'
-  }
-
-  const { data: approver } = await supabase
-    .from('profiles')
-    .select('full_name')
-    .eq('id', approvedBy)
-    .maybeSingle()
-  const approverName = approver?.full_name ?? '—'
-
   const lines = expenses
     .filter(e => Number(e.amount) > 0)
     .map(e => {
@@ -148,11 +123,9 @@ async function buildDeductionNotes(
 
   return [
     'خصم صرفيات معتمدة عند اعتماد إنجاز مهمة',
-    `المهمة: ${taskLabel}`,
-    `المدين: ${debtorName}`,
+    `مرجع المهمة: ${taskId}`,
     ...lines,
     `الإجمالي: ${total.toLocaleString('en-US')} د.ع`,
-    `اعتمد: ${approverName}`,
   ].join('\n')
 }
 
@@ -161,35 +134,22 @@ export async function deductTaskExpensesOnApproval(
   supabase: SupabaseClient,
   taskId: string,
   approvedBy: string,
+  opts?: { lawyerId?: string | null },
 ): Promise<{ ok: boolean; total: number; count: number; error?: string; skipped?: boolean }> {
-  const existingTx = await findTaskDeductionTransaction(supabase, taskId)
-  if (existingTx) {
-    const { data: pending } = await supabase
-      .from('expenses')
-      .select('id')
-      .eq('task_id', taskId)
-      .in('status', PENDING_STATUSES)
-      .is('wallet_deducted_at', null)
-    await markExpensesApproved(supabase, (pending ?? []).map(e => e.id), approvedBy)
-    return { ok: true, total: 0, count: 0, skipped: true }
-  }
-
-  const balanceCheck = await checkDisbursementBalanceForTask(supabase, taskId)
-  if (!balanceCheck.ok) {
-    return { ok: false, total: 0, count: 0, error: balanceCheck.error }
-  }
-
-  const { data: expenses } = await supabase
+  const existingTxPromise = findTaskDeductionTransaction(supabase, taskId)
+  const expensesPromise = supabase
     .from('expenses')
     .select('id, task_id, amount, expense_type, description, status, created_by, max_allowed_amount, wallet_deducted_at')
     .eq('task_id', taskId)
     .in('status', PENDING_STATUSES)
     .is('wallet_deducted_at', null)
 
-  const rows = (expenses ?? []) as TaskExpenseRow[]
-  const lawyerId = balanceCheck.lawyerId
-  if (!lawyerId) {
-    return { ok: false, total: 0, count: 0, error: 'لا يمكن تحديد المحامي' }
+  const [existingTx, expensesRes] = await Promise.all([existingTxPromise, expensesPromise])
+  const rows = (expensesRes.data ?? []) as TaskExpenseRow[]
+
+  if (existingTx) {
+    await markExpensesApproved(supabase, rows.map(e => e.id), approvedBy)
+    return { ok: true, total: 0, count: 0, skipped: true }
   }
 
   const payable = rows.filter(e => Number(e.amount) > 0)
@@ -199,6 +159,16 @@ export async function deductTaskExpensesOnApproval(
   }
 
   const total = payable.reduce((s, e) => s + Number(e.amount), 0)
+  const balanceCheck = await checkDisbursementBalanceForTask(supabase, taskId, opts?.lawyerId)
+  if (!balanceCheck.ok) {
+    return { ok: false, total: 0, count: 0, error: balanceCheck.error }
+  }
+
+  const lawyerId = balanceCheck.lawyerId
+  if (!lawyerId) {
+    return { ok: false, total: 0, count: 0, error: 'لا يمكن تحديد المحامي' }
+  }
+
   const notes = await buildDeductionNotes(supabase, taskId, payable, total, approvedBy)
 
   const row = {

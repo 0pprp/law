@@ -376,6 +376,7 @@ export async function fetchDelegateReport(
         id: string
         full_name: string
         branch_list_id?: string | null
+        court_name?: string | null
         branch_list?: {
           name?: string | null
           court_name?: string | null
@@ -411,6 +412,7 @@ export async function fetchDelegateReport(
   }
 
   type DebtorEmbed = {
+    court_name?: string | null
     branch_list?: {
       name?: string | null
       court_name?: string | null
@@ -433,6 +435,8 @@ export async function fetchDelegateReport(
   }
 
   function debtorCourtName(debtor: DebtorEmbed): string | null {
+    const override = debtor?.court_name?.trim()
+    if (override) return override
     return branchListRow(debtor)?.court_name?.trim() || null
   }
 

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { approveTaskCompletion } from '@/lib/task-approval'
+import { applyTaskTransition } from '@/lib/task-operations-api'
+import { resolvePleadingDefIdForLawsuit } from '@/lib/default-next-task'
 import { isAccountant, canApproveCompletions, apiForbiddenResponse, isGeneralAccountant } from '@/lib/permissions'
 import { requireTaskInScope } from '@/lib/section-guard'
 
@@ -44,10 +46,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: result.error ?? 'فشل اعتماد الإنجاز' }, { status: 400 })
     }
 
+    // إقامة دعوى → مرافعات تلقائياً (إن وُجد التعريف)
+    let autoNext: { ok: boolean; nextLabel?: string; error?: string } | null = null
+    const { data: approvedTask } = await admin
+      .from('tasks')
+      .select('id, task_type, branch_id, debtor_id, task_definitions(label)')
+      .eq('id', taskId)
+      .maybeSingle()
+
+    if (approvedTask) {
+      const pleading = await resolvePleadingDefIdForLawsuit(admin, approvedTask as any)
+      if (pleading) {
+        const transition = await applyTaskTransition(admin, {
+          taskId,
+          action: 'next',
+          nextTaskDefId: pleading.defId,
+          userId: auth.user!.id,
+        })
+        autoNext = transition.ok
+          ? { ok: true, nextLabel: pleading.label }
+          : { ok: false, error: transition.error, nextLabel: pleading.label }
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       feeAmount: result.feeAmount,
       legalManagerBonus: result.legalManagerBonus ?? 0,
+      autoNext,
     })
   } catch (e) {
     console.error('[admin/approve-task]', e)

@@ -14,9 +14,13 @@ export function walletTransactionLabel(
   if (type === 'legal_manager_manual_deposit') return WALLET_TRANSACTION_LABELS.legal_manager_manual_deposit
   if (type === 'legal_manager_manual_withdrawal') return WALLET_TRANSACTION_LABELS.legal_manager_manual_withdrawal
   if (type === 'savings_withdrawal') return WALLET_TRANSACTION_LABELS.savings_withdrawal
-  if (wallet === 'savings' && (amount ?? 0) < 0) return WALLET_TRANSACTION_LABELS.task_expense_deduction
-  if (wallet === 'savings' && (type === 'accountant_transfer' || type === 'transfer_from_savings')) {
-    return WALLET_TRANSACTION_LABELS.accountant_transfer
+  // محفظة الصرفيات: إيداع/سحب يدوي (accountant_transfer يُستخدم للاتجاهين)
+  if (
+    wallet === 'savings'
+    && (type === 'accountant_transfer' || type === 'transfer_from_savings' || type === 'manual_adjustment')
+  ) {
+    if ((amount ?? 0) < 0) return WALLET_TRANSACTION_LABELS.savings_withdrawal
+    return 'إيداع صرفيات'
   }
   return WALLET_TRANSACTION_LABELS[type] ?? type
 }

@@ -39,8 +39,11 @@ function debtorListName(debtor: {
 }
 
 function debtorCourtName(debtor: {
+  court_name?: string | null
   branch_list?: { name?: string | null; court_name?: string | null; execution_office?: string | null } | null
 }): string {
+  const override = debtor.court_name?.trim()
+  if (override) return override
   return debtor.branch_list?.court_name?.trim() || '—'
 }
 
@@ -57,10 +60,11 @@ function debtorSpecialStatus(debtor: {
 }
 
 function debtorCourtExecutionLine(debtor: {
+  court_name?: string | null
   branch_list?: { court_name?: string | null; execution_office?: string | null } | null
 }): string | null {
   const parts: string[] = []
-  const court = debtor.branch_list?.court_name?.trim()
+  const court = debtor.court_name?.trim() || debtor.branch_list?.court_name?.trim()
   const execution = debtor.branch_list?.execution_office?.trim()
   if (court) parts.push(`🏛 المحكمة: ${court}`)
   if (execution) parts.push(`⚖️ التنفيذ: ${execution}`)

@@ -45,40 +45,39 @@ async function resolveTaskFeeAmount(
   return 0
 }
 
-async function markFeeReleased(supabase: SupabaseClient, taskId: string) {
-  // القاعدة تقبل: pending | approved_pending_next | payable (لا released)
-  const { error } = await supabase.from('tasks').update({ fee_status: FEE_STATUS_PAYABLE } as any).eq('id', taskId)
-  if (error && !error.message.includes('fee_status')) {
-    console.warn('[markFeeReleased]', error.message)
-  }
-}
-
 async function findTaskFeeTransaction(
   supabase: SupabaseClient,
   taskId: string,
 ): Promise<{ id: string; amount: number } | null> {
-  const { data: withWallet } = await supabase
+  // استعلام واحد: محفظة fees أولاً عبر الفلتر، مع قبول أي نوع أتعاب معروف
+  const { data } = await supabase
     .from('lawyer_wallet_transactions')
-    .select('id, amount')
-    .eq('reference_id', taskId)
-    .eq('wallet', 'fees')
-    .gt('amount', 0)
-    .in('type', [...FEE_TX_TYPES])
-    .limit(1)
-    .maybeSingle()
-
-  if (withWallet) return withWallet
-
-  const { data: anyWallet } = await supabase
-    .from('lawyer_wallet_transactions')
-    .select('id, amount')
+    .select('id, amount, wallet')
     .eq('reference_id', taskId)
     .gt('amount', 0)
     .in('type', [...FEE_TX_TYPES])
-    .limit(1)
-    .maybeSingle()
+    .limit(5)
 
-  return anyWallet ?? null
+  const rows = data ?? []
+  const fees = rows.find(r => r.wallet === 'fees') ?? rows[0]
+  return fees ? { id: fees.id, amount: fees.amount } : null
+}
+
+/** مجموع أتعاب المهام المعتمدة — بدون استعلامات إضافية لكل مهمة */
+function sumApprovedTaskFeesLocal(
+  tasks: Array<{ reward_amount?: number | null; task_definitions?: unknown }>,
+): number {
+  let total = 0
+  for (const task of tasks) {
+    const fromReward = Number(task.reward_amount ?? 0)
+    if (fromReward > 0) {
+      total += fromReward
+      continue
+    }
+    const def = unwrapTaskDef(task.task_definitions)
+    total += Number(def?.fee_amount ?? 0)
+  }
+  return total
 }
 
 async function sumApprovedTaskFeesForDebtor(
@@ -87,15 +86,11 @@ async function sumApprovedTaskFeesForDebtor(
 ): Promise<number> {
   const { data: tasks } = await supabase
     .from('tasks')
-    .select('reward_amount, task_definition_id, task_definitions(fee_amount)')
+    .select('reward_amount, task_definitions(fee_amount)')
     .eq('debtor_id', debtorId)
     .in('task_status', [...APPROVED_STATUSES])
 
-  let total = 0
-  for (const task of tasks ?? []) {
-    total += await resolveTaskFeeAmount(supabase, task)
-  }
-  return total
+  return sumApprovedTaskFeesLocal(tasks ?? [])
 }
 
 async function syncDebtorLawyerFees(
@@ -106,6 +101,28 @@ async function syncDebtorLawyerFees(
   const { error } = await supabase
     .from('debtors')
     .update({ lawyer_fees: target } as any)
+    .eq('id', debtorId)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
+/** زيادة سريعة لكشف المدين بدل إعادة احتساب كل المهام */
+async function bumpDebtorLawyerFees(
+  supabase: SupabaseClient,
+  debtorId: string,
+  delta: number,
+): Promise<{ ok: boolean; error?: string }> {
+  if (delta <= 0) return { ok: true }
+  const { data: debtor, error: readErr } = await supabase
+    .from('debtors')
+    .select('lawyer_fees')
+    .eq('id', debtorId)
+    .maybeSingle()
+  if (readErr) return { ok: false, error: readErr.message }
+  const next = Number(debtor?.lawyer_fees ?? 0) + delta
+  const { error } = await supabase
+    .from('debtors')
+    .update({ lawyer_fees: next } as any)
     .eq('id', debtorId)
   if (error) return { ok: false, error: error.message }
   return { ok: true }
@@ -188,32 +205,27 @@ export async function creditTaskFeeOnApproval(
     }
   }
 
-  const existingTx = await findTaskFeeTransaction(supabase, taskId)
+  // فحص التكرار + احتساب المبلغ بالتوازي مع ما يكفي من بيانات المهمة المحمّلة
+  const existingTxPromise = findTaskFeeTransaction(supabase, taskId)
+  const amountPromise = resolveTaskFeeAmount(supabase, task)
+  const [existingTx, amount] = await Promise.all([existingTxPromise, amountPromise])
 
   if (existingTx) {
+    // إعادة مزامنة نادرة — لا تمنع المسار السريع
     const debtorId = task.debtor_id as string | null
     if (debtorId) {
-      await syncDebtorLawyerFees(supabase, debtorId)
-      const { syncDebtorLegalManagerFees } = await import('@/lib/legal-manager-wallet')
-      await syncDebtorLegalManagerFees(supabase, debtorId)
+      void syncDebtorLawyerFees(supabase, debtorId)
     }
-    await markFeeReleased(supabase, taskId)
     return { ok: true, amount: 0, alreadyCredited: true }
   }
 
   const lawyerId = taskLawyerId(task as { assigned_to?: string | null; lawyer_id?: string | null })
   const debtorId = task.debtor_id as string | null
 
-  // الجزائي: المدير يرى/يحتسب الأتعاب الحقيقية في المحافظ؛ التخزين يبقى كما هو.
-  // الإخفاء عن غير المدير يتم في طبقة العرض (visible-task-fee) وليس هنا.
-  const amount = await resolveTaskFeeAmount(supabase, task)
-
   const def = unwrapTaskDef(task.task_definitions)
   const taskLabel = def?.label ?? (task.task_type as string) ?? 'مهمة'
 
   if (amount <= 0 || !lawyerId) {
-    if (debtorId) await syncDebtorLawyerFees(supabase, debtorId)
-    await markFeeReleased(supabase, taskId)
     return { ok: true, amount: 0 }
   }
 
@@ -221,37 +233,30 @@ export async function creditTaskFeeOnApproval(
     return { ok: false, amount: 0, error: 'المهمة غير مرتبطة بمدين' }
   }
 
-  let walletCredited = 0
+  const { creditLawyerWallet } = await import('@/lib/lawyer-wallet')
+  const walletResult = await creditLawyerWallet(supabase, {
+    lawyerId,
+    amount,
+    type: 'approved_task_payment',
+    wallet: 'fees',
+    notes: `أتعاب إنجاز مهمة: ${taskLabel}`,
+    createdBy: reviewerId,
+    referenceId: taskId,
+  })
 
-  if (!existingTx) {
-    const { creditLawyerWallet } = await import('@/lib/lawyer-wallet')
-    const walletResult = await creditLawyerWallet(supabase, {
-      lawyerId,
-      amount,
-      type: 'approved_task_payment',
-      wallet: 'fees',
-      notes: `أتعاب إنجاز مهمة: ${taskLabel}`,
-      createdBy: reviewerId,
-      referenceId: taskId,
-    })
-
-    if (!walletResult.ok) {
-      return { ok: false, amount: 0, error: walletResult.error ?? 'فشل إضافة الأتعاب لمحفظة المحامي' }
-    }
-
-    const verifyTx = await findTaskFeeTransaction(supabase, taskId)
-    if (!verifyTx) {
-      return { ok: false, amount: 0, error: 'تمت المحاولة لكن لم تُسجَّل حركة محفظة الأتعاب' }
-    }
-    walletCredited = amount
+  if (!walletResult.ok) {
+    return { ok: false, amount: 0, error: walletResult.error ?? 'فشل إضافة الأتعاب لمحفظة المحامي' }
   }
 
-  const syncResult = await syncDebtorLawyerFees(supabase, debtorId)
-  if (!syncResult.ok) {
-    return { ok: false, amount: 0, error: syncResult.error ?? 'فشل تحديث أتعاب المحامين في كشف المدين' }
+  const walletCredited = walletResult.alreadyCredited ? 0 : amount
+  if (walletCredited > 0) {
+    const syncResult = await bumpDebtorLawyerFees(supabase, debtorId, walletCredited)
+    if (!syncResult.ok) {
+      return { ok: false, amount: 0, error: syncResult.error ?? 'فشل تحديث أتعاب المحامين في كشف المدين' }
+    }
   }
 
-  await markFeeReleased(supabase, taskId)
+  // fee_status أصبحت payable مسبقاً عبر قفل finalize — لا حاجة لتحديث إضافي
   return { ok: true, amount: walletCredited }
 }
 
@@ -342,14 +347,22 @@ export async function approveTaskCompletion(
   // فحص مبكر لرصيد الصرفيات (قراءة فقط — لا خصم في هذه المرحلة)
   let assigneeRole: string | null = null
   if (task.assigned_to) {
-    const { data: assignee } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', task.assigned_to)
-      .maybeSingle()
+    const [{ data: assignee }, balanceCheckMod] = await Promise.all([
+      supabase.from('profiles').select('role').eq('id', task.assigned_to).maybeSingle(),
+      import('@/lib/expense-wallet'),
+    ])
     assigneeRole = assignee?.role ?? null
-  }
-  if (assigneeRole !== 'delegate') {
+    if (assigneeRole !== 'delegate') {
+      const balanceCheck = await balanceCheckMod.checkDisbursementBalanceForTask(
+        supabase,
+        taskId,
+        task.assigned_to,
+      )
+      if (!balanceCheck.ok && balanceCheck.required > 0) {
+        return { ok: false, feeAmount: 0, error: balanceCheck.error ?? 'رصيد محفظة الصرفيات للمحامي غير كافٍ' }
+      }
+    }
+  } else {
     const { checkDisbursementBalanceForTask } = await import('@/lib/expense-wallet')
     const balanceCheck = await checkDisbursementBalanceForTask(supabase, taskId)
     if (!balanceCheck.ok && balanceCheck.required > 0) {
@@ -398,36 +411,62 @@ export type FinalizeTaskResult = {
  * القفل الذري: fee_status approved_pending_next → payable (قبل الاحتساب).
  * عند الفشل يُعاد approved_pending_next. حركات المحفظة idempotent عبر reference_id.
  */
+/**
+ * المرحلة الثانية — الاعتماد النهائي واحتساب الأتعاب.
+ * تُستدعى فقط بعد نجاح إنشاء المهمة التالية أو إغلاق القضية.
+ * القفل الذري: fee_status approved_pending_next → payable (قبل الاحتساب).
+ * عند الفشل يُعاد approved_pending_next. حركات المحفظة idempotent عبر reference_id.
+ */
 export async function finalizeTaskApproval(
   supabase: SupabaseClient,
   taskId: string,
   reviewerId: string,
+  preloaded?: {
+    task_status?: string
+    fee_status?: string | null
+    assigned_to?: string | null
+  },
 ): Promise<FinalizeTaskResult> {
-  const { data: task } = await supabase
-    .from('tasks')
-    .select('id, task_status, fee_status, assigned_to')
-    .eq('id', taskId)
-    .single()
+  let taskStatus = preloaded?.task_status
+  let feeStatus = preloaded?.fee_status
+  let assignedTo = preloaded?.assigned_to ?? null
 
-  if (!task) {
-    return { ok: false, feeAmount: 0, legalManagerBonus: 0, error: 'المهمة غير موجودة' }
+  if (taskStatus == null || feeStatus === undefined) {
+    const { data: task } = await supabase
+      .from('tasks')
+      .select('id, task_status, fee_status, assigned_to')
+      .eq('id', taskId)
+      .single()
+
+    if (!task) {
+      return { ok: false, feeAmount: 0, legalManagerBonus: 0, error: 'المهمة غير موجودة' }
+    }
+    taskStatus = task.task_status
+    feeStatus = task.fee_status
+    assignedTo = task.assigned_to
   }
-  if (!APPROVED_STATUSES.has(task.task_status)) {
+
+  if (!APPROVED_STATUSES.has(taskStatus as string)) {
     return { ok: false, feeAmount: 0, legalManagerBonus: 0, error: 'لا اعتماد نهائي قبل اعتماد الإنجاز' }
   }
 
   // مهام قديمة (payable/null/غير awaiting): لا تكرار — أتعابها إما احتُسبت أو خارج هذا المسار
-  if (task.fee_status !== FEE_STATUS_AWAITING_NEXT_TASK) {
+  if (feeStatus !== FEE_STATUS_AWAITING_NEXT_TASK) {
     return { ok: true, feeAmount: 0, legalManagerBonus: 0, alreadyFinalized: true }
   }
 
-  // قفل ذري: الفائز الوحيد بالتحديث المشروط يكمل الاحتساب
-  const { data: claimed, error: claimErr } = await supabase
+  // قفل ذري + دور المكلّف بالتوازي
+  const claimPromise = supabase
     .from('tasks')
     .update({ fee_status: FEE_STATUS_PAYABLE } as any)
     .eq('id', taskId)
     .eq('fee_status', FEE_STATUS_AWAITING_NEXT_TASK)
     .select('id')
+  const rolePromise = assignedTo
+    ? supabase.from('profiles').select('role').eq('id', assignedTo).maybeSingle()
+    : Promise.resolve({ data: null as { role?: string } | null })
+
+  const [{ data: claimed, error: claimErr }, roleRes] = await Promise.all([claimPromise, rolePromise])
 
   if (claimErr) {
     return { ok: false, feeAmount: 0, legalManagerBonus: 0, error: claimErr.message }
@@ -444,15 +483,7 @@ export async function finalizeTaskApproval(
       .eq('fee_status', FEE_STATUS_PAYABLE)
   }
 
-  let assigneeRole: string | null = null
-  if (task.assigned_to) {
-    const { data: assignee } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', task.assigned_to)
-      .maybeSingle()
-    assigneeRole = assignee?.role ?? null
-  }
+  const assigneeRole = roleRes.data?.role ?? null
 
   // مندوب: أتعاب معلقة فقط — لا صرفيات محامٍ ولا مكافأة مسؤول قانونية
   if (assigneeRole === 'delegate') {
@@ -462,23 +493,19 @@ export async function finalizeTaskApproval(
       await revertClaim()
       return { ok: false, feeAmount: 0, legalManagerBonus: 0, error: delegateFee.error ?? 'فشل تسجيل أتعاب المندوب' }
     }
-    // نسبة مسؤول القانونية إضافية ولا تُستقطع من أتعاب المندوب.
-    const { creditLegalManagerBonusOnApproval } = await import('@/lib/legal-manager-wallet')
-    const lmResult = await creditLegalManagerBonusOnApproval(supabase, taskId, reviewerId)
-    if (!lmResult.ok) {
-      await revertClaim()
-      return {
-        ok: false,
-        feeAmount: delegateFee.amount,
-        legalManagerBonus: 0,
-        error: lmResult.error ?? 'فشل تسجيل نسبة مسؤول القانونية',
-      }
-    }
-    return { ok: true, feeAmount: delegateFee.amount, legalManagerBonus: lmResult.amount }
+    // نسبة مسؤول القانونية غير حرجة للمسار — خلفية
+    void import('@/lib/legal-manager-wallet')
+      .then(({ creditLegalManagerBonusOnApproval }) =>
+        creditLegalManagerBonusOnApproval(supabase, taskId, reviewerId),
+      )
+      .catch(err => console.error('[finalizeTaskApproval] lm bonus (delegate)', err))
+    return { ok: true, feeAmount: delegateFee.amount, legalManagerBonus: 0 }
   }
 
   const { approveTaskExpensesToWallet, reverseTaskExpenseDeductionOnFailure } = await import('@/lib/expense-wallet')
-  const expenseResult = await approveTaskExpensesToWallet(supabase, taskId, reviewerId)
+  const expenseResult = await approveTaskExpensesToWallet(supabase, taskId, reviewerId, {
+    lawyerId: assignedTo ?? undefined,
+  })
   if (!expenseResult.ok) {
     await revertClaim()
     return { ok: false, feeAmount: 0, legalManagerBonus: 0, error: expenseResult.error ?? 'فشل خصم صرفيات المهمة' }
@@ -491,17 +518,21 @@ export async function finalizeTaskApproval(
     return { ok: false, feeAmount: 0, legalManagerBonus: 0, error: feeResult.error ?? 'فشل احتساب أتعاب المحامي' }
   }
 
-  const { creditLegalManagerBonusOnApproval } = await import('@/lib/legal-manager-wallet')
-  const lmResult = await creditLegalManagerBonusOnApproval(supabase, taskId, reviewerId)
-  if (!lmResult.ok) {
-    console.error('[finalizeTaskApproval] legal manager bonus failed:', lmResult.error)
-    return { ok: true, feeAmount: feeResult.amount, legalManagerBonus: 0 }
-  }
-  if (lmResult.skipped && lmResult.reason) {
-    console.warn('[finalizeTaskApproval]', lmResult.reason, 'task', taskId)
-  }
+  // نسبة مسؤول القانونية كانت أصلاً غير حرجة عند الفشل — نفّذها بالخلفية لتقليل زمن الاستجابة
+  void import('@/lib/legal-manager-wallet')
+    .then(({ creditLegalManagerBonusOnApproval }) =>
+      creditLegalManagerBonusOnApproval(supabase, taskId, reviewerId),
+    )
+    .then(lmResult => {
+      if (!lmResult.ok) {
+        console.error('[finalizeTaskApproval] legal manager bonus failed:', lmResult.error)
+      } else if (lmResult.skipped && lmResult.reason) {
+        console.warn('[finalizeTaskApproval]', lmResult.reason, 'task', taskId)
+      }
+    })
+    .catch(err => console.error('[finalizeTaskApproval] lm bonus', err))
 
-  return { ok: true, feeAmount: feeResult.amount, legalManagerBonus: lmResult.amount }
+  return { ok: true, feeAmount: feeResult.amount, legalManagerBonus: 0 }
 }
 
 /** Fees are credited on approval — no release when assigning the next task. */

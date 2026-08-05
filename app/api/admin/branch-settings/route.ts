@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireMutationStaff } from '@/lib/api-auth'
 import { canStaffWriteBranch } from '@/lib/staff-branch-access'
-import { canManageSettings, apiForbiddenResponse } from '@/lib/permissions'
+import { canManageSettings, canManageTaskManagement, apiForbiddenResponse } from '@/lib/permissions'
 import { pickAllowedFields } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import {
   normalizeBranchListName,
   sanitizeBranchListDisplayName,
 } from '@/lib/branch-list-normalize'
+import { parseMoneyInput } from '@/lib/money-input'
 
 const ALLOWED = new Set([
   'task_definitions',
@@ -44,13 +45,16 @@ type Body = {
   branchId?: string
   row?: Record<string, unknown>
   definitionId?: string
-  fields?: Record<string, unknown>[]
+  definitionIds?: string[]
+  fields?: Record<string, unknown>[] | string[]
+  expenses?: { name?: string; max_amount?: string | number }[]
 }
 
 export async function POST(request: NextRequest) {
   const auth = await requireMutationStaff()
   if (auth.error) return auth.error
-  if (!canManageSettings(auth.profile?.role)) return apiForbiddenResponse()
+  const canWriteSettings = canManageSettings(auth.profile?.role) || canManageTaskManagement(auth.profile?.role)
+  if (!canWriteSettings) return apiForbiddenResponse()
 
   let body: Body
   try {
@@ -74,6 +78,16 @@ export async function POST(request: NextRequest) {
 
     const fields = Array.isArray(body.fields) ? body.fields : []
     const cleaned = fields.map((f, i) => {
+      if (typeof f === 'string') {
+        return {
+          task_definition_id: definitionId,
+          field_key: f.slice(0, 80),
+          field_type: f.slice(0, 40),
+          field_label: '',
+          is_required: true,
+          sort_order: i,
+        }
+      }
       const row = pickAllowedFields(f, COLUMNS.task_required_fields)
       return {
         task_definition_id: definitionId,
@@ -93,6 +107,108 @@ export async function POST(request: NextRequest) {
       if (insErr) return apiServerError('branch-settings:replace-ins', insErr, 'فشل تحديث الحقول')
     }
     return NextResponse.json({ ok: true })
+  }
+
+  /** استبدال صرفيات (+ حقول اختيارية) لتعريف مهمة أو أكثر — يتجاوز قيود RLS عبر admin */
+  if (action === 'replace_definition_expenses') {
+    const ids = [
+      ...((Array.isArray(body.definitionIds) ? body.definitionIds : []) as unknown[]).map(String),
+      String(body.definitionId ?? '').trim(),
+    ].map(s => s.trim()).filter(Boolean)
+    const uniqueIds = [...new Set(ids)]
+    if (!uniqueIds.length) return safeClientError('معرّف التعريف مطلوب', 400)
+
+    const { data: defs, error: defsErr } = await admin
+      .from('task_definitions')
+      .select('id, branch_id')
+      .in('id', uniqueIds)
+    if (defsErr) return apiServerError('branch-settings:replace-exp-defs', defsErr, 'فشل قراءة التعريفات')
+    if (!defs?.length) return safeClientError('التعريفات غير موجودة', 404)
+
+    for (const def of defs) {
+      if (!def.branch_id || !canStaffWriteBranch(auth.profile, def.branch_id)) return apiForbiddenResponse()
+    }
+
+    const rawExpenses = Array.isArray(body.expenses) ? body.expenses : []
+    const cleanedExpenses = rawExpenses
+      .map((e, idx) => {
+        const name = String(e?.name ?? '').trim()
+        const maxAmount = parseMoneyInput(e?.max_amount)
+        if (!name || maxAmount <= 0) return null
+        return { name: name.slice(0, 200), max_amount: maxAmount, sort_order: idx }
+      })
+      .filter((e): e is { name: string; max_amount: number; sort_order: number } => e != null)
+
+    const replaceFields = body.fields !== undefined
+    const rawFields = Array.isArray(body.fields) ? body.fields : []
+
+    for (const def of defs) {
+      const { error: delExpErr } = await admin
+        .from('task_definition_expenses')
+        .delete()
+        .eq('task_definition_id', def.id)
+      if (delExpErr) {
+        return apiServerError('branch-settings:replace-exp-del', delExpErr, 'فشل تحديث الصرفيات')
+      }
+
+      if (cleanedExpenses.length) {
+        const { error: insExpErr } = await admin.from('task_definition_expenses').insert(
+          cleanedExpenses.map(e => ({
+            task_definition_id: def.id,
+            name: e.name,
+            max_amount: e.max_amount,
+            sort_order: e.sort_order,
+          })),
+        )
+        if (insExpErr) {
+          return apiServerError('branch-settings:replace-exp-ins', insExpErr, 'فشل حفظ الصرفيات')
+        }
+      }
+
+      if (replaceFields) {
+        const cleanedFields = rawFields.map((f, i) => {
+          if (typeof f === 'string') {
+            const key = f.trim().slice(0, 80)
+            return {
+              task_definition_id: def.id,
+              field_key: key,
+              field_type: key.slice(0, 40),
+              is_required: true,
+              sort_order: i,
+            }
+          }
+          const row = pickAllowedFields(f as Record<string, unknown>, COLUMNS.task_required_fields)
+          return {
+            task_definition_id: def.id,
+            field_key: String(row.field_key ?? `field_${i}`).slice(0, 80),
+            field_type: String(row.field_type ?? 'text').slice(0, 40),
+            field_label: String(row.field_label ?? '').slice(0, 200) || null,
+            is_required: Boolean(row.is_required ?? true),
+            sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : i,
+          }
+        }).filter(f => f.field_key)
+
+        const { error: delFieldErr } = await admin
+          .from('task_required_fields')
+          .delete()
+          .eq('task_definition_id', def.id)
+        if (delFieldErr) {
+          return apiServerError('branch-settings:replace-fields-del', delFieldErr, 'فشل تحديث الحقول')
+        }
+        if (cleanedFields.length) {
+          const { error: insFieldErr } = await admin.from('task_required_fields').insert(cleanedFields)
+          if (insFieldErr) {
+            return apiServerError('branch-settings:replace-fields-ins', insFieldErr, 'فشل حفظ الحقول')
+          }
+        }
+      }
+    }
+
+    return NextResponse.json({
+      ok: true,
+      definitionCount: defs.length,
+      expenseCount: cleanedExpenses.length,
+    })
   }
 
   const table = String(body.table ?? '')

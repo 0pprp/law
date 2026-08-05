@@ -454,21 +454,25 @@ export async function creditLawyerWallet(
   if (params.amount <= 0) return { ok: false, error: 'المبلغ يجب أن يكون أكبر من صفر' }
 
   const referenceId = normalizeWalletReferenceId(params.referenceId)
-
-  if (referenceId) {
-    const { data: existing } = await supabase
-      .from('lawyer_wallet_transactions')
-      .select('id')
-      .eq('reference_id', referenceId)
-      .limit(1)
-      .maybeSingle()
-    if (existing) return { ok: true, alreadyCredited: true }
-  }
-
   const wallet = params.wallet ?? (params.type === 'accountant_transfer' ? 'savings' : 'fees')
 
   if (params.type === 'accountant_transfer' && wallet !== 'savings') {
     return { ok: false, error: 'الصرفيات تُسجّل في محفظة الصرفيات فقط' }
+  }
+
+  // نفس reference_id يُستخدم لأتعاب المهمة (fees+) ولخصم صرفياتها (savings−)
+  // لذلك يجب تقييد فحص التكرار بالمحفظة واتجاه المبلغ
+  if (referenceId) {
+    const hasWallet = await probeWalletColumn(supabase)
+    let existingQuery = supabase
+      .from('lawyer_wallet_transactions')
+      .select('id')
+      .eq('reference_id', referenceId)
+      .gt('amount', 0)
+      .limit(1)
+    if (hasWallet) existingQuery = existingQuery.eq('wallet', wallet)
+    const { data: existing } = await existingQuery.maybeSingle()
+    if (existing) return { ok: true, alreadyCredited: true }
   }
 
   const row = {

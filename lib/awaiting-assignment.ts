@@ -48,8 +48,23 @@ export interface FetchAwaitingAssignmentResult {
 }
 
 /** أعمدة المدين + اسم القائمة عبر علاقة PostgREST (بدون N+1) */
-const BASE_COLS =
+const BASE_COLS_WITH_COURT =
+  'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, court_name, branch_list:branch_lists(name, court_name, execution_office), special_status:special_statuses(id, name, color)'
+
+const BASE_COLS_NO_COURT =
   'id, full_name, branch_id, branch_list_id, created_at, case_type, notes, branch_list:branch_lists(name, court_name, execution_office), special_status:special_statuses(id, name, color)'
+
+let awaitingCourtColReady: boolean | null = null
+
+function isMissingDebtorCourtCol(message: string | undefined | null): boolean {
+  if (!message) return false
+  const m = message.toLowerCase()
+  return m.includes('court_name') && (m.includes('debtors') || m.includes('column') || m.includes('schema cache'))
+}
+
+function awaitingBaseCols(): string {
+  return awaitingCourtColReady === false ? BASE_COLS_NO_COURT : BASE_COLS_WITH_COURT
+}
 
 /** حالات نهائية لا تُحسب ضمن صفوف «تحت إسناد» للمهام اليتيمة */
 const TERMINAL_TASK_STATUSES = new Set([
@@ -126,11 +141,26 @@ export function resolveExecutionOffice(embed: BranchListEmbed): string | null {
   return v || null
 }
 
+/**
+ * محكمة المدين المعروضة:
+ * 1) court_name على المدين إن وُجد (حالة استثنائية)
+ * 2) وإلا محكمة القائمة المرتبطة
+ */
+export function resolveDebtorCourtName(debtor: {
+  court_name?: string | null
+  branch_list?: BranchListEmbed
+}): string | null {
+  const override = typeof debtor.court_name === 'string' ? debtor.court_name.trim() : ''
+  if (override) return override
+  return resolveCourtName(debtor.branch_list)
+}
+
 type RawDebtor = {
   id: string
   full_name: string | null
   branch_id: string | null
   branch_list_id?: string | null
+  court_name?: string | null
   branch_list?: BranchListEmbed
   created_at: string
   case_type?: string | null
@@ -155,7 +185,7 @@ async function mapRowsWithLastNotes(
     branch_name: r.branch_id ? branchNames.get(r.branch_id) ?? null : null,
     branch_list_id: r.branch_list_id ?? null,
     branch_list_name: resolveBranchListName(r.branch_list),
-    court_name: resolveCourtName(r.branch_list),
+    court_name: resolveDebtorCourtName(r),
     execution_office: resolveExecutionOffice(r.branch_list),
     created_at: r.created_at,
     assignment_note: r.assignment_note ?? null,
@@ -202,8 +232,8 @@ async function fetchUntypedUnassignedDebtors(
   let noteColumnMissing = false
   let duplicateColumnReady = true
 
-  const colsWithNote = `${BASE_COLS}, assignment_note, current_task_id`
-  const colsBase = `${BASE_COLS}, current_task_id`
+  const colsWithNote = `${awaitingBaseCols()}, assignment_note, current_task_id`
+  const colsBase = `${awaitingBaseCols()}, current_task_id`
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const build = (cols: string, from: number, to: number): any => {
@@ -231,13 +261,19 @@ async function fetchUntypedUnassignedDebtors(
       duplicateColumnReady = false
       res = await build(colsWithNote, from, to)
     }
+    if (res.error && isMissingDebtorCourtCol(res.error.message) && awaitingCourtColReady !== false) {
+      awaitingCourtColReady = false
+      res = await build(`${awaitingBaseCols()}, assignment_note, current_task_id`, from, to)
+    }
     if (res.error && isMissingNoteColumnError(res.error.message)) {
       noteColumnMissing = true
-      res = await build(colsBase, from, to)
+      res = await build(`${awaitingBaseCols()}, current_task_id`, from, to)
       if (res.error && isMissingDuplicateColumnError(res.error.message)) {
         duplicateColumnReady = false
-        res = await build(colsBase, from, to)
+        res = await build(`${awaitingBaseCols()}, current_task_id`, from, to)
       }
+    } else if (!res.error && awaitingCourtColReady !== false) {
+      awaitingCourtColReady = true
     }
     return res
   }
@@ -353,20 +389,31 @@ export async function fetchAwaitingAssignmentDebtors(
   const remaining = limit - page.length
   if (remaining > 0) {
     const noTaskOffset = Math.max(0, offset - untypedSorted.length)
-    let res = await buildNoTaskQuery(`${BASE_COLS}, assignment_note`)
+    let res = await buildNoTaskQuery(`${awaitingBaseCols()}, assignment_note`)
       .range(noTaskOffset, noTaskOffset + remaining - 1)
     if (res.error && isMissingDuplicateColumnError(res.error.message)) {
       duplicateColumnReady = false
-      res = await buildNoTaskQuery(`${BASE_COLS}, assignment_note`)
+      res = await buildNoTaskQuery(`${awaitingBaseCols()}, assignment_note`)
+        .range(noTaskOffset, noTaskOffset + remaining - 1)
+    }
+    if (res.error && isMissingDebtorCourtCol(res.error.message) && awaitingCourtColReady !== false) {
+      awaitingCourtColReady = false
+      res = await buildNoTaskQuery(`${awaitingBaseCols()}, assignment_note`)
         .range(noTaskOffset, noTaskOffset + remaining - 1)
     }
     if (res.error && isMissingNoteColumnError(res.error.message)) {
       noteColumnMissing = true
-      res = await buildNoTaskQuery(BASE_COLS).range(noTaskOffset, noTaskOffset + remaining - 1)
+      res = await buildNoTaskQuery(awaitingBaseCols()).range(noTaskOffset, noTaskOffset + remaining - 1)
       if (res.error && isMissingDuplicateColumnError(res.error.message)) {
         duplicateColumnReady = false
-        res = await buildNoTaskQuery(BASE_COLS).range(noTaskOffset, noTaskOffset + remaining - 1)
+        res = await buildNoTaskQuery(awaitingBaseCols()).range(noTaskOffset, noTaskOffset + remaining - 1)
       }
+      if (res.error && isMissingDebtorCourtCol(res.error.message) && awaitingCourtColReady !== false) {
+        awaitingCourtColReady = false
+        res = await buildNoTaskQuery(awaitingBaseCols()).range(noTaskOffset, noTaskOffset + remaining - 1)
+      }
+    } else if (!res.error && awaitingCourtColReady !== false) {
+      awaitingCourtColReady = true
     }
     if (res.error) {
       return { rows: [], total: 0, noteColumnMissing, error: res.error.message }

@@ -265,7 +265,6 @@ export default function DashboardPage() {
     scheduleBranchMaintenance(supabase, branchId)
 
     try {
-      console.time('[dashboard] loadData')
       let aq = supabase
         .from('activity_logs')
         .select('action, created_at')
@@ -332,10 +331,8 @@ export default function DashboardPage() {
       setTotalAssigned(next.assigned)
       setTotalPendingReview(next.pendingReview)
       setRecentActivity(next.recentActivity)
-      console.timeEnd('[dashboard] loadData')
     } catch (e: unknown) {
       console.error('[admin/dashboard] load error:', e)
-      console.timeEnd('[dashboard] loadData')
     }
     if (!isStale()) setLoading(false)
   }, [branchId, viewAllBranches, listId, ct, showCivilStages, showCriminalStages, role])

@@ -73,7 +73,7 @@ export type TaskStatus =
 export type RequiredField =
   | 'note' | 'image' | 'pdf' | 'decision_number' | 'case_number'
   | 'date' | 'gps' | 'receipt' | 'legal_result'
-  | 'text' | 'number' | 'court_decision' | 'team'
+  | 'text' | 'number' | 'court_decision' | 'team' | 'court_name'
 
 export const REQUIRED_FIELD_LABELS: Record<RequiredField, string> = {
   note: 'ملاحظة',
@@ -81,12 +81,13 @@ export const REQUIRED_FIELD_LABELS: Record<RequiredField, string> = {
   pdf: 'ملف PDF',
   decision_number: 'رقم القرار',
   case_number: 'رقم الدعوى',
-  date: 'التاريخ',
+  date: 'تاريخ المرافعة',
   gps: 'موقع GPS',
   receipt: 'وصل الصرف',
   legal_result: 'النتيجة القانونية',
   court_decision: 'قرار المحكمة',
   team: 'الفريق',
+  court_name: 'اسم المحكمة',
   text: 'نص',
   number: 'رقم',
 }
@@ -159,6 +160,8 @@ export interface Debtor {
   employer: string | null
   branch_id?: string | null
   branch_list_id?: string | null
+  /** محكمة اختيارية تتجاوز محكمة القائمة للحالات الاستثنائية */
+  court_name?: string | null
   /** مدنية | جزائية — الافتراضي مدنية */
   case_type?: 'civil' | 'criminal'
   receipt_type: ReceiptType

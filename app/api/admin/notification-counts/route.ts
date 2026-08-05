@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getBranchContext } from '@/lib/branch-context'
-import { fetchPendingReviewCount } from '@/lib/task-assignment'
+import { fetchReviewQueueCounts } from '@/lib/task-assignment'
 import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { filterBySection } from '@/lib/case-scope'
 
@@ -27,6 +27,7 @@ export async function GET() {
     if (!branchId) {
       return NextResponse.json({
         pendingReview: 0,
+        pendingIncomplete: 0,
         pendingPayoutRequests: 0,
         pendingTaskFeeReceipts: 0,
         pendingExpenses: 0,
@@ -38,7 +39,7 @@ export async function GET() {
     const scopeCaseType = filterBySection(sessionCaseScope(auth.profile))
 
     // Align pendingReview with review page: assigned + open debtors only
-    const reviewPromise = fetchPendingReviewCount(admin, branchId, null, scopeCaseType)
+    const reviewCountsPromise = fetchReviewQueueCounts(admin, branchId, null, scopeCaseType)
 
     let lawyersQ = admin
       .from('profiles')
@@ -74,8 +75,8 @@ export async function GET() {
       .eq('status', 'pending_approval')
     if (scopeCaseType) expenseQ = expenseQ.eq('debtor.case_type', scopeCaseType)
 
-    const [reviewRes, payoutRes, feeReceiptRes, expenseCountRes] = await Promise.all([
-      reviewPromise,
+    const [reviewCounts, payoutRes, feeReceiptRes, expenseCountRes] = await Promise.all([
+      reviewCountsPromise,
       payoutPromise,
       feeReceiptPromise,
       expenseQ,
@@ -99,7 +100,8 @@ export async function GET() {
     }
 
     return NextResponse.json({
-      pendingReview: reviewRes,
+      pendingReview: reviewCounts.pending,
+      pendingIncomplete: reviewCounts.incomplete,
       pendingPayoutRequests: payoutRes.count ?? 0,
       pendingTaskFeeReceipts: feeReceiptRes.count ?? 0,
       pendingExpenses,

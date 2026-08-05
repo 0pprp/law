@@ -41,6 +41,13 @@ export default function LawyerWalletHistory({
               const wallet = (tx.wallet ?? 'fees') as LawyerWalletKind
               const iconKind = walletTransactionIconKind(tx.type as WalletTransactionType, wallet, amt)
               const colors = walletIconColors(iconKind, amt, wallet)
+              const label = walletTransactionLabel(tx.type as WalletTransactionType, wallet, amt)
+              const notes = typeof tx.notes === 'string' ? tx.notes.trim() : ''
+              // خصم إنجاز المهمة: الملاحظة تحتوي التفاصيل الكاملة
+              const detailAsMain = Boolean(
+                notes
+                && (tx.type === 'approved_task_payment' || tx.type === 'lawyer_expense_wallet_deduction'),
+              )
               return (
                 <div key={tx.id} className="px-4 py-3 flex items-center gap-3">
                   <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${colors}`}>
@@ -51,10 +58,11 @@ export default function LawyerWalletHistory({
                       {amt > 0 ? '+' : ''}{fmtMoney(amt)}
                     </p>
                     <p className="text-[11px] text-slate-500 mt-0.5 whitespace-pre-line">
-                      {(tx.type === 'approved_task_payment' || tx.type === 'lawyer_expense_wallet_deduction') && tx.notes
-                        ? tx.notes
-                        : walletTransactionLabel(tx.type as WalletTransactionType, wallet)}
+                      {detailAsMain ? notes : label}
                     </p>
+                    {!detailAsMain && notes && notes !== label && (
+                      <p className="text-[10px] text-slate-400 mt-0.5 whitespace-pre-line">{notes}</p>
+                    )}
                   </div>
                   <span className="text-[10px] text-slate-400 font-mono shrink-0" dir="ltr">{fmtDate(tx.created_at)}</span>
                 </div>

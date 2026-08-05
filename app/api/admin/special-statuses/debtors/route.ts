@@ -5,7 +5,7 @@ import { apiForbiddenResponse, canManageSpecialStatuses } from '@/lib/permission
 import { filterBySection } from '@/lib/case-scope'
 import { apiServerError } from '@/lib/safe-api-error'
 import { attachLastNotes } from '@/lib/debtor-last-notes'
-import { resolveBranchListName, resolveCourtName } from '@/lib/awaiting-assignment'
+import { resolveBranchListName, resolveDebtorCourtName } from '@/lib/awaiting-assignment'
 import { resolveSpecialStatus } from '@/lib/special-statuses'
 
 export async function GET(request: NextRequest) {
@@ -53,6 +53,7 @@ export async function GET(request: NextRequest) {
       branch_id: string | null
       special_status_id: string | null
       notes: string | null
+      court_name?: string | null
       branch_list?: Parameters<typeof resolveBranchListName>[0]
       special_status?: Parameters<typeof resolveSpecialStatus>[0]
     }
@@ -64,7 +65,7 @@ export async function GET(request: NextRequest) {
       branch_id: d.branch_id ?? null,
       branch_name: d.branch_id ? branchNames.get(d.branch_id) ?? null : null,
       branch_list_name: resolveBranchListName(d.branch_list),
-      court_name: resolveCourtName(d.branch_list),
+      court_name: resolveDebtorCourtName(d),
       special_status_id: d.special_status_id ?? null,
       special_status_name: ss.name,
       special_status_color: ss.color,

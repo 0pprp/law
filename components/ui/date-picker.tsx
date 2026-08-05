@@ -6,11 +6,6 @@ import { cn } from '@/lib/utils'
 const TEAL = '#2C8780'
 const TEAL_DARK = '#1D6365'
 
-const AR_MONTHS = [
-  'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-  'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
-]
-
 const AR_WEEKDAYS = ['أحد', 'إثن', 'ثل', 'أرب', 'خم', 'جم', 'سب']
 
 function toYmd(d: Date): string {
@@ -25,9 +20,14 @@ function parseYmd(s: string): Date {
   return new Date(y, m - 1, d)
 }
 
+/** عرض التاريخ بأرقام الأشهر (مثال: 5/8/2026) — معيار الدزاين سيستم */
 function formatDisplay(ymd: string): string {
   const d = parseYmd(ymd)
-  return `${d.getDate()} ${AR_MONTHS[d.getMonth()]} ${d.getFullYear()}`
+  return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`
+}
+
+function formatMonthYear(monthIndex: number, year: number): string {
+  return `${monthIndex + 1} / ${year}`
 }
 
 function daysInMonth(year: number, month: number): number {
@@ -211,7 +211,7 @@ export function DatePicker({
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
               </button>
-              <p className="text-sm font-bold text-[#231F20]">{AR_MONTHS[viewMonth]} {viewYear}</p>
+              <p className="text-sm font-bold text-[#231F20] tabular-nums" dir="ltr">{formatMonthYear(viewMonth, viewYear)}</p>
               <button type="button" onClick={prevMonth}
                 className="w-8 h-8 rounded-lg hover:bg-[#F3F1F2] flex items-center justify-center text-[#231F20]">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">

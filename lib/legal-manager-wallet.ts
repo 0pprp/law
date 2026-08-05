@@ -584,8 +584,6 @@ export async function creditLegalManagerBonusOnApproval(
 }> {
   const existing = await findExistingBonusTx(supabase, taskId)
   if (existing) {
-    const { data: taskLite } = await supabase.from('tasks').select('debtor_id').eq('id', taskId).maybeSingle()
-    if (taskLite?.debtor_id) await syncDebtorLegalManagerFees(supabase, taskLite.debtor_id as string)
     return { ok: true, amount: 0, alreadyCredited: true }
   }
 
@@ -616,11 +614,12 @@ export async function creditLegalManagerBonusOnApproval(
   }
 
   // بنية قابلة لإضافة عمولة الجزائيات لاحقاً — حالياً لا حركة مالية للجزائي
-  const { data: debtorCase } = await supabase
-    .from('debtors')
-    .select('case_type')
-    .eq('id', debtorId)
-    .maybeSingle()
+  const [{ data: debtorCase }, recipientId, lawyerProfileRes, taskFee] = await Promise.all([
+    supabase.from('debtors').select('case_type').eq('id', debtorId).maybeSingle(),
+    resolveLegalManagerRecipient(supabase, reviewerId, (task.branch_id as string | null) ?? null),
+    supabase.from('profiles').select('full_name').eq('id', assignedLawyerId).maybeSingle(),
+    resolveTaskFeeForLegalManager(supabase, task),
+  ])
   if (debtorCase?.case_type === 'criminal') {
     return {
       ok: true,
@@ -629,12 +628,6 @@ export async function creditLegalManagerBonusOnApproval(
       reason: 'لا عمولة لمسؤول الجزائيات على مهام المدين الجزائي (مؤجّل)',
     }
   }
-
-  const recipientId = await resolveLegalManagerRecipient(
-    supabase,
-    reviewerId,
-    (task.branch_id as string | null) ?? null,
-  )
 
   if (!recipientId) {
     console.warn(
@@ -648,7 +641,6 @@ export async function creditLegalManagerBonusOnApproval(
     }
   }
 
-  const taskFee = await resolveTaskFeeForLegalManager(supabase, task)
   const amount = calcLegalManagerFeeFromTaskFee(taskFee)
 
   if (amount <= 0) {
@@ -660,12 +652,7 @@ export async function creditLegalManagerBonusOnApproval(
     }
   }
 
-  const { data: lawyerProfile } = await supabase
-    .from('profiles')
-    .select('full_name')
-    .eq('id', assignedLawyerId)
-    .maybeSingle()
-  const lawyerName = (lawyerProfile?.full_name as string | undefined)?.trim() || 'المكلّف بالمهمة'
+  const lawyerName = (lawyerProfileRes.data?.full_name as string | undefined)?.trim() || 'المكلّف بالمهمة'
 
   const feeNotes = buildPercentageFeeLedgerNote(
     lawyerName,
@@ -702,12 +689,10 @@ export async function creditLegalManagerBonusOnApproval(
 
   if (!insertResult.ok) {
     if (insertResult.error?.includes('duplicate') || insertResult.error?.includes('23505')) {
-      await syncDebtorLegalManagerFees(supabase, debtorId)
       return { ok: true, amount: 0, alreadyCredited: true }
     }
     const verify = await findExistingBonusTx(supabase, taskId)
     if (verify) {
-      await syncDebtorLegalManagerFees(supabase, debtorId)
       return { ok: true, amount: 0, alreadyCredited: true }
     }
     return { ok: false, amount: 0, error: insertResult.error ?? 'فشل تسجيل حركة محفظة مسؤول القانونية' }
@@ -719,7 +704,7 @@ export async function creditLegalManagerBonusOnApproval(
     return { ok: false, amount: 0, error: debtorUpdate.error ?? 'فشل تحديث حساب المدين' }
   }
 
-  await logActivity(
+  void logActivity(
     {
       action: 'legal_manager_task_bonus',
       entity_type: 'task',

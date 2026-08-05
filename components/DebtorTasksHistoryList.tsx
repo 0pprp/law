@@ -1,6 +1,8 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
 import { TASK_STATUS_LABELS, assigneePersonLabel } from '@/lib/types'
 import type { TaskStatus } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
@@ -8,6 +10,14 @@ import { fmtDate } from '@/lib/utils'
 import { resolveCompletionFieldLabel } from '@/lib/completion-field-labels'
 import { parseGps } from '@/lib/task-approval'
 import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
+import { DatePicker } from '@/components/ui/date-picker'
+import { useAdminRole } from '@/context/admin-role'
+import { canApproveCompletions, canAssignTasks, canEditDebtor } from '@/lib/permissions'
+import {
+  extractHearingDateFromCompletion,
+  isHearingDateFieldKey,
+  normalizeHearingYmd,
+} from '@/lib/hearing-date-from-completion'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
   draft: 'gray',
@@ -41,10 +51,15 @@ export interface DebtorTaskHistoryRow {
   lawyerName: string
   assigneeRole: string | null
   task_status: string
+  taskType?: string | null
   assignedAt: string | null
   completedAt: string | null
   approvedAt: string | null
   isCurrent: boolean
+  /** تاريخ المرافعة/الجلسة المعروض على الكارد */
+  hearingDate?: string | null
+  /** هل يُسمح بتعديل تاريخ الجلسة على هذه المهمة (إقامة دعوى) */
+  canEditHearingDate?: boolean
   completionData: Record<string, string> | null
   attachments: DebtorTaskAttachment[]
 }
@@ -135,19 +150,174 @@ function OpenFileButton({
   )
 }
 
+function HearingDateEditor({
+  taskId,
+  debtorId,
+  fieldKey,
+  initialDate,
+  onSaved,
+}: {
+  taskId: string
+  debtorId: string
+  fieldKey: string
+  initialDate: string
+  onSaved: (date: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(initialDate)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function save() {
+    const ymd = normalizeHearingYmd(value)
+    if (!ymd) {
+      setError('تاريخ غير صالح')
+      return
+    }
+    setSaving(true)
+    setError('')
+    const supabase = createClient()
+    const { data: task, error: loadErr } = await supabase
+      .from('tasks')
+      .select('completion_data')
+      .eq('id', taskId)
+      .single()
+    if (loadErr || !task) {
+      setError(loadErr?.message ?? 'تعذر تحميل المهمة')
+      setSaving(false)
+      return
+    }
+    const prev = (task.completion_data ?? {}) as Record<string, unknown>
+    const nextData = {
+      ...prev,
+      [fieldKey]: ymd,
+      hearing_date: ymd,
+    }
+    const { error: taskErr } = await supabase
+      .from('tasks')
+      .update({ completion_data: nextData } as any)
+      .eq('id', taskId)
+    if (taskErr) {
+      setError(taskErr.message)
+      setSaving(false)
+      return
+    }
+    const { error: debtorErr } = await supabase
+      .from('debtors')
+      .update({ first_hearing_date: ymd } as any)
+      .eq('id', debtorId)
+    if (debtorErr) {
+      setError(debtorErr.message)
+      setSaving(false)
+      return
+    }
+    setSaving(false)
+    setEditing(false)
+    onSaved(ymd)
+  }
+
+  if (!editing) {
+    return (
+      <span className="inline-flex items-center gap-2 min-w-0">
+        <span className="font-semibold text-[#231F20] break-all" dir="ltr">{value || '—'}</span>
+        <button
+          type="button"
+          onClick={() => { setValue(initialDate); setEditing(true); setError('') }}
+          className="text-[10px] font-bold text-[#2C8780] hover:underline shrink-0"
+        >
+          تعديل
+        </button>
+      </span>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-2 min-w-0 w-full max-w-xs">
+      <DatePicker
+        value={value}
+        onChange={setValue}
+        fieldLabel="تاريخ الجلسة"
+        headerTitle="تاريخ الجلسة / المرافعة"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={saving || !value}
+          className="text-[11px] font-bold text-white px-2.5 py-1 rounded-lg disabled:opacity-50"
+          style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+        >
+          {saving ? 'جارٍ الحفظ...' : 'حفظ'}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setEditing(false); setError('') }}
+          disabled={saving}
+          className="text-[11px] font-bold text-[#767676] px-2 py-1"
+        >
+          إلغاء
+        </button>
+      </div>
+      {error && <span className="text-[10px] text-red-600">{error}</span>}
+    </div>
+  )
+}
+
 function CompletionFields({
   data,
   attachments,
+  taskId,
+  debtorId,
+  canEditHearing,
+  onHearingSaved,
 }: {
   data: Record<string, string>
   attachments: DebtorTaskAttachment[]
+  taskId: string
+  debtorId: string
+  canEditHearing: boolean
+  onHearingSaved: (date: string) => void
 }) {
   const entries = Object.entries(data).filter(([, v]) => v != null && String(v).trim() !== '')
   if (!entries.length) return null
+  const extractedHearing = extractHearingDateFromCompletion(data)
+  const hearingFieldKeys = new Set(
+    entries
+      .filter(([key, val]) => {
+        if (isHearingDateFieldKey(key)) return true
+        const label = resolveCompletionFieldLabel(key)
+        if ((label.includes('جلسة') || label.includes('مرافعة')) && normalizeHearingYmd(val) != null) return true
+        // field_N_date الوحيد أو المطابق للمستخرج = تاريخ الجلسة
+        if (canEditHearing && extractedHearing && normalizeHearingYmd(val) === extractedHearing) return true
+        return false
+      })
+      .map(([key]) => key),
+  )
+  // إن وُجد تاريخ مستخرج ولم يُعرَف مفتاحه — نستخدم أول حقل date أو hearing_date
+  let fallbackHearingKey: string | null = null
+  if (canEditHearing && extractedHearing && hearingFieldKeys.size === 0) {
+    fallbackHearingKey =
+      entries.find(([k]) => isHearingDateFieldKey(k))?.[0]
+      ?? entries.find(([k, v]) => normalizeHearingYmd(v) === extractedHearing)?.[0]
+      ?? 'hearing_date'
+    hearingFieldKeys.add(fallbackHearingKey)
+  }
   return (
     <div className="mt-3 pt-3 border-t border-[rgba(118,118,118,0.08)]">
       <p className="text-[10px] font-bold text-[#767676] mb-2">الحقول المُدخلة</p>
       <div className="space-y-2">
+        {canEditHearing && fallbackHearingKey === 'hearing_date' && !entries.some(([k]) => k === 'hearing_date') && extractedHearing && (
+          <div className="flex items-start gap-2 text-xs">
+            <span className="text-[#767676] shrink-0">تاريخ الجلسة:</span>
+            <HearingDateEditor
+              taskId={taskId}
+              debtorId={debtorId}
+              fieldKey="hearing_date"
+              initialDate={extractedHearing}
+              onSaved={onHearingSaved}
+            />
+          </div>
+        )}
         {entries.map(([key, val]) => {
           const isGps = key === 'gps' || key.includes('gps')
           const gpsCoords = isGps ? parseGps(val) : null
@@ -155,10 +325,19 @@ function CompletionFields({
           const mediaAtt = isMediaCompletionField(key, val)
             ? findAttachmentForField(key, val, attachments)
             : null
+          const isHearing = hearingFieldKeys.has(key)
           return (
             <div key={key} className="flex items-start gap-2 text-xs">
               <span className="text-[#767676] shrink-0">{label}:</span>
-              {isGps && gpsCoords ? (
+              {isHearing && canEditHearing ? (
+                <HearingDateEditor
+                  taskId={taskId}
+                  debtorId={debtorId}
+                  fieldKey={key}
+                  initialDate={normalizeHearingYmd(val) ?? String(val).slice(0, 10)}
+                  onSaved={onHearingSaved}
+                />
+              ) : isGps && gpsCoords ? (
                 <a
                   href={`https://www.google.com/maps?q=${gpsCoords.lat},${gpsCoords.lng}`}
                   target="_blank"
@@ -171,7 +350,9 @@ function CompletionFields({
               ) : mediaAtt?.file_path ? (
                 <OpenFileButton fileId={mediaAtt.id} filePath={mediaAtt.file_path} label={String(val)} />
               ) : (
-                <span className="font-semibold text-[#231F20] break-all">{String(val)}</span>
+                <span className="font-semibold text-[#231F20] break-all" dir={isHearing ? 'ltr' : undefined}>
+                  {String(val)}
+                </span>
               )}
             </div>
           )
@@ -184,11 +365,18 @@ function CompletionFields({
 export default function DebtorTasksHistoryList({
   rows,
   fullArchive = false,
+  debtorId,
 }: {
   rows: DebtorTaskHistoryRow[]
   fullArchive?: boolean
+  debtorId: string
 }) {
+  const router = useRouter()
+  const role = useAdminRole()
+  const allowEditHearing = canEditDebtor(role) || canAssignTasks(role) || canApproveCompletions(role)
   const { visibleItems, expanded, toggle, hasMore, total } = useShowMore(rows, LOG_PREVIEW_LIMIT)
+  const [localHearingByTask, setLocalHearingByTask] = useState<Record<string, string>>({})
+  const [pleadingHearing, setPleadingHearing] = useState<string | null>(null)
 
   if (rows.length === 0) {
     return <div className="py-10 text-center text-[#767676] text-sm">لا توجد مهام مسجّلة لهذا المدين</div>
@@ -197,70 +385,116 @@ export default function DebtorTasksHistoryList({
   return (
     <>
       <div className="divide-y divide-[rgba(118,118,118,0.08)]">
-        {visibleItems.map(row => (
-          <div key={row.id} className={`px-5 py-4 ${row.isCurrent ? 'bg-[#2C8780]/5' : ''}`}>
-            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="text-sm font-bold text-[#231F20]">{row.label}</p>
-                  {row.isCurrent ? (
-                    <span className="text-[9px] font-bold text-white bg-[#2C8780] rounded px-1.5 py-0.5">المهمة الحالية</span>
-                  ) : (
-                    <span className="text-[9px] font-bold text-[#767676] bg-slate-100 rounded px-1.5 py-0.5">مهمة سابقة</span>
-                  )}
-                </div>
-                <p className="text-xs text-[#767676] mt-1">
-                  {assigneePersonLabel(row.assigneeRole)}: <span className="font-semibold text-[#231F20]">{row.lawyerName}</span>
-                </p>
-              </div>
-              <Badge variant={STATUS_BADGE[row.task_status as TaskStatus] ?? 'default'}>
-                {TASK_STATUS_LABELS[row.task_status as TaskStatus] ?? row.task_status}
-              </Badge>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
-              <div>
-                <span className="text-[#767676] block mb-0.5">تاريخ التكليف</span>
-                <span className="font-mono text-[#231F20] font-semibold" dir="ltr">{formatDate(row.assignedAt)}</span>
-              </div>
-              <div>
-                <span className="text-[#767676] block mb-0.5">تاريخ الإنجاز</span>
-                <span className="font-mono text-[#231F20] font-semibold" dir="ltr">{formatDate(row.completedAt)}</span>
-              </div>
-              <div>
-                <span className="text-[#767676] block mb-0.5">تاريخ الاعتماد</span>
-                <span className="font-mono text-[#231F20] font-semibold" dir="ltr">{formatDate(row.approvedAt)}</span>
-              </div>
-            </div>
-
-            {fullArchive && row.completionData && Object.keys(row.completionData).length > 0 && (
-              <CompletionFields data={row.completionData} attachments={row.attachments} />
-            )}
-
-            {fullArchive && row.attachments.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-[rgba(118,118,118,0.08)]">
-                <p className="text-[10px] font-bold text-[#767676] mb-2">مرفقات المهمة ({row.attachments.length})</p>
-                <div className="flex flex-wrap gap-2">
-                  {row.attachments.map(att => (
-                    att.file_path ? (
-                      <OpenFileButton
-                        key={att.id}
-                        fileId={att.id}
-                        filePath={att.file_path}
-                        label={att.file_name}
-                        compact
-                      />
+        {visibleItems.map(row => {
+          const fromRow = localHearingByTask[row.id] ?? row.hearingDate ?? null
+          const showPleadingHearing =
+            row.taskType === 'pleading'
+            || row.label.includes('مرافع')
+            || Boolean(row.isCurrent && (pleadingHearing || row.hearingDate))
+          const hearingDate = showPleadingHearing
+            ? (pleadingHearing ?? fromRow)
+            : fromRow
+          return (
+            <div key={row.id} className={`px-5 py-4 ${row.isCurrent ? 'bg-[#2C8780]/5' : ''}`}>
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-bold text-[#231F20]">{row.label}</p>
+                    {row.isCurrent ? (
+                      <span className="text-[9px] font-bold text-white bg-[#2C8780] rounded px-1.5 py-0.5">المهمة الحالية</span>
                     ) : (
-                      <span key={att.id} className="text-xs bg-slate-100 text-[#231F20] px-2 py-1 rounded-lg">
-                        {att.file_name}
-                      </span>
-                    )
-                  ))}
+                      <span className="text-[9px] font-bold text-[#767676] bg-slate-100 rounded px-1.5 py-0.5">مهمة سابقة</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#767676] mt-1">
+                    {assigneePersonLabel(row.assigneeRole)}: <span className="font-semibold text-[#231F20]">{row.lawyerName}</span>
+                  </p>
                 </div>
+                <Badge variant={STATUS_BADGE[row.task_status as TaskStatus] ?? 'default'}>
+                  {TASK_STATUS_LABELS[row.task_status as TaskStatus] ?? row.task_status}
+                </Badge>
               </div>
-            )}
-          </div>
-        ))}
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
+                <div>
+                  <span className="text-[#767676] block mb-0.5">تاريخ التكليف</span>
+                  <span className="font-mono text-[#231F20] font-semibold" dir="ltr">{formatDate(row.assignedAt)}</span>
+                </div>
+                <div>
+                  <span className="text-[#767676] block mb-0.5">تاريخ الإنجاز</span>
+                  <span className="font-mono text-[#231F20] font-semibold" dir="ltr">{formatDate(row.completedAt)}</span>
+                </div>
+                <div>
+                  <span className="text-[#767676] block mb-0.5">تاريخ الاعتماد</span>
+                  <span className="font-mono text-[#231F20] font-semibold" dir="ltr">{formatDate(row.approvedAt)}</span>
+                </div>
+                {showPleadingHearing && (
+                  <div className="col-span-2 sm:col-span-3 rounded-lg bg-[#2C8780]/8 border border-[#2C8780]/20 px-3 py-2">
+                    <span className="text-[#767676] block mb-0.5">تاريخ المرافعة</span>
+                    <span className="font-mono text-[#2C8780] font-bold text-sm" dir="ltr">
+                      {hearingDate ? formatDate(hearingDate) : '—'}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {fullArchive && row.completionData && Object.keys(row.completionData).length > 0 && (
+                <CompletionFields
+                  data={
+                    localHearingByTask[row.id]
+                      ? {
+                          ...row.completionData,
+                          hearing_date: localHearingByTask[row.id],
+                          ...(extractHearingDateFromCompletion(row.completionData)
+                            ? Object.fromEntries(
+                                Object.keys(row.completionData)
+                                  .filter(k => isHearingDateFieldKey(k) || resolveCompletionFieldLabel(k).includes('جلسة'))
+                                  .map(k => [k, localHearingByTask[row.id]]),
+                              )
+                            : {}),
+                        }
+                      : row.completionData
+                  }
+                  attachments={row.attachments}
+                  taskId={row.id}
+                  debtorId={debtorId}
+                  canEditHearing={
+                    allowEditHearing
+                    && (Boolean(row.canEditHearingDate) || row.label.includes('إقامة دعوى') || row.taskType === 'file_lawsuit')
+                  }
+                  onHearingSaved={(date) => {
+                    setLocalHearingByTask(prev => ({ ...prev, [row.id]: date }))
+                    setPleadingHearing(date)
+                    router.refresh()
+                  }}
+                />
+              )}
+
+              {fullArchive && row.attachments.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-[rgba(118,118,118,0.08)]">
+                  <p className="text-[10px] font-bold text-[#767676] mb-2">مرفقات المهمة ({row.attachments.length})</p>
+                  <div className="flex flex-wrap gap-2">
+                    {row.attachments.map(att => (
+                      att.file_path ? (
+                        <OpenFileButton
+                          key={att.id}
+                          fileId={att.id}
+                          filePath={att.file_path}
+                          label={att.file_name}
+                          compact
+                        />
+                      ) : (
+                        <span key={att.id} className="text-xs bg-slate-100 text-[#231F20] px-2 py-1 rounded-lg">
+                          {att.file_name}
+                        </span>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
       <ShowMoreFooter hasMore={hasMore} expanded={expanded} onToggle={toggle} total={total} />
     </>

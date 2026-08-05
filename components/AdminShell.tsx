@@ -69,6 +69,9 @@ const sections = [
       { label: 'مراجعة الإنجازات', href: '/admin/tasks/review', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       )},
+      { label: 'غير منجزة', href: '/admin/tasks/incomplete', icon: (
+        <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+      )},
       { label: 'القضايا المحسومة', href: '/admin/closed-cases', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
       )},
@@ -180,7 +183,7 @@ function HeaderNotifications({
   const total = isAccountant(userRole)
     ? accountantNotificationTotal(counts)
     : isAnyLegalManager(userRole)
-      ? counts.pendingReview
+      ? counts.pendingReview + (counts.pendingIncomplete ?? 0)
       : totalAdminNotifications(counts)
   if (!total) return null
 
@@ -228,6 +231,26 @@ function HeaderNotifications({
                   </div>
                   <span className="min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
                     {counts.pendingReview}
+                  </span>
+                </Link>
+              )}
+              {(counts.pendingIncomplete ?? 0) > 0 && !isAccountant(userRole) && (
+                <Link
+                  href="/admin/tasks/incomplete"
+                  onClick={onClose}
+                  className="flex items-center gap-3 px-4 py-3 hover:bg-[#F8F7F8] transition-colors"
+                >
+                  <span className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                    </svg>
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[#231F20]">غير منجزة</p>
+                    <p className="text-[11px] text-[#767676]">إرسال بدون إنجاز بانتظار القرار</p>
+                  </div>
+                  <span className="min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                    {counts.pendingIncomplete}
                   </span>
                 </Link>
               )}
@@ -306,6 +329,7 @@ function HeaderNotifications({
 function useAdminNotifications(branchId: string | null) {
   const [counts, setCounts] = useState<AdminNotificationCounts>({
     pendingReview: 0,
+    pendingIncomplete: 0,
     pendingPayoutRequests: 0,
     pendingTaskFeeReceipts: 0,
     pendingExpenses: 0,
@@ -316,6 +340,7 @@ function useAdminNotifications(branchId: string | null) {
     if (!branchId) {
       setCounts({
         pendingReview: 0,
+        pendingIncomplete: 0,
         pendingPayoutRequests: 0,
         pendingTaskFeeReceipts: 0,
         pendingExpenses: 0,
@@ -348,6 +373,7 @@ function useAdminNotifications(branchId: string | null) {
 
 function badgeForHref(href: string, counts: AdminNotificationCounts): number {
   if (href === '/admin/tasks/review') return counts.pendingReview
+  if (href === '/admin/tasks/incomplete') return counts.pendingIncomplete ?? 0
   if (href === '/admin/finance') return pendingFinanceRequests(counts)
   if (href === '/admin/expenses') return counts.pendingExpenses
   return 0

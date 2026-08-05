@@ -179,6 +179,7 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     latitude?: number | null
     longitude?: number | null
     location_captured_at?: string | null
+    court_name?: string | null
     branch_list?: { name?: string; court_name?: string | null } | { name?: string; court_name?: string | null }[] | null
   } | null
 
@@ -188,6 +189,8 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
   })()
 
   const debtorCourtName = (() => {
+    const override = typeof d?.court_name === 'string' ? d.court_name.trim() : ''
+    if (override) return override
     const bl = Array.isArray(d?.branch_list) ? d.branch_list[0] : d?.branch_list
     return bl?.court_name?.trim() || task.court_name?.trim() || null
   })()

@@ -27,11 +27,12 @@ import { cacheInvalidatePrefix } from '@/lib/query-cache'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
 import { useScrollRestore } from '@/hooks/use-scroll-restore'
 import { appConfirm } from '@/lib/app-dialog'
-import { resolveCourtName, resolveExecutionOffice } from '@/lib/awaiting-assignment'
+import { resolveDebtorCourtName, resolveExecutionOffice } from '@/lib/awaiting-assignment'
 import { resolveSpecialStatus } from '@/lib/special-statuses'
 import { fetchBranchCourtNames } from '@/lib/branch-lists'
 import MoveToMonitoringModal from '@/components/MoveToMonitoringModal'
 import { getDaysUntilHearing, getHearingDateStatus } from '@/lib/hearing-date-utils'
+import { extractHearingDateFromCompletion } from '@/lib/hearing-date-from-completion'
 
 type StageView = 'waiting' | 'assigned' | 'overdue'
 
@@ -641,12 +642,59 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
         branchName: bId ? branchNames.get(bId) ?? 'فرع' : 'بدون فرع',
         branchListId: d.branch_list_id ?? null,
         branchListName: bl?.name?.trim() ?? null,
-        courtName: resolveCourtName(d.branch_list),
+        courtName: resolveDebtorCourtName(d),
         executionOffice: resolveExecutionOffice(d.branch_list),
         specialStatusName: ss.name,
         specialStatusColor: ss.color,
         firstHearingDate: d.first_hearing_date ? String(d.first_hearing_date).slice(0, 10) : null,
       })
+    }
+
+    // إن نقص first_hearing_date: استخرجه من إنجاز «إقامة دعوى» (أو أي إنجاز فيه تاريخ جلسة) واحفظه
+    const isPleadingStage =
+      def?.task_type === 'pleading' || Boolean(def?.label?.includes('مرافع'))
+    if (isPleadingStage) {
+      const missing = mapped.filter(r => !r.firstHearingDate)
+      if (missing.length) {
+        const ids = missing.map(r => r.debtorId)
+        const { data: priorTasks } = await supabase
+          .from('tasks')
+          .select('debtor_id, task_type, completion_data, created_at')
+          .in('debtor_id', ids)
+          .not('completion_data', 'is', null)
+          .order('created_at', { ascending: false })
+        if (isStale()) return
+
+        const hearingByDebtor = new Map<string, string>()
+        // فضّل إقامة دعوى ثم أي مهمة فيها تاريخ جلسة
+        const sorted = [...(priorTasks ?? [])].sort((a, b) => {
+          const aL = a.task_type === 'file_lawsuit' ? 0 : 1
+          const bL = b.task_type === 'file_lawsuit' ? 0 : 1
+          return aL - bL
+        })
+        for (const row of sorted) {
+          const debtorId = row.debtor_id as string
+          if (hearingByDebtor.has(debtorId)) continue
+          const ymd = extractHearingDateFromCompletion(
+            (row.completion_data ?? null) as Record<string, unknown> | null,
+          )
+          if (ymd) hearingByDebtor.set(debtorId, ymd)
+        }
+
+        if (hearingByDebtor.size) {
+          for (const row of mapped) {
+            if (row.firstHearingDate) continue
+            const ymd = hearingByDebtor.get(row.debtorId)
+            if (ymd) row.firstHearingDate = ymd
+          }
+          // حفظ غير متزامن — لا يوقف العرض
+          void Promise.all(
+            [...hearingByDebtor.entries()].map(([debtorId, ymd]) =>
+              supabase.from('debtors').update({ first_hearing_date: ymd } as any).eq('id', debtorId),
+            ),
+          )
+        }
+      }
     }
 
     if (isStale()) return
@@ -668,7 +716,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   useEffect(() => { void load() }, [load])
 
   // تاريخ المرافعة يُلتقط من «إقامة دعوى» لكنه يُعرَض على كارد «مرافعات»
-  const showHearingDate = (role === 'admin' || role === 'viewer') && stageTaskType === 'pleading'
+  const showHearingDate = stageTaskType === 'pleading' || stageLabel.includes('مرافع')
 
   useEffect(() => {
     setBulkLawyerId('')

@@ -27,6 +27,7 @@ import {
   type HybridLinkInfo,
 } from '@/lib/hybrid-task-links'
 import { invalidateLawyerTasksCache } from '@/lib/task-assignment'
+import { buildIncompleteCompletionData, isIncompleteCompletionRequest } from '@/lib/incomplete-completion'
 
 interface Attachment {
   id: string
@@ -397,6 +398,15 @@ export function LawyerTaskCompletionModal({
           </div>
         )
 
+      case 'court_name':
+        return (
+          <div key={f.id}>
+            <label className="block text-xs font-bold text-[#231F20] mb-1.5">{label} {req && <span className="text-red-500">*</span>}</label>
+            <input type="text" value={values[f.field_key] ?? ''} onChange={e => set(f.field_key, e.target.value)}
+              className={INP} placeholder="أدخل اسم المحكمة..." />
+          </div>
+        )
+
       case 'date':
         return (
           <div key={f.id}>
@@ -558,15 +568,168 @@ export function LawyerTaskCompletionModal({
         </div>
 
         {/* Submit */}
-        <div className="px-5 py-4 border-t border-[rgba(118,118,118,0.1)] shrink-0 bg-white rounded-b-2xl">
-          <button onClick={submit} disabled={saving}
-            className="w-full py-3.5 rounded-xl text-white font-black text-sm disabled:opacity-60 transition-opacity"
-            style={{ background: saving ? '#767676' : 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-            {uploading ? 'جارٍ رفع الملفات...' : saving ? 'جارٍ الإرسال...' : 'إرسال للاعتماد'}
-          </button>
-          <p className="text-center text-[10px] text-[#767676] mt-2">
-            ستظهر المهمة بحالة "بانتظار الاعتماد" حتى تراجعها الإدارة
+        <div className="px-5 py-4 border-t border-[rgba(118,118,118,0.1)] shrink-0 bg-white rounded-b-2xl space-y-2">
+          <div className="flex flex-col sm:flex-row gap-2">
+            <button onClick={submit} disabled={saving}
+              className="flex-1 py-3.5 rounded-xl text-white font-black text-sm disabled:opacity-60 transition-opacity"
+              style={{ background: saving ? '#767676' : 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
+              {uploading ? 'جارٍ رفع الملفات...' : saving ? 'جارٍ الإرسال...' : 'إرسال للاعتماد'}
+            </button>
+          </div>
+          <p className="text-center text-[10px] text-[#767676]">
+            ستظهر المهمة بحالة &quot;بانتظار الاعتماد&quot; حتى تراجعها الإدارة
           </p>
+        </div>
+      </div>
+    </CenteredModalPortal>
+  )
+}
+
+/** نافذة «إرسال بدون إنجاز» — سبب فقط */
+export function IncompleteWithoutCompletionModal({
+  task,
+  taskLabel,
+  onClose,
+  onSubmitted,
+  skipRouterRefresh,
+}: {
+  task: Task & Record<string, any>
+  taskLabel?: string
+  onClose: () => void
+  onSubmitted: () => void
+  skipRouterRefresh?: boolean
+}) {
+  const router = useRouter()
+  const [reason, setReason] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit() {
+    const trimmed = reason.trim()
+    if (!trimmed) {
+      setError('يجب إدخال السبب')
+      return
+    }
+    setSaving(true)
+    setError('')
+
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setError('يرجى تسجيل الدخول')
+      setSaving(false)
+      return
+    }
+
+    const completionData = buildIncompleteCompletionData(trimmed)
+    const baseUpdate = {
+      lawyer_notes: trimmed,
+      completion_data: completionData,
+      completed_at: new Date().toISOString(),
+      incomplete_request: true,
+      incomplete_reason: trimmed,
+    }
+
+    const submitPayloads = [
+      { task_status: 'pending_review' as const },
+      { task_status: 'submitted' as const },
+    ]
+
+    let updateErr: { message?: string } | null = null
+    for (const statusPart of submitPayloads) {
+      const { error: err } = await supabase.from('tasks').update({
+        ...baseUpdate,
+        ...statusPart,
+      } as any).eq('id', task.id)
+      if (!err) {
+        updateErr = null
+        break
+      }
+      updateErr = err
+      // أعمدة incomplete_* قد لا تكون مطبّقة بعد — أعد بالمعرّف داخل completion_data فقط
+      if (/incomplete_request|incomplete_reason/i.test(err.message ?? '')) {
+        const { error: err2 } = await supabase.from('tasks').update({
+          lawyer_notes: trimmed,
+          completion_data: completionData,
+          completed_at: new Date().toISOString(),
+          ...statusPart,
+        } as any).eq('id', task.id)
+        if (!err2) {
+          updateErr = null
+          break
+        }
+        updateErr = err2
+      }
+    }
+
+    if (updateErr) {
+      setError(updateErr.message ?? 'خطأ في التحديث')
+      setSaving(false)
+      return
+    }
+
+    await logActivity({
+      action: 'submit_incomplete_task',
+      entity_type: 'task',
+      entity_id: task.id,
+      description: `إرسال بدون إنجاز — السبب: ${trimmed}`,
+    }, supabase)
+
+    invalidateLawyerTasksCache()
+    onSubmitted()
+    onClose()
+    if (!skipRouterRefresh) router.refresh()
+  }
+
+  return (
+    <CenteredModalPortal onBackdropClick={onClose} zIndex={56} ariaLabelledBy="incomplete-submit-modal-title">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="px-5 py-4 border-b border-[rgba(118,118,118,0.1)] flex items-start justify-between shrink-0">
+          <div className="min-w-0 pr-2">
+            <h2 id="incomplete-submit-modal-title" className="font-black text-[#231F20] text-base">
+              إرسال بدون إنجاز{taskLabel ? `: ${taskLabel}` : ''}
+            </h2>
+            <p className="text-[11px] text-[#767676] mt-1">
+              سيُراجع الطلب في تبويب «غير منجزة» — لن تُحسب أتعاب ولن يُعتبر إنجازاً
+            </p>
+          </div>
+          <button type="button" onClick={onClose}
+            className="w-8 h-8 rounded-xl bg-[#F3F1F2] text-[#767676] flex items-center justify-center text-xl leading-none hover:bg-slate-200 transition-colors shrink-0"
+            aria-label="إغلاق">
+            ×
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4 min-h-0">
+          <div>
+            <label className="block text-xs font-bold text-[#231F20] mb-1.5">
+              السبب <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              rows={4}
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              className={INP + ' resize-none'}
+              placeholder="اكتب سبب الإرسال بدون إنجاز..."
+              autoFocus
+            />
+          </div>
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl px-4 py-3 font-bold">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-[rgba(118,118,118,0.1)] shrink-0 bg-white rounded-b-2xl">
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={saving}
+            className="w-full py-3.5 rounded-xl text-white font-black text-sm disabled:opacity-60 transition-opacity bg-amber-600 hover:bg-amber-700"
+          >
+            {saving ? 'جارٍ الإرسال...' : 'إرسال بدون إنجاز'}
+          </button>
         </div>
       </div>
     </CenteredModalPortal>
@@ -585,6 +748,7 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
   const [uploadError, setUploadError] = useState('')
   const [showExpenseModal, setShowExpenseModal] = useState(false)
   const [showCompletion, setShowCompletion] = useState(false)
+  const [showIncomplete, setShowIncomplete] = useState(false)
   const [showHybridSelect, setShowHybridSelect] = useState(false)
   const [pendingExpenses, setPendingExpenses] = useState<PendingTaskExpense[]>([])
   const [expenseStepDone, setExpenseStepDone] = useState(false)
@@ -605,6 +769,7 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
   const [displayTaskType, setDisplayTaskType] = useState<string | null>(task.task_type ?? null)
   const [hybridLinks, setHybridLinks] = useState<HybridLinkInfo[]>([])
   const [isHybrid, setIsHybrid] = useState(false)
+  const [hybridReady, setHybridReady] = useState(false)
   const [hybridSelectedLinked, setHybridSelectedLinked] = useState<HybridLinkInfo[]>([])
 
   const canSubmit = ['assigned', 'in_progress', 'new', 'rejected', 'needs_info', 'needs_revision'].includes(task.task_status)
@@ -714,9 +879,11 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
   useEffect(() => {
     let cancelled = false
     const defId = resolvedDefinitionId ?? (task as any).task_definition_id as string | null
+    setHybridReady(false)
     if (!defId) {
       setIsHybrid(false)
       setHybridLinks([])
+      setHybridReady(true)
       return
     }
 
@@ -725,6 +892,7 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
       if (cancelled) return
       setIsHybrid(result.isHybrid)
       setHybridLinks(result.links)
+      setHybridReady(true)
     })()
 
     return () => { cancelled = true }
@@ -733,20 +901,22 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
   const taskLabel = resolveTaskLabel(displayTaskType ?? task.task_type, definitionLabel)
 
   async function resolveExpensesForComplete(): Promise<TaskDefinitionExpense[]> {
-    if (expenseDefs.length > 0) return expenseDefs
-    if (expenseDefsProp.length > 0) return expenseDefsProp
+    // إن وُجدت صرفيات محمّلة مسبقاً استخدمها فوراً (من صفحة المهمة / embed)
+    const already = mergeExpenseSources(expenseDefs, expenseDefsProp)
+    if (already.length > 0) return already
 
     const supabase = createClient()
     const taskDefId = resolvedDefinitionId ?? (task as any).task_definition_id as string | null
     const taskName = definitionLabel ?? task.task_label ?? null
 
-    if (taskDefId) {
-      const embedded = await fetchExpensesViaDefinitionEmbed(supabase, taskDefId)
-      if (embedded.length > 0) return embedded
-    }
-
-    const apiResult = await fetchLawyerTaskExpenses(task.id)
-    if (apiResult.expenses.length > 0) return apiResult.expenses
+    const [apiResult, embedded] = await Promise.all([
+      fetchLawyerTaskExpenses(task.id),
+      taskDefId
+        ? fetchExpensesViaDefinitionEmbed(supabase, taskDefId)
+        : Promise.resolve([] as TaskDefinitionExpense[]),
+    ])
+    const fromFast = mergeExpenseSources(apiResult.expenses, embedded)
+    if (fromFast.length > 0) return fromFast
 
     const localResult = await getTaskExpenses(supabase, {
       taskDefinitionId: taskDefId,
@@ -756,7 +926,7 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
     })
     if (localResult.expenses.length > 0) return localResult.expenses
 
-    return mergeExpenseSources(expenseDefsProp, expenseDefs)
+    return []
   }
 
   type DefBundle = {
@@ -908,18 +1078,17 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
     setCompletionReqFields(reqFields)
 
     const taskDefId = resolvedDefinitionId ?? (task as any).task_definition_id as string | null
-    const taskName = definitionLabel ?? task.task_label ?? null
 
     try {
-      // أعد جلب الروابط لحظة الإنجاز (آمن إن غابت الجداول)
       let hybridNow = isHybrid
       let linksNow = hybridLinks
-      if (taskDefId) {
+      if (!hybridReady && taskDefId) {
         const result = await fetchHybridTaskLinks(taskDefId)
         hybridNow = result.isHybrid
         linksNow = result.links
         setIsHybrid(hybridNow)
         setHybridLinks(linksNow)
+        setHybridReady(true)
       }
 
       if (hybridNow && linksNow.length > 0 && taskDefId) {
@@ -929,14 +1098,6 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
       }
 
       const expenses = await resolveExpensesForComplete()
-
-      console.log('[تم الإنجاز]', {
-        taskId: task.id,
-        taskName: taskName ?? taskLabel,
-        taskDefinitionId: taskDefId,
-        expensesFound: expenses.length,
-        expenseNames: expenses.map(e => e.name),
-      })
 
       setExpenseDefs(expenses)
       setModalExpenseDefs(expenses)
@@ -996,7 +1157,9 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
       {/* Status banners */}
       {isSubmitted && (
         <div className="bg-purple-50 border border-purple-200 rounded-2xl px-4 py-3.5 text-sm text-purple-800 font-bold text-center">
-          ⏳ المهمة بانتظار اعتماد الإدارة
+          {isIncompleteCompletionRequest(task)
+            ? '⏳ طلب إرسال بدون إنجاز بانتظار قرار الإدارة'
+            : '⏳ المهمة بانتظار اعتماد الإدارة'}
         </div>
       )}
       {canAddExpensesAfterSubmit && (
@@ -1015,13 +1178,13 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
       )}
       {isRejected && task.admin_notes && (
         <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3.5 space-y-1">
-          <p className="text-sm text-red-800 font-bold">✗ تم رفض المهمة</p>
-          <p className="text-xs text-red-700">{task.admin_notes}</p>
+          <p className="text-sm text-red-800 font-bold">✗ تم رفض الطلب</p>
+          <p className="text-xs text-red-700 whitespace-pre-wrap">{task.admin_notes}</p>
         </div>
       )}
       {isRejected && !task.admin_notes && (
         <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3.5 text-sm text-red-800 font-bold text-center">
-          ✗ تم رفض المهمة — يرجى المراجعة وإعادة الإرسال
+          ✗ تم رفض الطلب — يرجى المراجعة وإعادة الإرسال
         </div>
       )}
 
@@ -1079,13 +1242,27 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
         </form>
       )}
 
-      {/* Complete button */}
+      {/* Complete / incomplete buttons */}
       {canSubmit && (
-        <button onClick={() => void handleCompleteClick()} disabled={!expenseDefsReady || completingTask}
-          className="w-full py-4 rounded-2xl text-white font-black text-base shadow-lg active:scale-[0.99] transition-all disabled:opacity-60"
-          style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-          {completingTask ? 'جارٍ التحقق...' : !expenseDefsReady ? 'جارٍ التحميل...' : 'تم الإنجاز — إرسال للاعتماد'}
-        </button>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <button
+            type="button"
+            onClick={() => void handleCompleteClick()}
+            disabled={!expenseDefsReady || completingTask}
+            className="flex-1 py-4 rounded-2xl text-white font-black text-base shadow-lg active:scale-[0.99] transition-all disabled:opacity-60"
+            style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+          >
+            {completingTask ? 'جارٍ التحقق...' : !expenseDefsReady ? 'جارٍ التحميل...' : 'تم الإنجاز — إرسال للاعتماد'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowIncomplete(true)}
+            disabled={completingTask}
+            className="flex-1 sm:flex-none sm:min-w-[10.5rem] py-4 rounded-2xl text-white font-black text-sm shadow-lg active:scale-[0.99] transition-all disabled:opacity-60 bg-amber-600 hover:bg-amber-700"
+          >
+            إرسال بدون إنجاز
+          </button>
+        </div>
       )}
 
       {showHybridSelect && (resolvedDefinitionId || (task as any).task_definition_id) && (
@@ -1143,6 +1320,15 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
           }
           hybridSelectedLinked={hybridSelectedLinked}
           onClose={() => setShowCompletion(false)}
+          onSubmitted={() => router.refresh()}
+        />
+      )}
+
+      {showIncomplete && (
+        <IncompleteWithoutCompletionModal
+          task={task}
+          taskLabel={taskLabel}
+          onClose={() => setShowIncomplete(false)}
           onSubmitted={() => router.refresh()}
         />
       )}

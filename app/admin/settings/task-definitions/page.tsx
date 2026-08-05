@@ -6,14 +6,14 @@ import { TASK_TYPE_LABELS, REQUIRED_FIELD_LABELS } from '@/lib/types'
 import type { TaskType, RequiredField } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
 import { useBranchId, useBranch } from '@/context/branch'
-import { formatMoney } from '@/lib/money-input'
+import { formatMoney, parseMoneyInput } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
 
 const ALL_FIELDS: RequiredField[] = [
   'note', 'image', 'pdf', 'decision_number', 'case_number',
-  'date', 'gps', 'receipt', 'legal_result', 'court_decision', 'team',
+  'date', 'gps', 'receipt', 'legal_result', 'court_decision', 'team', 'court_name',
 ]
 
 interface TaskDef {
@@ -63,7 +63,12 @@ function EditModal({ def, reqFields, expenseRows, onClose, onSaved }: {
     expenseRows.map(r => ({ id: r.id, name: r.name, max_amount: String(r.max_amount) })),
   )
   const [activeFields, setActiveFields] = useState<Set<RequiredField>>(
-    new Set(reqFields.map(f => f.field_type))
+    new Set(
+      reqFields.map(f => {
+        if (f.field_key === 'court_name' || f.field_type === 'court_name') return 'court_name'
+        return f.field_type as RequiredField
+      }).filter((f): f is RequiredField => ALL_FIELDS.includes(f)),
+    ),
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -82,49 +87,74 @@ function EditModal({ def, reqFields, expenseRows, onClose, onSaved }: {
     setError('')
     const supabase = createClient()
 
+    const incomplete = expenseLines.find(l => {
+      const hasName = Boolean(l.name.trim())
+      const amount = parseMoneyInput(l.max_amount)
+      return (hasName && amount <= 0) || (!hasName && amount > 0)
+    })
+    if (incomplete) {
+      setError('أكمل اسم الصرفية والحد قبل الحفظ (أو احذف الصف الفارغ)')
+      setSaving(false)
+      return
+    }
+
     // 1. Update task_definitions label & fee
     const { error: defErr } = await (supabase as any)
       .from('task_definitions')
       .update({
         label: label.trim(),
-        fee_amount: Number(fee) || 0,
+        fee_amount: parseMoneyInput(fee) || 0,
       })
       .eq('id', def.id)
 
     if (defErr) { setError(defErr.message); setSaving(false); return }
 
-    await (supabase as any).from('task_definition_expenses').delete().eq('task_definition_id', def.id)
-    const validLines = expenseLines.filter(l => l.name.trim() && Number(l.max_amount) > 0)
-    if (validLines.length) {
-      await (supabase as any).from('task_definition_expenses').insert(
-        validLines.map((l, idx) => ({
-          task_definition_id: def.id,
-          name: l.name.trim(),
-          max_amount: Number(l.max_amount),
+    const validLines = expenseLines
+      .map(l => ({ name: l.name.trim(), max_amount: parseMoneyInput(l.max_amount) }))
+      .filter(l => l.name && l.max_amount > 0)
+
+    const fields = ALL_FIELDS.filter(f => activeFields.has(f)).map((f, idx) => {
+      if (f === 'court_name') {
+        return {
+          field_key: 'court_name',
+          field_type: 'text',
+          field_label: 'اسم المحكمة',
+          is_required: true,
           sort_order: idx,
-        })),
-      )
-    }
-
-    // 2. Delete removed fields
-    const toDelete = reqFields.filter(f => !activeFields.has(f.field_type)).map(f => f.id)
-    if (toDelete.length > 0) {
-      await (supabase as any).from('task_required_fields').delete().in('id', toDelete)
-    }
-
-    // 3. Insert newly added fields
-    const existingTypes = new Set(reqFields.map(f => f.field_type))
-    const toInsert = ALL_FIELDS
-      .filter(f => activeFields.has(f) && !existingTypes.has(f))
-      .map((f, idx) => ({
-        task_definition_id: def.id,
+        }
+      }
+      if (f === 'date') {
+        return {
+          field_key: 'date',
+          field_type: 'date',
+          field_label: 'تاريخ المرافعة',
+          is_required: true,
+          sort_order: idx,
+        }
+      }
+      return {
         field_key: f,
         field_type: f,
-        sort_order: reqFields.length + idx,
-      }))
-
-    if (toInsert.length > 0) {
-      await (supabase as any).from('task_required_fields').insert(toInsert)
+        field_label: null,
+        is_required: true,
+        sort_order: idx,
+      }
+    })
+    const res = await fetch('/api/admin/branch-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'replace_definition_expenses',
+        definitionId: def.id,
+        expenses: validLines,
+        fields,
+      }),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setError(typeof json.error === 'string' ? json.error : 'فشل حفظ الصرفيات')
+      setSaving(false)
+      return
     }
 
     onSaved()

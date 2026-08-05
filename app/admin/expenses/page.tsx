@@ -192,6 +192,41 @@ export default function ExpensesPage() {
   const total = filtered.filter(e => (e.status ?? 'approved') === 'approved').reduce((s, e) => s + Number(e.amount ?? 0), 0)
 
   const pendingCount = expenses.filter(e => normalizeStatus(e.status) === 'pending_review').length
+  const [exporting, setExporting] = useState(false)
+
+  async function exportExcel() {
+    if (!filtered.length || exporting) return
+    setExporting(true)
+    try {
+      const XLSX = await import('xlsx')
+      const sheetRows = filtered.map(exp => {
+        const s = normalizeStatus(exp.status)
+        return {
+          'المدين': exp.debtors?.full_name ?? '—',
+          'الهاتف': exp.debtors?.phone ?? '—',
+          'رقم الوصل': exp.debtors?.receipt_number ?? '—',
+          'المحامي': exp.profiles?.full_name ?? '—',
+          'نوع الصرف': exp.expense_type ?? '—',
+          'الوصف': exp.description ?? '—',
+          'المبلغ': Number(exp.amount ?? 0),
+          'التاريخ': exp.expense_date ? fmtDate(exp.expense_date) : '—',
+          'الحالة': STATUS_BADGE[s]?.label ?? s,
+          'المهمة': exp.tasks?.task_type
+            ? (TASK_TYPE_LABELS[exp.tasks.task_type as TaskType] ?? exp.tasks.task_type)
+            : '—',
+          'نوع الدعوى': exp.debtors?.case_type === 'criminal' ? 'جزائي' : 'مدني',
+        }
+      })
+      const ws = XLSX.utils.json_to_sheet(sheetRows)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'الصرفيات')
+      const fromPart = dateFrom ? dateFrom : 'الكل'
+      const toPart = dateTo ? dateTo : 'الكل'
+      XLSX.writeFile(wb, `صرفيات-${fromPart}-${toPart}.xlsx`)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   function startEdit(exp: any) {
     setEditingExpense(exp)
@@ -372,41 +407,75 @@ export default function ExpensesPage() {
 
       {/* Filters */}
       <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm p-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <input type="search" placeholder={DEBTOR_SEARCH_PLACEHOLDER} value={search} onChange={e => setSearch(e.target.value)} className={SEL} />
-          <PremiumSelect
-            value={lockedCaseType ?? filterCaseType}
-            onChange={v => {
-              if (lockedCaseType) return
-              setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')
-            }}
-            options={
-              lockedCaseType
-                ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
-                : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
-            }
-            placeholder="كل أنواع الدعاوى"
-            headerTitle="تصفية حسب نوع الدعوى"
-            searchable={false}
-            disabled={Boolean(lockedCaseType)}
+        <div className="flex flex-wrap items-stretch gap-3">
+          <input
+            type="search"
+            placeholder={DEBTOR_SEARCH_PLACEHOLDER}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className={`${SEL} flex-1 min-w-[200px]`}
           />
-          <PremiumSelect
-            value={filterLawyer}
-            onChange={setFilterLawyer}
-            options={[
-              { value: '', label: 'كل المحامين' },
-              ...lawyers.map(l => ({ value: l.id, label: l.full_name })),
-            ]}
-            placeholder="كل المحامين"
-            headerTitle="تصفية حسب المحامي"
-            searchPlaceholder="بحث بالاسم..."
-            searchable
-          />
-          <DateRangePicker
-            dateFrom={dateFrom}
-            dateTo={dateTo}
-            onChange={({ dateFrom: f, dateTo: t }) => { setDateFrom(f); setDateTo(t) }}
-          />
+          <div className="min-w-[160px] flex-1 sm:flex-none sm:w-[180px]">
+            <PremiumSelect
+              value={lockedCaseType ?? filterCaseType}
+              onChange={v => {
+                if (lockedCaseType) return
+                setFilterCaseType(v === 'civil' || v === 'criminal' ? v : '')
+              }}
+              options={
+                lockedCaseType
+                  ? CASE_TYPE_FILTER_OPTIONS.filter(o => o.value === lockedCaseType).map(o => ({ value: o.value, label: o.label }))
+                  : CASE_TYPE_FILTER_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+              }
+              placeholder="كل أنواع الدعاوى"
+              headerTitle="تصفية حسب نوع الدعوى"
+              searchable={false}
+              disabled={Boolean(lockedCaseType)}
+            />
+          </div>
+          <div className="min-w-[160px] flex-1 sm:flex-none sm:w-[180px]">
+            <PremiumSelect
+              value={filterLawyer}
+              onChange={setFilterLawyer}
+              options={[
+                { value: '', label: 'كل المحامين' },
+                ...lawyers.map(l => ({ value: l.id, label: l.full_name })),
+              ]}
+              placeholder="كل المحامين"
+              headerTitle="تصفية حسب المحامي"
+              searchPlaceholder="بحث بالاسم..."
+              searchable
+            />
+          </div>
+          <div className="flex flex-wrap items-stretch gap-3 flex-1 min-w-[280px]">
+            <DateRangePicker
+              className="flex-1 min-w-[220px]"
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              onChange={({ dateFrom: f, dateTo: t }) => { setDateFrom(f); setDateTo(t) }}
+            />
+            <button
+              type="button"
+              onClick={() => void exportExcel()}
+              disabled={!filtered.length || exporting}
+              title={!filtered.length ? 'لا توجد بيانات للتصدير' : 'تصدير الصفوف الظاهرة إلى Excel'}
+              className="shrink-0 inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl border border-[rgba(118,118,118,0.18)] bg-white text-sm font-bold text-[#2C8780] hover:border-[#2C8780]/35 hover:bg-[#2C8780]/5 hover:shadow-sm transition-all disabled:opacity-50 disabled:pointer-events-none"
+            >
+              {exporting ? (
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <span className="w-7 h-7 rounded-lg bg-[#2C8780]/8 flex items-center justify-center shrink-0">
+                  <svg className="w-3.5 h-3.5 text-[#2C8780]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 4v12m0 0l-4-4m4 4l4-4" />
+                  </svg>
+                </span>
+              )}
+              <span className="whitespace-nowrap">{exporting ? 'جارٍ التصدير...' : 'تصدير إلى إكسل'}</span>
+            </button>
+          </div>
         </div>
       </div>
 

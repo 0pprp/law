@@ -30,8 +30,9 @@ import { RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '
 import { PremiumSelect } from '@/components/ui/premium-select'
 import MoneyInput from '@/components/ui/money-input'
 import BranchListSelect from '@/components/BranchListSelect'
-import { fetchBranchLists } from '@/lib/branch-lists'
+import { fetchBranchLists, fetchBranchCourtNames } from '@/lib/branch-lists'
 import type { BranchList } from '@/lib/branch-lists'
+import { resolveCourtName } from '@/lib/awaiting-assignment'
 import { canDelete } from '@/lib/permissions'
 import { appConfirm } from '@/lib/app-dialog'
 import {
@@ -63,6 +64,8 @@ export default function EditDebtorPage() {
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null)
   const [debtorBranchId, setDebtorBranchId] = useState<string | null>(null)
   const [branchLists, setBranchLists] = useState<BranchList[]>([])
+  const [courtOptions, setCourtOptions] = useState<string[]>([])
+  const [listCourtName, setListCourtName] = useState<string | null>(null)
   const [criminal, setCriminal] = useState<CriminalDetailsFormState>(EMPTY_CRIMINAL_DETAILS)
 
   const [form, setForm] = useState({
@@ -71,6 +74,7 @@ export default function EditDebtorPage() {
     receipt_number: '', receipt_amount: '', remaining_amount: '', lawyer_fees: '',
     penalty_amount: '', has_contract: false, receipt_signed_legal_costs: false, notes: '',
     branch_list_id: '',
+    court_name: '',
   })
 
   useEffect(() => {
@@ -110,6 +114,7 @@ export default function EditDebtorPage() {
           receipt_signed_legal_costs: Boolean(data.receipt_signed_legal_costs),
           notes: data.notes ?? '',
           branch_list_id: data.branch_list_id ?? '',
+          court_name: data.court_name ?? '',
         })
         if (criminalCase) {
           const owedText = (details?.amount_owed ?? '').trim()
@@ -133,7 +138,17 @@ export default function EditDebtorPage() {
           })
         } else if (data.branch_id) {
           const supabase = createClient()
-          fetchBranchLists(supabase, data.branch_id).then(setBranchLists)
+          void Promise.all([
+            fetchBranchLists(supabase, data.branch_id),
+            fetchBranchCourtNames(supabase, data.branch_id),
+            data.branch_list_id
+              ? supabase.from('branch_lists').select('court_name').eq('id', data.branch_list_id).maybeSingle()
+              : Promise.resolve({ data: null }),
+          ]).then(([lists, courts, listRes]) => {
+            setBranchLists(lists)
+            setCourtOptions(courts)
+            setListCourtName(resolveCourtName(listRes.data))
+          })
         }
       }
       setAttachments(files ?? [])
@@ -239,6 +254,7 @@ export default function EditDebtorPage() {
       receipt_signed_legal_costs: form.receipt_signed_legal_costs,
       notes: form.notes || null,
       branch_list_id: form.branch_list_id || null,
+      court_name: form.court_name.trim() || null,
     }
 
     const response = await fetch(`/api/admin/debtors/${id}`, {
@@ -408,10 +424,65 @@ export default function EditDebtorPage() {
               <FormField label="القائمة" className="md:col-span-2">
                 <BranchListSelect
                   value={form.branch_list_id}
-                  onChange={v => set('branch_list_id', v)}
+                  onChange={async v => {
+                    set('branch_list_id', v)
+                    if (!v || !debtorBranchId) {
+                      setListCourtName(null)
+                      return
+                    }
+                    const supabase = createClient()
+                    const { data: listRow } = await supabase
+                      .from('branch_lists')
+                      .select('court_name')
+                      .eq('id', v)
+                      .maybeSingle()
+                    setListCourtName(resolveCourtName(listRow))
+                  }}
                   lists={branchLists}
                   disabled={!debtorBranchId}
                 />
+              </FormField>
+              <FormField
+                label="المحكمة"
+                className="md:col-span-2"
+                hint={
+                  listCourtName
+                    ? `محكمة القائمة: ${listCourtName} — اترك الحقل فارغاً لاستخدامها، أو اكتب محكمة مختلفة للحالات الاستثنائية`
+                    : 'اختياري — للحالات الاستثنائية عندما تكون محكمة المدين مختلفة عن محكمة القائمة'
+                }
+              >
+                <div className="space-y-2">
+                  {courtOptions.length > 0 && (
+                    <PremiumSelect
+                      value={form.court_name && courtOptions.includes(form.court_name) ? form.court_name : ''}
+                      onChange={v => set('court_name', v)}
+                      options={[
+                        { value: '', label: listCourtName ? `من القائمة: ${listCourtName}` : 'من القائمة (افتراضي)' },
+                        ...courtOptions.map(c => ({ value: c, label: c })),
+                      ]}
+                      placeholder="اختيار سريع من محاكم الفرع"
+                      headerTitle="المحكمة"
+                      searchPlaceholder="بحث بالمحكمة..."
+                      searchable
+                    />
+                  )}
+                  <input
+                    type="text"
+                    value={form.court_name}
+                    onChange={e => set('court_name', e.target.value)}
+                    className={formInputClass}
+                    placeholder={listCourtName ? `أو اكتب محكمة أخرى (الافتراضي: ${listCourtName})` : 'مثال: محكمة بداءة الكرخ'}
+                  />
+                  {form.court_name.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => set('court_name', '')}
+                      className="text-xs font-bold text-[#2C8780] hover:underline"
+                    >
+                      مسح — الرجوع لمحكمة القائمة
+                    </button>
+                  )}
+                </div>
               </FormField>
             </div>
           </FormFlowStep>

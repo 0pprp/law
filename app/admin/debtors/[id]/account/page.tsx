@@ -90,7 +90,10 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
     ? (debtor as { branch_list: { name?: string | null; court_name?: string | null; execution_office?: string | null }[] }).branch_list[0]
     : (debtor as { branch_list?: { name?: string | null; court_name?: string | null; execution_office?: string | null } | null }).branch_list
   const listName = branchList?.name?.trim() || '—'
-  const courtName = branchList?.court_name?.trim() || '—'
+  const courtOverride = typeof (debtor as { court_name?: string | null }).court_name === 'string'
+    ? (debtor as { court_name?: string | null }).court_name?.trim()
+    : ''
+  const courtName = courtOverride || branchList?.court_name?.trim() || '—'
   const executionOffice = branchList?.execution_office?.trim() || '—'
   const courtExecutionLine = [
     courtName !== '—' ? `🏛 المحكمة: ${courtName}` : null,

@@ -87,7 +87,6 @@ export default function LawyerTasksPage() {
     }
 
     const supabase = createClient()
-    console.time('[lawyer-tasks] page-load')
     const page = await fetchLawyerAssignedTasksPaginated(supabase, uid, {
       offset,
       limit: LAWYER_TASK_PAGE_SIZE,
@@ -95,7 +94,6 @@ export default function LawyerTasksPage() {
       search: debouncedSearch.trim() || null,
       branchId: branchFilter || null,
     })
-    console.timeEnd('[lawyer-tasks] page-load')
 
     if (page.error) {
       setLoading(false)

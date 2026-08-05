@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { TASK_TYPE_LABELS, REQUIRED_FIELD_LABELS } from '@/lib/types'
 import type { TaskType, RequiredField } from '@/lib/types'
 import { useBranchId, useBranch } from '@/context/branch'
-import { formatMoney } from '@/lib/money-input'
+import { formatMoney, parseMoneyInput } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 import { filterSelectableBranches } from '@/lib/branch-constants'
 import { appConfirm } from '@/lib/app-dialog'
@@ -14,7 +14,7 @@ const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0
 
 const ALL_FIELDS: RequiredField[] = [
   'note', 'image', 'pdf', 'decision_number', 'case_number',
-  'date', 'gps', 'receipt', 'legal_result', 'court_decision', 'team',
+  'date', 'gps', 'receipt', 'legal_result', 'court_decision', 'team', 'court_name',
 ]
 
 interface TaskDef {
@@ -96,38 +96,67 @@ async function findIdsByLabel(
 }
 
 async function replaceFieldsAndExpenses(
-  supabase: ReturnType<typeof createClient>,
   defIds: string[],
   fields: RequiredField[],
   expenseLines: ExpenseLine[],
-) {
-  const validLines = expenseLines.filter(l => l.name.trim() && Number(l.max_amount) > 0)
-
-  for (const defId of defIds) {
-    await (supabase as any).from('task_definition_expenses').delete().eq('task_definition_id', defId)
-    await (supabase as any).from('task_required_fields').delete().eq('task_definition_id', defId)
-
-    if (fields.length) {
-      await (supabase as any).from('task_required_fields').insert(
-        fields.map((f, idx) => ({
-          task_definition_id: defId,
-          field_key: f,
-          field_type: f,
-          sort_order: idx,
-        })),
-      )
-    }
-    if (validLines.length) {
-      await (supabase as any).from('task_definition_expenses').insert(
-        validLines.map((l, idx) => ({
-          task_definition_id: defId,
-          name: l.name.trim(),
-          max_amount: Number(l.max_amount),
-          sort_order: idx,
-        })),
-      )
-    }
+): Promise<string | null> {
+  const incomplete = expenseLines.find(l => {
+    const hasName = Boolean(l.name.trim())
+    const amount = parseMoneyInput(l.max_amount)
+    return (hasName && amount <= 0) || (!hasName && amount > 0)
+  })
+  if (incomplete) {
+    return 'أكمل اسم الصرفية والحد قبل الحفظ (أو احذف الصف الفارغ)'
   }
+
+  const validLines = expenseLines
+    .map(l => ({ name: l.name.trim(), max_amount: parseMoneyInput(l.max_amount) }))
+    .filter(l => l.name && l.max_amount > 0)
+
+  const fieldRows = fields.map((f, idx) => {
+    // court_name قد لا يكون في CHECK constraint بعد — نحفظه كنص مع التسمية
+    if (f === 'court_name') {
+      return {
+        field_key: 'court_name',
+        field_type: 'text',
+        field_label: 'اسم المحكمة',
+        is_required: true,
+        sort_order: idx,
+      }
+    }
+    if (f === 'date') {
+      return {
+        field_key: 'date',
+        field_type: 'date',
+        field_label: 'تاريخ المرافعة',
+        is_required: true,
+        sort_order: idx,
+      }
+    }
+    return {
+      field_key: f,
+      field_type: f,
+      field_label: null,
+      is_required: true,
+      sort_order: idx,
+    }
+  })
+
+  const res = await fetch('/api/admin/branch-settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'replace_definition_expenses',
+      definitionIds: defIds,
+      expenses: validLines,
+      fields: fieldRows,
+    }),
+  })
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    return typeof json.error === 'string' ? json.error : 'فشل حفظ الصرفيات والحقول'
+  }
+  return null
 }
 
 function EditModal({
@@ -160,7 +189,12 @@ function EditModal({
     expenseRows.map(r => ({ name: r.name, max_amount: String(r.max_amount) })),
   )
   const [activeFields, setActiveFields] = useState<Set<RequiredField>>(
-    new Set(reqFields.map(f => f.field_type)),
+    new Set(
+      reqFields.map(f => {
+        if (f.field_key === 'court_name' || f.field_type === 'court_name') return 'court_name'
+        return f.field_type
+      }).filter((f): f is RequiredField => ALL_FIELDS.includes(f as RequiredField)),
+    ),
   )
   const [isHybrid, setIsHybrid] = useState(false)
   const [hybridLinks, setHybridLinks] = useState<HybridLinkDraft[]>([])
@@ -362,17 +396,28 @@ function EditModal({
 
     const { error: defErr } = await (supabase as any)
       .from('task_definitions')
-      .update({ label: newLabel, fee_amount: Number(fee) || 0 })
+      .update({ label: newLabel, fee_amount: parseMoneyInput(fee) || 0 })
       .in('id', ids)
 
     if (defErr) { setError(defErr.message); setSaving(false); return }
 
-    await replaceFieldsAndExpenses(
-      supabase,
-      ids,
+    // الصرفيات والحقول تُزامَن دائماً لكل الفروع بنفس اسم المهمة
+    // حتى لا تُحفظ على فرع بينما المحامي يعمل على فرع آخر
+    const idsForExtras = await findIdsByLabel(supabase, originalLabel, {
+      applyAll: true,
+      branchId,
+      allowedBranchIds,
+    })
+    const extrasErr = await replaceFieldsAndExpenses(
+      idsForExtras.length ? idsForExtras : ids,
       ALL_FIELDS.filter(f => activeFields.has(f)),
       expenseLines,
     )
+    if (extrasErr) {
+      setError(extrasErr)
+      setSaving(false)
+      return
+    }
 
     const hybridErr = await saveHybridForParents(ids)
     if (hybridErr) {
@@ -404,7 +449,7 @@ function EditModal({
             <p className="text-xs text-[#767676] mt-0.5">
               {applyAll
                 ? 'التعديل سيُطبَّق على كل الفروع التي تملك هذه المهمة'
-                : 'تعديل الأتعاب والحقول المطلوبة'}
+                : 'تعديل الأتعاب لهذا الفرع — الصرفيات تُحدَّث لكل الفروع بنفس اسم المهمة'}
             </p>
           </div>
           <button type="button" onClick={onClose} className="w-7 h-7 rounded-lg bg-[#F3F1F2] text-[#767676] flex items-center justify-center text-lg leading-none hover:bg-slate-200">×</button>
@@ -436,6 +481,7 @@ function EditModal({
                 ))}
               </div>
             )}
+            <p className="text-[10px] text-[#767676] mt-1.5">تظهر للمحامي في نافذة الصرفيات قبل إرسال الإنجاز</p>
           </div>
           <div>
             <label className="block text-xs font-bold text-[#231F20] mb-2">
@@ -649,9 +695,19 @@ function CreateModal({
 
     if (!branchIds.length) { setError('لا توجد فروع'); setSaving(false); return }
 
+    const incomplete = expenseLines.find(l => {
+      const hasName = Boolean(l.name.trim())
+      const amount = parseMoneyInput(l.max_amount)
+      return (hasName && amount <= 0) || (!hasName && amount > 0)
+    })
+    if (incomplete) {
+      setError('أكمل اسم الصرفية والحد قبل الحفظ (أو احذف الصف الفارغ)')
+      setSaving(false)
+      return
+    }
+
     const fields = ALL_FIELDS.filter(f => activeFields.has(f))
-    const validLines = expenseLines.filter(l => l.name.trim() && Number(l.max_amount) > 0)
-    let created = 0
+    let createdIds: string[] = []
     const failures: string[] = []
 
     for (const bid of branchIds) {
@@ -661,7 +717,7 @@ function CreateModal({
           branch_id: bid,
           task_type: 'custom',
           label: label.trim(),
-          fee_amount: Number(fee) || 0,
+          fee_amount: parseMoneyInput(fee) || 0,
           sort_order: 0,
           is_active: true,
           case_type: 'civil',
@@ -673,36 +729,23 @@ function CreateModal({
         failures.push(defErr?.message ?? 'فشل')
         continue
       }
-      created += 1
-
-      if (fields.length) {
-        await (supabase as any).from('task_required_fields').insert(
-          fields.map((f, idx) => ({
-            task_definition_id: def.id,
-            field_key: f,
-            field_type: f,
-            sort_order: idx,
-          })),
-        )
-      }
-      if (validLines.length) {
-        await (supabase as any).from('task_definition_expenses').insert(
-          validLines.map((l, idx) => ({
-            task_definition_id: def.id,
-            name: l.name.trim(),
-            max_amount: Number(l.max_amount),
-            sort_order: idx,
-          })),
-        )
-      }
+      createdIds.push(def.id as string)
     }
 
-    console.log('[task-management/civil] created', created, 'of', branchIds.length, 'failures', failures.length)
-    if (!created) {
+    console.log('[task-management/civil] created', createdIds.length, 'of', branchIds.length, 'failures', failures.length)
+    if (!createdIds.length) {
       setError(failures[0] ?? 'فشل إنشاء المهام')
       setSaving(false)
       return
     }
+
+    const extrasErr = await replaceFieldsAndExpenses(createdIds, fields, expenseLines)
+    if (extrasErr) {
+      setError(extrasErr)
+      setSaving(false)
+      return
+    }
+
     onSaved()
     onClose()
   }

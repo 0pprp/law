@@ -77,9 +77,10 @@ function isBatchSelectable(status: string): boolean {
 }
 
 function debtorCourtExecutionLine(task: any): string | null {
+  const override = typeof task.debtors?.court_name === 'string' ? task.debtors.court_name.trim() : ''
   const raw = task.debtors?.branch_list
   const branchList = Array.isArray(raw) ? raw[0] : raw
-  const court = branchList?.court_name?.trim()
+  const court = override || branchList?.court_name?.trim()
   const execution = branchList?.execution_office?.trim()
   const parts = [
     court ? `🏛 المحكمة: ${court}` : null,
@@ -206,22 +207,19 @@ export default function LawyerTasksGrid({
       }
     }
 
-    const { expenses: apiExpenses, taskDefinitionId: apiDefId } = await fetchLawyerTaskExpenses(task.id as string)
-    const { expenses: localExpenses, taskDefinitionId: localDefId } = await getTaskExpenses(supabase, {
-      taskDefinitionId: task.task_definition_id,
-      taskName: defLabel ?? taskRow.task_label,
-      branchId: task.branch_id,
-      taskType: defType ?? task.task_type,
-    })
-
-    const expenseDefs = mergeExpenseSources(expenseDefsFromEmbed, apiExpenses, localExpenses)
-
-    console.log('[تم الإنجاز — batch]', {
-      taskId: task.id,
-      taskName: defLabel ?? taskRow.task_label,
-      taskDefinitionId: apiDefId ?? localDefId ?? task.task_definition_id,
-      expensesFound: expenseDefs.length,
-    })
+    let expenseDefs = expenseDefsFromEmbed
+    if (expenseDefs.length === 0) {
+      const [{ expenses: apiExpenses }, { expenses: localExpenses }] = await Promise.all([
+        fetchLawyerTaskExpenses(task.id as string),
+        getTaskExpenses(supabase, {
+          taskDefinitionId: task.task_definition_id,
+          taskName: defLabel ?? taskRow.task_label,
+          branchId: task.branch_id,
+          taskType: defType ?? task.task_type,
+        }),
+      ])
+      expenseDefs = mergeExpenseSources(apiExpenses, localExpenses)
+    }
 
     const label = resolveTaskLabel(defType ?? task.task_type, defLabel)
     return { task: taskWithDebtor, expenseDefs, reqFields, fee, label }

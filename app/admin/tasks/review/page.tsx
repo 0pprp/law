@@ -8,6 +8,7 @@ import { fmtDate, fmtMoney } from '@/lib/utils'
 import { logActivity } from '@/lib/activity-log'
 import { extractGpsFromCompletion } from '@/lib/task-approval'
 import { rejectTaskViaApi, taskTransitionViaApi } from '@/lib/task-operations-api'
+import { isFileLawsuitTask, pickPleadingDefinition } from '@/lib/default-next-task'
 import TaskExpensesReviewCard from '@/components/TaskExpensesReviewCard'
 import { fetchPendingReviewTasksPaginated, fetchPendingReviewTaskById, fetchBranchLawyers, REVIEW_TASK_PAGE_SIZE } from '@/lib/task-assignment'
 import { fetchBranchDelegates } from '@/lib/branch-profiles'
@@ -86,7 +87,15 @@ function HybridTaskHint({
   )
 }
 
-interface TaskDef { id: string; label: string; sort_order: number; fee_amount?: number; branch_id?: string | null; case_type?: string | null }
+interface TaskDef {
+  id: string
+  label: string
+  sort_order: number
+  fee_amount?: number
+  branch_id?: string | null
+  case_type?: string | null
+  task_type?: string | null
+}
 
 function parseGps(val: string): { lat: number; lng: number } | null {
   if (!val) return null
@@ -187,6 +196,7 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [showPaymentModal, setShowPaymentModal] = useState(false)
+  const autoLawsuitRef = useRef(false)
 
   const taskLabel = task.task_definitions?.label ?? (TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type)
   const gpsKeys = (task._gpsKeys ?? []) as string[]
@@ -200,9 +210,13 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
     if (task.branch_id && d.branch_id && d.branch_id !== task.branch_id) return false
     return normalizeCaseType(d.case_type) === debtorCaseType
   })
+  const defaultPleading = isFileLawsuitTask(task)
+    ? pickPleadingDefinition(scopedDefs, { branchId: task.branch_id, caseType: debtorCaseType })
+    : null
 
-  async function proceedWithTransition(action: 'next' | 'close') {
-    if (action === 'next' && !nextTaskId) {
+  async function proceedWithTransition(action: 'next' | 'close', forcedNextId?: string) {
+    const chosenNext = forcedNextId || nextTaskId
+    if (action === 'next' && !chosenNext) {
       setError('يجب اختيار المهمة اللاحقة')
       return
     }
@@ -211,7 +225,7 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
     const result = await taskTransitionViaApi({
       taskId: task.id,
       action,
-      nextTaskDefId: action === 'next' ? nextTaskId : undefined,
+      nextTaskDefId: action === 'next' ? chosenNext : undefined,
       updateGps: showGpsUpdate ? updateGps : false,
     })
 
@@ -221,15 +235,16 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
       return
     }
 
-    const nextDef = taskDefs.find(d => d.id === nextTaskId)
+    const nextDef = taskDefs.find(d => d.id === chosenNext)
+    // سجل النشاط بالخلفية — لا يؤخر إغلاق النافذة
     if (action === 'close') {
-      await logActivity({
+      void logActivity({
         action: 'close_case', entity_type: 'debtor', entity_id: task.debtor_id,
         description: `إغلاق قضية ${debtor?.full_name ?? '—'} — آخر مهمة: ${taskLabel}`,
         case_type: normalizeCaseType(debtor?.case_type),
       }, supabase)
     } else {
-      await logActivity({
+      void logActivity({
         action: 'approve_task_transition', entity_type: 'task', entity_id: task.id,
         description: `اعتماد "${taskLabel}" للمدين ${debtor?.full_name ?? '—'} والانتقال إلى "${nextDef?.label}"`,
         case_type: normalizeCaseType(debtor?.case_type),
@@ -238,6 +253,16 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
 
     setSaving(false); onDone(); onClose()
   }
+
+  // إقامة دعوى معلّقة: أنشئ مرافعات تلقائياً عند فتح النافذة
+  useEffect(() => {
+    if (autoLawsuitRef.current) return
+    if (!defaultPleading) return
+    autoLawsuitRef.current = true
+    setNextTaskId(defaultPleading.id)
+    void proceedWithTransition('next', defaultPleading.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultPleading?.id])
 
   async function handlePaymentSuccess() {
     setShowPaymentModal(false)
@@ -248,6 +273,24 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
     })
     onDone()
     onClose()
+  }
+
+  if (defaultPleading && !error) {
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+        style={{ background: 'rgba(35,31,32,0.7)', backdropFilter: 'blur(3px)' }}>
+        <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6 text-center" dir="rtl">
+          <p className="text-sm font-bold text-[#231F20]">جارٍ إنشاء مهمة المرافعات تلقائياً...</p>
+          <p className="text-xs text-[#767676] mt-2">{debtor?.full_name ?? '—'} · {defaultPleading.label}</p>
+          {saving && (
+            <svg className="w-6 h-6 animate-spin text-[#2C8780] mx-auto mt-4" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -420,15 +463,34 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true, onOpen
       return
     }
 
-    await logActivity({
+    const autoNext = result.autoNext as { ok?: boolean; nextLabel?: string; error?: string } | null | undefined
+
+    if (autoNext?.ok) {
+      void logActivity({
+        action: 'approve_task_transition', entity_type: 'task', entity_id: task.id,
+        description: `اعتماد "${taskLabel}" للمدين ${task.debtors?.full_name ?? '—'} والانتقال تلقائياً إلى "${autoNext.nextLabel ?? 'مرافعات'}"`,
+        case_type: normalizeCaseType(task.debtors?.case_type),
+      }, supabase)
+      setSaving(false)
+      onDone()
+      onClose()
+      return
+    }
+
+    void logActivity({
       action: 'approve_task', entity_type: 'task', entity_id: task.id,
-      description: `اعتماد إنجاز مهمة: ${taskLabel} — بانتظار إنشاء المهمة التالية`,
+      description: autoNext?.error
+        ? `اعتماد إنجاز مهمة: ${taskLabel} — تعذر إنشاء المرافعات تلقائياً (${autoNext.error})`
+        : `اعتماد إنجاز مهمة: ${taskLabel} — بانتظار إنشاء المهمة التالية`,
       case_type: normalizeCaseType(task.debtors?.case_type),
     }, supabase)
 
     setApprovedTask({ ...task, task_status: 'approved' })
     setAwaitingNextTask(true)
     setSaving(false)
+    if (autoNext && !autoNext.ok && autoNext.error) {
+      setError(autoNext.error)
+    }
     setShowNextTask(true)
   }
 
@@ -442,7 +504,7 @@ function ReviewModal({ task, taskDefs, onClose, onDone, canReview = true, onOpen
       setSaving(false)
       return
     }
-    await logActivity({
+    void logActivity({
       action: 'reject_task', entity_type: 'task', entity_id: task.id,
       description: `رفض إنجاز مهمة: ${taskLabel} — السبب: ${rejectReason}`,
       case_type: normalizeCaseType(task.debtors?.case_type),
@@ -650,6 +712,7 @@ export default function TaskReviewPage() {
           caseType: effectiveCaseType,
           includeCompletionData: true,
           branchListId: (!viewAllBranches && listId) ? listId : null,
+          incompleteOnly: false,
         }),
         append ? Promise.resolve(lawyersRef.current) : fetchBranchLawyers(supabase, branchId, {
           caseType: effectiveCaseType,
@@ -765,7 +828,7 @@ export default function TaskReviewPage() {
   useEffect(() => {
     const loadDefs = async () => {
       const supabase = createClient()
-      const data = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, sort_order, fee_amount, branch_id, case_type')
+      const data = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, sort_order, fee_amount, branch_id, case_type, task_type')
       setTaskDefs(data as unknown as TaskDef[])
     }
     loadDefs()

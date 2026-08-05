@@ -10,7 +10,9 @@ import { isGeneralLawyerType } from '@/lib/lawyer-type'
 import { formatErrorMessage } from '@/lib/format-error'
 import { isFindAddressTaskType } from '@/lib/delegate'
 import { debtorSearchOrFilter } from '@/lib/debtor-search'
+import { isIncompleteCompletionRequest } from '@/lib/incomplete-completion'
 import { cacheInvalidatePrefix } from '@/lib/query-cache'
+import { resolveDebtorCourtName } from '@/lib/awaiting-assignment'
 
 const LAWYER_TASK_LIST_COLS =
   'id, task_type, task_definition_id, task_status, due_date, court_name, governorate, created_at, debtor_id, assignment_expires_at, admin_notes, assigned_to, reward_amount, branch_id'
@@ -99,6 +101,9 @@ export interface PendingReviewTask {
   admin_notes: string | null
   completion_data: Record<string, unknown> | null
   created_at: string
+  /** طلب إرسال بدون إنجاز */
+  incomplete_request?: boolean | null
+  incomplete_reason?: string | null
   /** مهمة مرتبطة أُنشئت تلقائياً من إنجاز هجين */
   hybrid_parent_task_id?: string | null
   /** عدد المهام المرتبطة التي تشير لهذه المهمة كأساسية */
@@ -137,11 +142,18 @@ export interface FetchPendingReviewOptions {
   caseType?: 'civil' | 'criminal' | null
   includeCompletionData?: boolean
   branchListId?: string | null
+  /** true = طابور «غير منجزة» فقط؛ غير ذلك = إنجازات عادية (بدون طلبات الإرسال بدون إنجاز) */
+  incompleteOnly?: boolean
+  /** عدّاد فقط — بدون hydrate المحامين/التعريفات وبدون عدّاد الهجين */
+  countOnly?: boolean
+  /** مع countOnly: يعيد عدّادي المراجعة وغير المنجزة بجلب واحد */
+  countsBoth?: boolean
 }
 
 export interface PaginatedPendingReviewResult {
   tasks: PendingReviewTask[]
   total: number
+  totalIncomplete?: number
 }
 
 const REVIEW_TASK_LIST_COLS =
@@ -222,6 +234,7 @@ async function hydratePendingReviewTasks(
   supabase: SupabaseClient,
   branchId: string | null,
   rawTasks: Record<string, unknown>[],
+  options?: { light?: boolean },
 ): Promise<PendingReviewTask[]> {
   if (!rawTasks.length) return []
 
@@ -242,6 +255,19 @@ async function hydratePendingReviewTasks(
     return taskBelongsToBranch(t as { branch_id?: string | null }, d, branchId)
   })
   if (!branchTasks.length) return []
+
+  if (options?.light) {
+    return branchTasks.map(t => {
+      const d = debtorMap.get(t.debtor_id as string)!
+      return {
+        ...t,
+        debtors: d,
+        lawyer: null,
+        task_definitions: null,
+        courts: null,
+      } as PendingReviewTask
+    })
+  }
 
   const lawyerIds = [...new Set(branchTasks.map(t => t.assigned_to).filter(Boolean))] as string[]
   const defIds = [...new Set(branchTasks.map(t => t.task_definition_id).filter(Boolean))] as string[]
@@ -280,7 +306,7 @@ async function hydratePendingReviewTasks(
 
 function filterHydratedReviewTasks(
   tasks: PendingReviewTask[],
-  options?: Pick<FetchPendingReviewOptions, 'caseType' | 'branchListId'>,
+  options?: Pick<FetchPendingReviewOptions, 'caseType' | 'branchListId' | 'incompleteOnly'>,
 ): PendingReviewTask[] {
   let out = tasks
   if (options?.caseType) {
@@ -288,6 +314,11 @@ function filterHydratedReviewTasks(
   }
   if (options?.branchListId) {
     out = out.filter(t => t.debtors?.branch_list_id === options.branchListId)
+  }
+  if (options?.incompleteOnly) {
+    out = out.filter(t => isIncompleteCompletionRequest(t))
+  } else {
+    out = out.filter(t => !isIncompleteCompletionRequest(t))
   }
   return out
 }
@@ -303,9 +334,18 @@ export async function fetchPendingReviewTasksPaginated(
 ): Promise<PaginatedPendingReviewResult> {
   const limit = options?.limit ?? REVIEW_TASK_PAGE_SIZE
   const offset = options?.offset ?? 0
-  const preferHybrid = true
-  const colsHybrid = options?.includeCompletionData ? REVIEW_TASK_DETAIL_COLS_HYBRID : REVIEW_TASK_LIST_COLS_HYBRID
-  const colsPlain = options?.includeCompletionData ? REVIEW_TASK_DETAIL_COLS : REVIEW_TASK_LIST_COLS
+  const preferHybrid = !options?.countOnly
+  const countOnly = options?.countOnly === true
+  // للفصل بين الطوابير: incomplete_request كافٍ؛ completion_data فقط عند الحاجة للعرض أو كـ fallback
+  const wantDetail = options?.includeCompletionData === true && !countOnly
+  const colsHybrid = wantDetail ? REVIEW_TASK_DETAIL_COLS_HYBRID : REVIEW_TASK_LIST_COLS_HYBRID
+  const colsPlain = wantDetail ? REVIEW_TASK_DETAIL_COLS : REVIEW_TASK_LIST_COLS
+
+  const colsHybridInc = `${colsHybrid}, incomplete_request, incomplete_reason`
+  const colsPlainInc = `${colsPlain}, incomplete_request, incomplete_reason`
+  // إن غابت أعمدة incomplete_* نحتاج completion_data للفلترة
+  const colsHybridFallback = wantDetail ? colsHybrid : `${colsHybrid}, completion_data`
+  const colsPlainFallback = wantDetail ? colsPlain : `${colsPlain}, completion_data`
 
   async function runSelect(cols: string) {
     let q = supabase
@@ -325,16 +365,27 @@ export async function fetchPendingReviewTasksPaginated(
   let error: { message?: string; code?: string } | null = null
 
   if (preferHybrid) {
-    const res = await runSelect(colsHybrid)
+    let res = await runSelect(colsHybridInc)
     rawTasks = res.data
     error = res.error
+    if (error && /incomplete_request|incomplete_reason/i.test(error.message ?? '')) {
+      res = await runSelect(colsHybridFallback)
+      rawTasks = res.data
+      error = res.error
+    }
     if (error && isMissingHybridParentColumn(error.message)) {
-      const fallback = await runSelect(colsPlain)
+      let fallback = await runSelect(colsPlainInc)
+      if (fallback.error && /incomplete_request|incomplete_reason/i.test(fallback.error.message ?? '')) {
+        fallback = await runSelect(colsPlainFallback)
+      }
       rawTasks = fallback.data
       error = fallback.error
     }
   } else {
-    const res = await runSelect(colsPlain)
+    let res = await runSelect(colsPlainInc)
+    if (res.error && /incomplete_request|incomplete_reason/i.test(res.error.message ?? '')) {
+      res = await runSelect(colsPlainFallback)
+    }
     rawTasks = res.data
     error = res.error
   }
@@ -348,9 +399,30 @@ export async function fetchPendingReviewTasksPaginated(
     supabase,
     branchId,
     (rawTasks ?? []) as unknown as Record<string, unknown>[],
+    { light: countOnly },
   )
-  const withHybrid = await attachHybridLinkedCounts(supabase, hydrated)
+  const withHybrid = countOnly
+    ? hydrated.map(t => ({ ...t, hybrid_linked_count: t.hybrid_linked_count ?? 0 }))
+    : await attachHybridLinkedCounts(supabase, hydrated)
+
+  if (countOnly && options?.countsBoth) {
+    const baseOpts = { caseType: options.caseType, branchListId: options.branchListId }
+    let base = withHybrid
+    if (baseOpts.caseType) {
+      base = base.filter(t => (t.debtors?.case_type ?? 'civil') === baseOpts.caseType)
+    }
+    if (baseOpts.branchListId) {
+      base = base.filter(t => t.debtors?.branch_list_id === baseOpts.branchListId)
+    }
+    const pending = base.filter(t => !isIncompleteCompletionRequest(t)).length
+    const incomplete = base.filter(t => isIncompleteCompletionRequest(t)).length
+    return { tasks: [], total: pending, totalIncomplete: incomplete }
+  }
+
   const filtered = filterHydratedReviewTasks(withHybrid, options)
+  if (countOnly) {
+    return { tasks: [], total: filtered.length }
+  }
   return {
     tasks: filtered.slice(offset, offset + limit),
     total: filtered.length,
@@ -415,14 +487,41 @@ export async function fetchPendingReviewCount(
   branchListId?: string | null,
   caseType?: 'civil' | 'criminal' | null,
 ): Promise<number> {
+  const { pending } = await fetchReviewQueueCounts(supabase, branchId, branchListId, caseType)
+  return pending
+}
+
+/** عدّاد طابور «غير منجزة» */
+export async function fetchIncompleteReviewCount(
+  supabase: SupabaseClient,
+  branchId: string | null,
+  branchListId?: string | null,
+  caseType?: 'civil' | 'criminal' | null,
+): Promise<number> {
+  const { incomplete } = await fetchReviewQueueCounts(supabase, branchId, branchListId, caseType)
+  return incomplete
+}
+
+/** عدّادان في جلب واحد — للشارات والإشعارات */
+export async function fetchReviewQueueCounts(
+  supabase: SupabaseClient,
+  branchId: string | null,
+  branchListId?: string | null,
+  caseType?: 'civil' | 'criminal' | null,
+): Promise<{ pending: number; incomplete: number }> {
   const page = await fetchPendingReviewTasksPaginated(supabase, branchId, {
     offset: 0,
-    limit: REVIEW_QUEUE_FETCH_CAP,
+    limit: 1,
     caseType: caseType ?? null,
     branchListId: branchListId ?? null,
     includeCompletionData: false,
+    countOnly: true,
+    countsBoth: true,
   })
-  return page.total
+  return {
+    pending: page.total,
+    incomplete: page.totalIncomplete ?? 0,
+  }
 }
 
 export interface UnassignedStageCount {
@@ -454,6 +553,9 @@ const CURRENT_TASK_EMBED = `
   phone,
   receipt_number,
   case_type,
+  court_name,
+  branch_list_id,
+  branch_list:branch_lists(name, court_name, execution_office),
   current_task_id,
   case_status,
   current_task:tasks!current_task_id(
@@ -471,7 +573,8 @@ const CURRENT_TASK_EMBED = `
   )
 `
 
-const CURRENT_TASK_EMBED_INNER = `
+/** بدون court_name على المدين — للعدّ أو إن العمود غير مطبّق بعد */
+const CURRENT_TASK_EMBED_INNER_BASE = `
   id,
   full_name,
   phone,
@@ -495,6 +598,47 @@ const CURRENT_TASK_EMBED_INNER = `
     task_definitions(id, label, task_type)
   )
 `
+
+const CURRENT_TASK_EMBED_INNER = `
+  id,
+  full_name,
+  phone,
+  receipt_number,
+  case_type,
+  court_name,
+  branch_list_id,
+  branch_list:branch_lists(name, court_name, execution_office),
+  current_task_id,
+  case_status,
+  current_task:tasks!current_task_id!inner(
+    id,
+    task_status,
+    created_at,
+    due_date,
+    assigned_at,
+    debtor_id,
+    task_definition_id,
+    task_type,
+    assigned_to,
+    branch_id,
+    task_definitions(id, label, task_type)
+  )
+`
+
+/** Cached: true = debtors.court_name usable, false = missing, null = unchecked */
+let debtorCourtNameColumnReady: boolean | null = null
+
+function isMissingDebtorCourtNameError(message: string | undefined | null): boolean {
+  if (!message) return false
+  const m = message.toLowerCase()
+  return m.includes('court_name') && (m.includes('debtors') || m.includes('column') || m.includes('schema cache'))
+}
+
+function formatSupabaseError(error: { message?: string; code?: string; details?: string; hint?: string } | null | undefined): string {
+  if (!error) return 'unknown error'
+  const parts = [error.message, error.code, error.details, error.hint].filter(Boolean)
+  return parts.join(' | ') || JSON.stringify(error)
+}
 
 export interface FetchCurrentBranchTasksOptions {
   assigned?: boolean
@@ -547,7 +691,7 @@ function debtorRowsToTaskRows(debtors: any[], branchId: string | null): CurrentB
       branch_id: task.branch_id,
       branchName: null,
       branchListName: bl?.name?.trim() ?? null,
-      courtName: bl?.court_name?.trim() ?? null,
+      courtName: resolveDebtorCourtName({ court_name: d.court_name, branch_list: d.branch_list }),
       executionOffice: bl?.execution_office?.trim() ?? null,
       caseType: d.case_type === 'criminal' ? 'criminal' : 'civil',
       lawyerId: taskLawyerId(task),
@@ -766,9 +910,10 @@ async function countCurrentTasksByAssignment(
   assigned: boolean,
   options?: Pick<FetchCurrentBranchTasksOptions, 'debtorIds' | 'taskDefinitionId' | 'taskDefinitionIds' | 'branchListId'>,
 ): Promise<number> {
+  // العدّ لا يحتاج court_name — تجنّب فشل الاستعلام إن العمود غير مطبّق بعد
   let q = supabase
     .from('debtors')
-    .select(`${CURRENT_TASK_EMBED_INNER}`, { count: 'exact', head: true })
+    .select(`${CURRENT_TASK_EMBED_INNER_BASE}`, { count: 'exact', head: true })
     .not('case_status', 'eq', 'closed')
     .not('current_task_id', 'is', null)
     .is('special_status_id', null)
@@ -779,7 +924,7 @@ async function countCurrentTasksByAssignment(
 
   const { count, error } = await q
   if (error) {
-    console.error('[countCurrentTasksByAssignment]', error.message ?? error)
+    console.error('[countCurrentTasksByAssignment]', formatSupabaseError(error))
     return 0
   }
   return count ?? 0
@@ -792,7 +937,7 @@ async function countOverdueTasks(
 ): Promise<number> {
   let q = supabase
     .from('debtors')
-    .select(`${CURRENT_TASK_EMBED_INNER}`, { count: 'exact', head: true })
+    .select(`${CURRENT_TASK_EMBED_INNER_BASE}`, { count: 'exact', head: true })
     .not('case_status', 'eq', 'closed')
     .not('current_task_id', 'is', null)
     .is('special_status_id', null)
@@ -803,7 +948,7 @@ async function countOverdueTasks(
 
   const { count, error } = await q
   if (error) {
-    console.error('[countOverdueTasks]', error.message ?? error)
+    console.error('[countOverdueTasks]', formatSupabaseError(error))
     return 0
   }
   return count ?? 0
@@ -865,9 +1010,12 @@ export async function fetchCurrentBranchTaskRowsPaginated(
     countOverdueTasks(supabase, branchId, options),
   ])
 
+  const useCourtCol = debtorCourtNameColumnReady !== false
+  const embed = useCourtCol ? CURRENT_TASK_EMBED_INNER : CURRENT_TASK_EMBED_INNER_BASE
+
   let q = supabase
     .from('debtors')
-    .select(CURRENT_TASK_EMBED_INNER, { count: 'exact' })
+    .select(embed as typeof CURRENT_TASK_EMBED_INNER, { count: 'exact' })
     .not('case_status', 'eq', 'closed')
     .not('current_task_id', 'is', null)
     .is('special_status_id', null)
@@ -878,9 +1026,33 @@ export async function fetchCurrentBranchTaskRowsPaginated(
 
   q = applyCurrentTaskListFilters(q, options)
 
-  const { data: debtors, count, error } = await q
+  const first = await q
+  let debtors = first.data as any[] | null
+  let count = first.count
+  let error = first.error
+
+  if (error && isMissingDebtorCourtNameError(error.message) && useCourtCol) {
+    debtorCourtNameColumnReady = false
+    let fallback = supabase
+      .from('debtors')
+      .select(CURRENT_TASK_EMBED_INNER_BASE as typeof CURRENT_TASK_EMBED_INNER, { count: 'exact' })
+      .not('case_status', 'eq', 'closed')
+      .not('current_task_id', 'is', null)
+      .is('special_status_id', null)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1)
+    if (branchId) fallback = fallback.eq('branch_id', branchId)
+    fallback = applyCurrentTaskListFilters(fallback, options)
+    const second = await fallback
+    debtors = second.data as any[] | null
+    count = second.count
+    error = second.error
+  } else if (!error && useCourtCol) {
+    debtorCourtNameColumnReady = true
+  }
+
   if (error) {
-    console.error('[fetchCurrentBranchTaskRowsPaginated]', error.message ?? error)
+    console.error('[fetchCurrentBranchTaskRowsPaginated]', formatSupabaseError(error))
     return { ...empty, unassignedTotal, assignedTotal, overdueTotal }
   }
 
@@ -1518,9 +1690,6 @@ export async function fetchLawyerAssignedTasksPaginated(
   options?: FetchLawyerTasksOptions,
 ): Promise<PaginatedLawyerTasksResult> {
   // لا تُنفَّذ كتابات auto-accept عند كل قراءة — الصيانة عبر scheduleBranchMaintenance فقط
-  const timingLabel = `[lawyer-tasks] fetch ${lawyerId.slice(0, 8)}`
-  console.time(timingLabel)
-
   try {
     let joined = await queryLawyerTasksPageJoined(supabase, lawyerId, options, true)
     if (joined.error && isMissingAssignmentRejectionColumn(joined.error)) {
@@ -1590,8 +1759,9 @@ export async function fetchLawyerAssignedTasksPaginated(
       total: flat.count ?? flat.data.length,
       error: null,
     }
-  } finally {
-    console.timeEnd(timingLabel)
+  } catch (e) {
+    console.error('[fetchLawyerAssignedTasksPaginated]', e)
+    return { tasks: [], total: 0, error: e }
   }
 }
 
@@ -1707,6 +1877,7 @@ export interface LawyerTaskRow {
     remaining_amount?: number | null
     phone?: string | null
     receipt_number?: string | null
+    court_name?: string | null
     branch_list_id?: string | null
     branch_list?: {
       name?: string | null
@@ -1857,6 +2028,10 @@ function buildUnassignPayload(reason: string | null) {
     due_date: null,
     completed_at: null,
     completion_data: null,
+    incomplete_request: false,
+    incomplete_reason: null,
+    lawyer_notes: null,
+    admin_notes: null,
     given_up_at: now,
     give_up_reason: trimmed,
   }
@@ -1955,6 +2130,18 @@ export async function unassignTasksToWaiting(
       'acceptance_method',
       'assignment_rejected_by',
       'completion_data',
+      'incomplete_request',
+      'incomplete_reason',
+    ]),
+    omitPayloadKeys(full, [
+      'accepted_at',
+      'acceptance_method',
+      'assignment_rejected_by',
+      'completion_data',
+      'incomplete_request',
+      'incomplete_reason',
+      'lawyer_notes',
+      'admin_notes',
       'given_up_at',
       'give_up_reason',
     ]),
@@ -1962,6 +2149,8 @@ export async function unassignTasksToWaiting(
       task_status: 'waiting_assignment',
       assigned_to: null,
       due_date: null,
+      completion_data: null,
+      completed_at: null,
     },
   ]
 

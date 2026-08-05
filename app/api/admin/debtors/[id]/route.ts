@@ -237,6 +237,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     receipt_signed_legal_costs: Boolean(body.receipt_signed_legal_costs),
     notes: String(body.notes ?? '').trim() || null,
     branch_list_id: branchListId,
+    court_name: String(body.court_name ?? '').trim() || null,
   }
 
   if (Number(debtor.total_payments ?? 0) === 0) {

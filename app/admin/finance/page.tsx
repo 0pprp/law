@@ -698,14 +698,14 @@ export default function FinancePage() {
                         {amt > 0 ? '+' : ''}{fmtMoney(amt)}
                       </p>
                       <p className="text-xs text-[#767676] mt-0.5">
-                        {walletTransactionLabel(tx.type as WalletTransactionType, wallet)}
+                        {walletTransactionLabel(tx.type as WalletTransactionType, wallet, amt)}
                         {tx.creator?.full_name ? ` · ${tx.creator.full_name}` : ''}
                         {' · '}
                         <span className={wallet === 'savings' ? 'text-sky-600' : 'text-[#2C8780]'}>
                           {wallet === 'savings' ? 'صرفيات' : 'أتعاب'}
                         </span>
                       </p>
-                      {tx.notes && <p className="text-xs text-[#767676] italic mt-0.5">{tx.notes}</p>}
+                      {tx.notes && <p className="text-xs text-[#767676] italic mt-0.5 whitespace-pre-line">{tx.notes}</p>}
                     </div>
                     <p className="text-xs text-[#767676] font-mono shrink-0" dir="ltr">{fmtDate(tx.created_at)}</p>
                   </div>

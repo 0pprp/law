@@ -5,6 +5,8 @@ export interface ExpenseTypePendingCount {
 
 export interface AdminNotificationCounts {
   pendingReview: number
+  /** طلبات «إرسال بدون إنجاز» بانتظار المراجعة */
+  pendingIncomplete: number
   pendingPayoutRequests: number
   pendingTaskFeeReceipts: number
   pendingExpenses: number
@@ -25,6 +27,7 @@ export function refreshAdminNotifications() {
 export function totalAdminNotifications(counts: AdminNotificationCounts): number {
   return (
     counts.pendingReview
+    + (counts.pendingIncomplete ?? 0)
     + counts.pendingPayoutRequests
     + counts.pendingTaskFeeReceipts
     + counts.pendingExpenses
@@ -37,6 +40,7 @@ export function pendingFinanceRequests(counts: AdminNotificationCounts): number 
 
 const EMPTY_COUNTS: AdminNotificationCounts = {
   pendingReview: 0,
+  pendingIncomplete: 0,
   pendingPayoutRequests: 0,
   pendingTaskFeeReceipts: 0,
   pendingExpenses: 0,

@@ -63,11 +63,7 @@ export function formatLocalDeadlineFromIso(iso: string): string {
   const d = new Date(iso)
   const ymd = localTodayYmd(d)
   const [y, m, day] = ymd.split('-').map(Number)
-  const months = [
-    'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
-  ]
   const hours = String(d.getHours()).padStart(2, '0')
   const minutes = String(d.getMinutes()).padStart(2, '0')
-  return `نهاية يوم ${day} ${months[m - 1]} ${y} (${hours}:${minutes})`
+  return `نهاية يوم ${day}/${m}/${y} (${hours}:${minutes})`
 }

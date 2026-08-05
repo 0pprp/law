@@ -1,4 +1,5 @@
 import { rejectTaskExpenses } from '@/lib/expense-wallet'
+import { extractHearingDateFromCompletion } from '@/lib/hearing-date-from-completion'
 import { extractGpsFromCompletion, finalizeTaskApproval, FEE_STATUS_AWAITING_NEXT_TASK } from '@/lib/task-approval'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -71,7 +72,7 @@ export async function applyTaskTransition(
   const { data: task, error: taskErr } = await supabase
     .from('tasks')
     .select(`
-      id, debtor_id, branch_id, task_type, task_definition_id, completion_data, task_status, fee_status,
+      id, debtor_id, branch_id, task_type, task_definition_id, completion_data, task_status, fee_status, assigned_to,
       task_definitions ( label, fee_amount )
     `)
     .eq('id', taskId)
@@ -86,8 +87,39 @@ export async function applyTaskTransition(
   }
 
   const awaitingFinalization = (task as any).fee_status === FEE_STATUS_AWAITING_NEXT_TASK
+  const completionData = (task.completion_data ?? {}) as Record<string, string>
+  const debtorId = task.debtor_id as string | null
 
-  let debtor: {
+  // قراءة متوازية: المدين + حقول GPS + تعريف المهمة التالية
+  const [debtorRes, gpsRes, nextDefRes] = await Promise.all([
+    debtorId
+      ? supabase
+          .from('debtors')
+          .select('id, full_name, branch_id, latitude, longitude, current_task_id, last_task_id, case_status, case_type')
+          .eq('id', debtorId)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null as { message?: string } | null }),
+    task.task_definition_id
+      ? supabase
+          .from('task_required_fields')
+          .select('field_key')
+          .eq('task_definition_id', task.task_definition_id)
+          .eq('field_type', 'gps')
+      : Promise.resolve({ data: [] as { field_key: string }[] }),
+    action === 'next' && nextTaskDefId
+      ? supabase
+          .from('task_definitions')
+          .select('id, label, fee_amount, task_type, case_type')
+          .eq('id', nextTaskDefId)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ])
+
+  if (debtorRes.error) {
+    return { ok: false, error: debtorRes.error.message }
+  }
+
+  const debtor = debtorRes.data as {
     id: string
     full_name: string
     branch_id: string | null
@@ -96,20 +128,8 @@ export async function applyTaskTransition(
     current_task_id: string | null
     last_task_id: string | null
     case_status: string | null
-  } | null = null
-
-  if (task.debtor_id) {
-    const { data: debtorRow, error: debtorErr } = await supabase
-      .from('debtors')
-      .select('id, full_name, branch_id, latitude, longitude, current_task_id, last_task_id, case_status')
-      .eq('id', task.debtor_id)
-      .maybeSingle()
-
-    if (debtorErr) {
-      return { ok: false, error: debtorErr.message }
-    }
-    debtor = debtorRow
-  }
+    case_type: string | null
+  } | null
 
   // منع التكرار: إن لم تعد هذه المهمة الحالية للمدين فقد نُفِّذ الإجراء اللاحق مسبقاً
   if (debtor) {
@@ -124,38 +144,34 @@ export async function applyTaskTransition(
   }
 
   const branchId = task.branch_id ?? debtor?.branch_id ?? null
-
-  const { data: gpsFields } = await supabase
-    .from('task_required_fields')
-    .select('field_key')
-    .eq('task_definition_id', task.task_definition_id)
-    .eq('field_type', 'gps')
-
-  const gpsKeys = (gpsFields ?? []).map(f => f.field_key)
-  const completionData = (task.completion_data ?? {}) as Record<string, string>
+  const gpsKeys = ((gpsRes.data ?? []) as { field_key: string }[]).map(f => f.field_key)
   const newGps = extractGpsFromCompletion(completionData, gpsKeys)
   const hasExistingGps = debtor?.latitude != null && debtor?.longitude != null
-  const debtorIdForGps = task.debtor_id as string | null
+  const shouldSaveGps = Boolean(newGps && debtorId && (!hasExistingGps || updateGps))
 
-  async function saveGpsIfNeeded(): Promise<{ ok: boolean; error?: string }> {
-    if (!newGps || !debtorIdForGps) return { ok: true }
-    if (hasExistingGps && !updateGps) return { ok: true }
-    const { error } = await supabase.from('debtors').update({
+  function gpsPatch(): Record<string, unknown> {
+    if (!shouldSaveGps || !newGps) return {}
+    return {
       latitude: newGps.lat,
       longitude: newGps.lng,
       location_captured_at: new Date().toISOString(),
-    }).eq('id', debtorIdForGps)
-    if (error) return { ok: false, error: error.message }
-    return { ok: true }
+    }
   }
 
   if (action === 'close') {
     const closedAt = new Date().toISOString()
+    const closeBase = {
+      case_status: 'closed',
+      closed_at: closedAt,
+      current_task_id: null,
+      last_task_id: task.id,
+      ...gpsPatch(),
+    }
     const closePayloads: Record<string, unknown>[] = [
-      { case_status: 'closed', closed_at: closedAt, current_task_id: null, last_task_id: task.id },
-      { case_status: 'closed', closed_at: closedAt, current_task_id: null },
-      { status: 'closed', closed_at: closedAt, current_task_id: null, last_task_id: task.id },
-      { status: 'closed', closed_at: closedAt, current_task_id: null },
+      closeBase,
+      { case_status: 'closed', closed_at: closedAt, current_task_id: null, ...gpsPatch() },
+      { status: 'closed', closed_at: closedAt, current_task_id: null, last_task_id: task.id, ...gpsPatch() },
+      { status: 'closed', closed_at: closedAt, current_task_id: null, ...gpsPatch() },
     ]
     let closeErr: { message?: string } | null = null
     for (const payload of closePayloads) {
@@ -167,11 +183,13 @@ export async function applyTaskTransition(
       return { ok: false, error: closeErr.message ?? 'خطأ في إغلاق القضية' }
     }
 
-    // الإغلاق مهمة ختامية: الاعتماد النهائي واحتساب الأتعاب هنا (مرة واحدة)
     if (awaitingFinalization) {
-      const finalizeResult = await finalizeTaskApproval(supabase, task.id, userId)
+      const finalizeResult = await finalizeTaskApproval(supabase, task.id, userId, {
+        task_status: (task as any).task_status,
+        fee_status: (task as any).fee_status,
+        assigned_to: (task as any).assigned_to ?? null,
+      })
       if (!finalizeResult.ok) {
-        // تراجع عن الإغلاق — تبقى المهمة بانتظار الإجراء اللاحق بلا آثار مالية
         await supabase.from('debtors').update({
           case_status: debtor?.case_status ?? 'active',
           closed_at: null,
@@ -182,11 +200,6 @@ export async function applyTaskTransition(
       }
     }
 
-    // GPS فقط بعد نجاح الإغلاق — لا يُحفظ جزئياً عند الفشل
-    const gpsResult = await saveGpsIfNeeded()
-    if (!gpsResult.ok) {
-      return { ok: false, error: gpsResult.error ?? 'فشل حفظ موقع GPS بعد الإغلاق' }
-    }
     return { ok: true }
   }
 
@@ -194,23 +207,15 @@ export async function applyTaskTransition(
     return { ok: false, error: 'يجب اختيار المهمة اللاحقة' }
   }
 
-  const gpsBeforeNext = await saveGpsIfNeeded()
-  if (!gpsBeforeNext.ok) {
-    return { ok: false, error: gpsBeforeNext.error ?? 'فشل حفظ موقع GPS' }
-  }
+  const nextDef = nextDefRes.data as {
+    id: string
+    label: string
+    fee_amount: number | null
+    task_type: string | null
+    case_type: string | null
+  } | null
 
-  const { data: nextDef } = await supabase
-    .from('task_definitions')
-    .select('id, label, fee_amount, task_type, case_type')
-    .eq('id', nextTaskDefId)
-    .maybeSingle()
-
-  const { data: debtorRow } = await supabase
-    .from('debtors')
-    .select('case_type')
-    .eq('id', task.debtor_id)
-    .maybeSingle()
-  const debtorCase = debtorRow?.case_type === 'criminal' ? 'criminal' : 'civil'
+  const debtorCase = debtor?.case_type === 'criminal' ? 'criminal' : 'civil'
   const nextCase = nextDef?.case_type === 'criminal' ? 'criminal' : 'civil'
   if (nextCase !== debtorCase) {
     return { ok: false, error: 'المهمة اللاحقة يجب أن تطابق نوع دعوى المدين' }
@@ -231,9 +236,20 @@ export async function applyTaskTransition(
     return { ok: false, error: insertErr?.message ?? 'فشل إنشاء المهمة اللاحقة' }
   }
 
+  const hearingDate =
+    (task as any).task_type === 'file_lawsuit'
+      ? extractHearingDateFromCompletion(completionData)
+      : null
+
   const { error: linkErr } = await supabase
     .from('debtors')
-    .update({ current_task_id: newTask.id, last_task_id: task.id, case_status: 'active' } as any)
+    .update({
+      current_task_id: newTask.id,
+      last_task_id: task.id,
+      case_status: 'active',
+      ...gpsPatch(),
+      ...(hearingDate ? { first_hearing_date: hearingDate } : {}),
+    } as any)
     .eq('id', task.debtor_id)
 
   if (linkErr) {
@@ -241,30 +257,14 @@ export async function applyTaskTransition(
     return { ok: false, error: linkErr.message }
   }
 
-  // تاريخ المرافعة يُلتقط من إنجاز «إقامة دعوى» ويُحفظ مرة واحدة فقط للمدين
-  if ((task as any).task_type === 'file_lawsuit' && task.debtor_id) {
-    const hearingDate = String(completionData.hearing_date ?? '').trim().slice(0, 10)
-    if (/^\d{4}-\d{2}-\d{2}$/.test(hearingDate)) {
-      const { data: currentDebtor } = await supabase
-        .from('debtors')
-        .select('first_hearing_date')
-        .eq('id', task.debtor_id)
-        .maybeSingle()
-
-      if (!currentDebtor?.first_hearing_date) {
-        await supabase
-          .from('debtors')
-          .update({ first_hearing_date: hearingDate } as any)
-          .eq('id', task.debtor_id)
-      }
-    }
-  }
-
   // الاعتماد النهائي واحتساب الأتعاب — فقط بعد نجاح إنشاء المهمة التالية وربطها
   if (awaitingFinalization) {
-    const finalizeResult = await finalizeTaskApproval(supabase, task.id, userId)
+    const finalizeResult = await finalizeTaskApproval(supabase, task.id, userId, {
+      task_status: (task as any).task_status,
+      fee_status: (task as any).fee_status,
+      assigned_to: (task as any).assigned_to ?? null,
+    })
     if (!finalizeResult.ok) {
-      // تراجع كامل: حذف المهمة الجديدة وإرجاع مؤشرات المدين — لا آثار مالية
       await supabase
         .from('debtors')
         .update({
