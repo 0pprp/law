@@ -1,0 +1,165 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
+import { apiForbiddenResponse, canEditDebtor } from '@/lib/permissions'
+import { canStaffWriteBranch } from '@/lib/staff-branch-access'
+import { logActivity } from '@/lib/activity-log'
+import { apiServerError, safeClientError } from '@/lib/safe-api-error'
+import { requireDebtorInScope } from '@/lib/section-guard'
+import { deleteFromR2, r2ObjectKey, uploadToR2 } from '@/lib/r2-storage'
+import {
+  logR2UploadError,
+  missingR2EnvironmentVariables,
+  r2UploadClientMessage,
+} from '@/lib/r2-upload-diagnostics'
+import {
+  normalizePetitionFields,
+  validatePetitionFields,
+  type DebtorPetitionFields,
+} from '@/lib/debtor-petition'
+import { generateDebtorPetitionPdf } from '@/lib/debtor-petition-pdf'
+
+type PetitionAction = 'pdf' | 'save'
+
+export async function POST(request: NextRequest) {
+  const auth = await requireStaffProfile()
+  if (auth.error) return auth.error
+  if (!canEditDebtor(auth.profile?.role)) return apiForbiddenResponse()
+
+  let body: {
+    action?: unknown
+    debtorId?: unknown
+    fields?: Partial<DebtorPetitionFields>
+    download?: unknown
+  }
+  try {
+    body = await request.json()
+  } catch {
+    return safeClientError('طلب غير صالح', 400)
+  }
+
+  const action = String(body.action ?? '').trim() as PetitionAction
+  if (action !== 'pdf' && action !== 'save') {
+    return safeClientError('إجراء غير مدعوم', 400)
+  }
+  const alsoDownload = body.download === true
+
+  const debtorId = String(body.debtorId ?? '').trim()
+  if (!debtorId) return safeClientError('معرّف المدين مطلوب', 400)
+
+  const fields = normalizePetitionFields(body.fields ?? {})
+  const validationError = validatePetitionFields(fields)
+  if (validationError) return safeClientError(validationError, 400)
+
+  const admin = createAdminClient()
+  const scope = sessionCaseScope(auth.profile)
+  const gate = await requireDebtorInScope(admin, scope, debtorId, 'id, branch_id, case_type')
+  if (!gate.ok) return gate.error
+
+  const debtor = gate.data as { id: string; branch_id: string | null; case_type?: string | null }
+  if (!canStaffWriteBranch(auth.profile, debtor.branch_id)) {
+    return safeClientError('صلاحية غير كافية', 403)
+  }
+
+  let pdfBuffer: Buffer
+  let fileName: string
+  try {
+    ;({ buffer: pdfBuffer, fileName } = await generateDebtorPetitionPdf(fields))
+  } catch (e) {
+    return apiServerError('debtor-petition:pdf', e, 'فشل توليد ملف العريضة')
+  }
+
+  if (action === 'pdf') {
+    return new NextResponse(new Uint8Array(pdfBuffer), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+        'Cache-Control': 'no-store',
+      },
+    })
+  }
+
+  // action === 'save'
+  const missingR2Env = missingR2EnvironmentVariables()
+  if (missingR2Env.length) {
+    return safeClientError(
+      `إعدادات تخزين R2 ناقصة في الخادم: ${missingR2Env.join(', ')}`,
+      500,
+    )
+  }
+
+  const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
+  const filePath = `${debtorId}/petitions/${safeName}`
+  const objectKey = r2ObjectKey('debtor-files', filePath)
+
+  try {
+    await uploadToR2(pdfBuffer, objectKey, 'application/pdf')
+  } catch (uploadErr) {
+    logR2UploadError('debtor-petition:save', uploadErr, {
+      debtorId,
+      objectKey,
+      fileName,
+      fileSize: pdfBuffer.length,
+      role: auth.profile?.role,
+    })
+    return safeClientError(r2UploadClientMessage(uploadErr), 500)
+  }
+
+  const displayName = fileName.slice(0, 200)
+
+  const { data: row, error: insertErr } = await admin
+    .from('debtor_attachments')
+    .insert({
+      debtor_id: debtorId,
+      file_name: displayName,
+      file_path: filePath,
+      file_size: pdfBuffer.length,
+      mime_type: 'application/pdf',
+      uploaded_by: auth.user!.id,
+    })
+    .select('id, file_name, file_path, file_size, mime_type, created_at')
+    .single()
+
+  if (insertErr) {
+    await deleteFromR2(objectKey).catch(() => null)
+    return apiServerError('debtor-petition:db', insertErr, 'فشل حفظ المرفق')
+  }
+
+  await logActivity({
+    action: 'create_debtor_petition',
+    entity_type: 'debtor',
+    entity_id: debtorId,
+    description: 'تم إنشاء عريضة الدعوى وحفظها في مرفقات المدين',
+    case_type: gate.caseType,
+    metadata: {
+      attachment_id: row.id,
+      file_path: filePath,
+      file_name: displayName,
+      created_by: auth.user!.id,
+      case_type: gate.caseType,
+      defendant_name: fields.defendantName,
+      downloaded: alsoDownload,
+    },
+  }, auth.supabase)
+
+  if (alsoDownload) {
+    return new NextResponse(new Uint8Array(pdfBuffer), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+        'Cache-Control': 'no-store',
+        'X-Attachment-Id': row.id,
+        'X-Attachment-Saved': '1',
+      },
+    })
+  }
+
+  return NextResponse.json({
+    ok: true,
+    attachment: row,
+    filePath,
+    fileName: displayName,
+  })
+}

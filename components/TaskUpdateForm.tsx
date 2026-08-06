@@ -28,10 +28,12 @@ import {
 } from '@/lib/hybrid-task-links'
 import { invalidateLawyerTasksCache } from '@/lib/task-assignment'
 import { buildIncompleteCompletionData, isIncompleteCompletionRequest } from '@/lib/incomplete-completion'
+import { appConfirm, appAlert } from '@/lib/app-dialog'
 
 interface Attachment {
   id: string
   file_name: string
+  file_path?: string
   signedUrl: string | null
 }
 
@@ -746,6 +748,8 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
   const [saved, setSaved] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [attachments, setAttachments] = useState(taskAttachments)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [showExpenseModal, setShowExpenseModal] = useState(false)
   const [showCompletion, setShowCompletion] = useState(false)
   const [showIncomplete, setShowIncomplete] = useState(false)
@@ -778,6 +782,11 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
   const isRejected = ['rejected', 'needs_info', 'needs_revision'].includes(task.task_status)
   const missingExpenses = expenseDefs.length > 0 && taskExpenses.length === 0
   const canAddExpensesAfterSubmit = isSubmitted && missingExpenses
+  const canManageAttachments = !isApproved && task.task_status !== 'closed'
+
+  useEffect(() => {
+    setAttachments(taskAttachments)
+  }, [taskAttachments])
 
   useEffect(() => {
     if (expenseDefsProp.length > 0) {
@@ -1151,6 +1160,46 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
     router.refresh()
   }
 
+  async function handleDeleteAttachment(att: Attachment) {
+    if (!att.file_path) {
+      await appAlert({ message: 'مسار الملف غير متاح للحذف', variant: 'error' })
+      return
+    }
+    const ok = await appConfirm({
+      title: 'حذف المرفق',
+      message: `هل تريد حذف الملف «${att.file_name}»؟`,
+      confirmLabel: 'حذف',
+      cancelLabel: 'إلغاء',
+      danger: true,
+    })
+    if (!ok) return
+
+    setDeletingId(att.id)
+    setUploadError('')
+    try {
+      const res = await fetch('/api/worker/delete-task-file', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileId: att.id,
+          filePath: att.file_path,
+          fileName: att.file_name,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setUploadError(typeof data.error === 'string' ? data.error : 'فشل حذف الملف')
+        return
+      }
+      setAttachments(prev => prev.filter(a => a.id !== att.id))
+      router.refresh()
+    } catch {
+      setUploadError('حدث خطأ أثناء حذف الملف')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
 
@@ -1199,27 +1248,41 @@ export default function TaskUpdateForm({ task, taskAttachments, expenseDefs: exp
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold text-slate-700 text-sm">مرفقات المهمة</h2>
-          <label className="cursor-pointer">
-            <input ref={fileInputRef} type="file" accept="image/*,.pdf,.doc,.docx"
-              onChange={handleFileChange} disabled={uploading} className="hidden" />
-            <span className={`inline-flex text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${
-              uploading ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'text-white cursor-pointer'
-            }`} style={uploading ? undefined : { background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-              {uploading ? 'جارٍ الرفع...' : '+ رفع ملف'}
-            </span>
-          </label>
+          {canManageAttachments && (
+            <label className="cursor-pointer">
+              <input ref={fileInputRef} type="file" accept="image/*,.pdf,.doc,.docx"
+                onChange={handleFileChange} disabled={uploading || Boolean(deletingId)} className="hidden" />
+              <span className={`inline-flex text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${
+                uploading ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'text-white cursor-pointer'
+              }`} style={uploading ? undefined : { background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
+                {uploading ? 'جارٍ الرفع...' : '+ رفع ملف'}
+              </span>
+            </label>
+          )}
         </div>
         {uploadError && <p className="text-red-600 text-xs mb-2">{uploadError}</p>}
-        {taskAttachments.length === 0 ? (
+        {attachments.length === 0 ? (
           <p className="text-slate-400 text-xs text-center py-3">لا توجد مرفقات بعد</p>
         ) : (
           <div className="space-y-2">
-            {taskAttachments.map(att => (
+            {attachments.map(att => (
               <div key={att.id} className="flex items-center justify-between gap-3 py-1.5 border-b border-slate-100 last:border-0">
                 <span className="text-sm text-slate-700 truncate flex-1 min-w-0">{att.file_name}</span>
-                {att.signedUrl
-                  ? <a href={att.signedUrl} target="_blank" rel="noreferrer" className="text-xs text-[#2C8780] font-bold shrink-0">فتح</a>
-                  : <span className="text-xs text-slate-400 shrink-0">غير متاح</span>}
+                <div className="flex items-center gap-2 shrink-0">
+                  {att.signedUrl
+                    ? <a href={att.signedUrl} target="_blank" rel="noreferrer" className="text-xs text-[#2C8780] font-bold">فتح</a>
+                    : <span className="text-xs text-slate-400">غير متاح</span>}
+                  {canManageAttachments && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteAttachment(att)}
+                      disabled={deletingId === att.id || uploading}
+                      className="text-xs font-bold text-red-600 hover:text-red-700 disabled:opacity-50"
+                    >
+                      {deletingId === att.id ? 'جارٍ الحذف...' : 'حذف'}
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>

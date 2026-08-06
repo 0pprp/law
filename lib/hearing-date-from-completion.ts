@@ -12,8 +12,9 @@ export function normalizeHearingYmd(value: unknown): string | null {
 
 /** هل هذا المفتاح يمثل تاريخ جلسة/مرافعة؟ */
 export function isHearingDateFieldKey(key: string): boolean {
-  if (key === 'hearing_date') return true
+  if (key === 'hearing_date' || key === 'date') return true
   if (HEARING_KEY_RE.test(key)) return true
+  if (/^field_\d+_date$/i.test(key)) return true
   return false
 }
 
@@ -48,4 +49,40 @@ export function extractHearingDateFromCompletion(
   if (preferred) return preferred.ymd
 
   return null
+}
+
+/** كل مفاتيح تاريخ المرافعة الموجودة في بيانات الإنجاز */
+export function listHearingDateFieldKeys(
+  data: Record<string, unknown> | null | undefined,
+): string[] {
+  if (!data || typeof data !== 'object') return []
+  return Object.keys(data).filter(key => {
+    if (!isHearingDateFieldKey(key)) return false
+    return data[key] != null && String(data[key]).trim() !== ''
+  })
+}
+
+/**
+ * يوحّد كل مفاتيح تاريخ المرافعة على قيمة واحدة (يمنع ظهور تاريخين مختلفين).
+ * يُبقي hearing_date دائماً كنسخة معيارية.
+ */
+export function syncHearingDateInCompletion(
+  data: Record<string, unknown>,
+  ymd: string,
+  extraKeys: string[] = [],
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...data }
+  const keys = new Set<string>(['hearing_date', 'date', ...extraKeys, ...listHearingDateFieldKeys(data)])
+  for (const key of keys) {
+    next[key] = ymd
+  }
+  return next
+}
+
+/** مفتاح واحد للعرض/التعديل — يفضّل hearing_date ثم date */
+export function pickCanonicalHearingFieldKey(keys: Iterable<string>): string {
+  const list = [...keys]
+  if (list.includes('hearing_date')) return 'hearing_date'
+  if (list.includes('date')) return 'date'
+  return list[0] ?? 'hearing_date'
 }

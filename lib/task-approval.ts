@@ -431,10 +431,12 @@ export async function finalizeTaskApproval(
   let feeStatus = preloaded?.fee_status
   let assignedTo = preloaded?.assigned_to ?? null
 
+  let taskType: string | null = null
+
   if (taskStatus == null || feeStatus === undefined) {
     const { data: task } = await supabase
       .from('tasks')
-      .select('id, task_status, fee_status, assigned_to')
+      .select('id, task_status, fee_status, assigned_to, task_type')
       .eq('id', taskId)
       .single()
 
@@ -444,6 +446,14 @@ export async function finalizeTaskApproval(
     taskStatus = task.task_status
     feeStatus = task.fee_status
     assignedTo = task.assigned_to
+    taskType = (task as { task_type?: string | null }).task_type ?? null
+  } else {
+    const { data: taskMeta } = await supabase
+      .from('tasks')
+      .select('task_type')
+      .eq('id', taskId)
+      .maybeSingle()
+    taskType = (taskMeta as { task_type?: string | null } | null)?.task_type ?? null
   }
 
   if (!APPROVED_STATUSES.has(taskStatus as string)) {
@@ -511,8 +521,34 @@ export async function finalizeTaskApproval(
     return { ok: false, feeAmount: 0, legalManagerBonus: 0, error: expenseResult.error ?? 'فشل خصم صرفيات المهمة' }
   }
 
+  // محفظة القرطاسية: خصم فايل + طابع عند الاعتماد النهائي لإقامة دعوى فقط
+  let reverseStationery: (() => Promise<unknown>) | null = null
+  if (taskType === 'file_lawsuit' && assignedTo) {
+    const {
+      deductStationeryOnLawsuitApproval,
+      reverseStationeryLawsuitDeduction,
+    } = await import('@/lib/lawyer-stationery-wallet')
+    const stationeryResult = await deductStationeryOnLawsuitApproval(supabase, {
+      lawyerId: assignedTo,
+      taskId,
+      reviewedBy: reviewerId,
+    })
+    if (!stationeryResult.ok) {
+      await reverseTaskExpenseDeductionOnFailure(supabase, taskId, reviewerId)
+      await revertClaim()
+      return {
+        ok: false,
+        feeAmount: 0,
+        legalManagerBonus: 0,
+        error: stationeryResult.error ?? 'فشل خصم محفظة القرطاسية',
+      }
+    }
+    reverseStationery = () => reverseStationeryLawsuitDeduction(supabase, taskId, reviewerId)
+  }
+
   const feeResult = await creditTaskFeeOnApproval(supabase, taskId, reviewerId)
   if (!feeResult.ok) {
+    if (reverseStationery) await reverseStationery()
     await reverseTaskExpenseDeductionOnFailure(supabase, taskId, reviewerId)
     await revertClaim()
     return { ok: false, feeAmount: 0, legalManagerBonus: 0, error: feeResult.error ?? 'فشل احتساب أتعاب المحامي' }

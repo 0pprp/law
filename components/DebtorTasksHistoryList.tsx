@@ -17,6 +17,8 @@ import {
   extractHearingDateFromCompletion,
   isHearingDateFieldKey,
   normalizeHearingYmd,
+  pickCanonicalHearingFieldKey,
+  syncHearingDateInCompletion,
 } from '@/lib/hearing-date-from-completion'
 
 const STATUS_BADGE: Partial<Record<TaskStatus, 'default' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'>> = {
@@ -188,11 +190,8 @@ function HearingDateEditor({
       return
     }
     const prev = (task.completion_data ?? {}) as Record<string, unknown>
-    const nextData = {
-      ...prev,
-      [fieldKey]: ymd,
-      hearing_date: ymd,
-    }
+    // وحّد date + hearing_date وأي مفتاح جلسة قديم حتى لا يظهر تاريخان
+    const nextData = syncHearingDateInCompletion(prev, ymd, [fieldKey])
     const { error: taskErr } = await supabase
       .from('tasks')
       .update({ completion_data: nextData } as any)
@@ -298,17 +297,25 @@ function CompletionFields({
   if (canEditHearing && extractedHearing && hearingFieldKeys.size === 0) {
     fallbackHearingKey =
       entries.find(([k]) => isHearingDateFieldKey(k))?.[0]
-      ?? entries.find(([k, v]) => normalizeHearingYmd(v) === extractedHearing)?.[0]
+      ?? entries.find(([, v]) => normalizeHearingYmd(v) === extractedHearing)?.[0]
       ?? 'hearing_date'
     hearingFieldKeys.add(fallbackHearingKey)
   }
+  // عرض صف واحد فقط لتاريخ المرافعة حتى لو وُجد date و hearing_date معاً
+  const canonicalHearingKey = hearingFieldKeys.size > 0
+    ? pickCanonicalHearingFieldKey(hearingFieldKeys)
+    : null
+  const visibleEntries = entries.filter(([key]) => {
+    if (!hearingFieldKeys.has(key)) return true
+    return key === canonicalHearingKey
+  })
   return (
     <div className="mt-3 pt-3 border-t border-[rgba(118,118,118,0.08)]">
       <p className="text-[10px] font-bold text-[#767676] mb-2">الحقول المُدخلة</p>
       <div className="space-y-2">
-        {canEditHearing && fallbackHearingKey === 'hearing_date' && !entries.some(([k]) => k === 'hearing_date') && extractedHearing && (
+        {canEditHearing && fallbackHearingKey === 'hearing_date' && !entries.some(([k]) => isHearingDateFieldKey(k)) && extractedHearing && (
           <div className="flex items-start gap-2 text-xs">
-            <span className="text-[#767676] shrink-0">تاريخ الجلسة:</span>
+            <span className="text-[#767676] shrink-0">تاريخ المرافعة:</span>
             <HearingDateEditor
               taskId={taskId}
               debtorId={debtorId}
@@ -318,14 +325,17 @@ function CompletionFields({
             />
           </div>
         )}
-        {entries.map(([key, val]) => {
+        {visibleEntries.map(([key, val]) => {
           const isGps = key === 'gps' || key.includes('gps')
           const gpsCoords = isGps ? parseGps(val) : null
           const label = resolveCompletionFieldLabel(key)
           const mediaAtt = isMediaCompletionField(key, val)
             ? findAttachmentForField(key, val, attachments)
             : null
-          const isHearing = hearingFieldKeys.has(key)
+          const isHearing = canonicalHearingKey === key
+          const hearingValue = isHearing
+            ? (extractedHearing ?? normalizeHearingYmd(val) ?? String(val).slice(0, 10))
+            : val
           return (
             <div key={key} className="flex items-start gap-2 text-xs">
               <span className="text-[#767676] shrink-0">{label}:</span>
@@ -334,7 +344,7 @@ function CompletionFields({
                   taskId={taskId}
                   debtorId={debtorId}
                   fieldKey={key}
-                  initialDate={normalizeHearingYmd(val) ?? String(val).slice(0, 10)}
+                  initialDate={hearingValue}
                   onSaved={onHearingSaved}
                 />
               ) : isGps && gpsCoords ? (
@@ -351,7 +361,7 @@ function CompletionFields({
                 <OpenFileButton fileId={mediaAtt.id} filePath={mediaAtt.file_path} label={String(val)} />
               ) : (
                 <span className="font-semibold text-[#231F20] break-all" dir={isHearing ? 'ltr' : undefined}>
-                  {String(val)}
+                  {String(isHearing ? hearingValue : val)}
                 </span>
               )}
             </div>
@@ -442,17 +452,10 @@ export default function DebtorTasksHistoryList({
                 <CompletionFields
                   data={
                     localHearingByTask[row.id]
-                      ? {
-                          ...row.completionData,
-                          hearing_date: localHearingByTask[row.id],
-                          ...(extractHearingDateFromCompletion(row.completionData)
-                            ? Object.fromEntries(
-                                Object.keys(row.completionData)
-                                  .filter(k => isHearingDateFieldKey(k) || resolveCompletionFieldLabel(k).includes('جلسة'))
-                                  .map(k => [k, localHearingByTask[row.id]]),
-                              )
-                            : {}),
-                        }
+                      ? syncHearingDateInCompletion(
+                          row.completionData as Record<string, unknown>,
+                          localHearingByTask[row.id],
+                        ) as Record<string, string>
                       : row.completionData
                   }
                   attachments={row.attachments}

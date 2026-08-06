@@ -24,6 +24,7 @@ import { canStaffReadBranch } from '@/lib/staff-branch-access'
 import { assertDebtorSection, resolveCaseScope } from '@/lib/case-scope'
 import type { UserRole } from '@/lib/types'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
+import DebtorPetitionButton from '@/components/DebtorPetitionButton'
 import { BackButton } from '@/components/ui/back-button'
 import {
   fetchCriminalDebtorDetails,
@@ -71,6 +72,42 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   ])
 
   if (!debtor) notFound()
+
+  let lawyerNameForPetition: string | null = null
+  const currentTaskId = (debtor as { current_task_id?: string | null }).current_task_id
+  if (currentTaskId) {
+    const { data: currentTask } = await db
+      .from('tasks')
+      .select('assigned_to')
+      .eq('id', currentTaskId)
+      .maybeSingle()
+    if (currentTask?.assigned_to) {
+      const { data: lawyer } = await admin
+        .from('profiles')
+        .select('full_name')
+        .eq('id', currentTask.assigned_to)
+        .maybeSingle()
+      lawyerNameForPetition = lawyer?.full_name?.trim() || null
+    }
+  }
+  if (!lawyerNameForPetition) {
+    const { data: latestAssigned } = await db
+      .from('tasks')
+      .select('assigned_to')
+      .eq('debtor_id', id)
+      .not('assigned_to', 'is', null)
+      .order('assigned_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (latestAssigned?.assigned_to) {
+      const { data: lawyer } = await admin
+        .from('profiles')
+        .select('full_name')
+        .eq('id', latestAssigned.assigned_to)
+        .maybeSingle()
+      lawyerNameForPetition = lawyer?.full_name?.trim() || null
+    }
+  }
 
   const isCriminal = debtor.case_type === 'criminal'
   const criminalDetails = isCriminal ? await fetchCriminalDebtorDetails(admin, id) : null
@@ -230,7 +267,7 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
       {!(files?.length) ? (
         <div className="py-8 text-center text-[#767676] text-sm">لا توجد مرفقات</div>
       ) : (
-        <DebtorAttachmentsList files={files ?? []} />
+        <DebtorAttachmentsList files={files ?? []} allowDelete={allowEdit} />
       )}
     </Card>
   )
@@ -282,7 +319,23 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
               </div>
             )}
             {allowEdit && (
-              <Link href={`/admin/debtors/${id}/edit`} className="text-xs text-white/70 border border-white/20 hover:border-white/40 px-3 py-1.5 rounded-lg transition-colors">تعديل البيانات</Link>
+              <>
+                <DebtorPetitionButton
+                  debtorId={id}
+                  defaults={{
+                    courtName: courtName !== '—' ? courtName : '',
+                    defendantName: debtor.full_name,
+                    defendantAddress: isCriminal
+                      ? (criminalDetails?.current_address ?? debtor.address ?? '')
+                      : (debtor.address ?? ''),
+                    amount: isCriminal
+                      ? Number(criminalDetails?.amount_owed ?? debtor.remaining_amount ?? debtor.receipt_amount ?? 0)
+                      : Number(debtor.remaining_amount ?? debtor.required_amount ?? 0),
+                    lawyerName: lawyerNameForPetition,
+                  }}
+                />
+                <Link href={`/admin/debtors/${id}/edit`} className="text-xs text-white/70 border border-white/20 hover:border-white/40 px-3 py-1.5 rounded-lg transition-colors">تعديل البيانات</Link>
+              </>
             )}
             {allowPayments && (
               <DebtorAccountPaymentButton

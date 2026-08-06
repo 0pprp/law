@@ -98,6 +98,51 @@ export async function fetchGeneralLawyers(
   return { profiles: (data ?? []) as BranchProfileRow[], error: error ?? null }
 }
 
+/**
+ * محامو فلتر القوائم (مراجعة الإنجازات وغيرها).
+ * عند branchId محدد: محامو الفرع + العامون (نفس منطق التكليف).
+ * عند branchId=null (كل الفروع): كل المحامين النشطين في النظام.
+ */
+export async function fetchFilterLawyers(
+  supabase: SupabaseClient,
+  branchId: string | null,
+  options?: { caseType?: 'civil' | 'criminal' | null },
+): Promise<{ lawyers: LawyerOption[]; error: unknown | null }> {
+  if (branchId) {
+    return fetchAssignmentLawyers(supabase, branchId, options)
+  }
+
+  const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal'
+    ? options.caseType
+    : null
+
+  let q = supabase
+    .from('profiles')
+    .select('id, full_name, role, branch_id, lawyer_type, case_type, is_active')
+    .eq('role', 'lawyer')
+    .eq('is_active', true)
+    .order('full_name')
+
+  if (caseType) q = q.eq('case_type', caseType)
+
+  const { data, error } = await q
+  if (error) return { lawyers: [], error }
+
+  const lawyers = ((data ?? []) as BranchProfileRow[])
+    .filter(p => isProfileActive(p))
+    .map(p => ({
+      id: p.id,
+      full_name: isGeneralLawyerType(p.lawyer_type)
+        ? `${p.full_name} (محامي عام)`
+        : p.full_name,
+      lawyer_type: p.lawyer_type ?? 'normal',
+      is_general: isGeneralLawyerType(p.lawyer_type),
+    }))
+
+  lawyers.sort((a, b) => a.full_name.localeCompare(b.full_name, 'ar'))
+  return { lawyers, error: null }
+}
+
 /** For task assignment: branch normal lawyers + all general lawyers.
  * When branchId is null (كل الفروع), only general lawyers — assignment across mixed branches needs a selected branch for normal lawyers.
  * options.caseType يفلتر المحامين حسب قسم المدين/النطاق.

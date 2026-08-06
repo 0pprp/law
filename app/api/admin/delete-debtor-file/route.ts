@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { logActivity } from '@/lib/activity-log'
-import { isAccountant, isViewer, apiForbiddenResponse } from '@/lib/permissions'
+import { canEditDebtor, apiForbiddenResponse } from '@/lib/permissions'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSessionProfile, sessionCaseScope } from '@/lib/api-auth'
 import { canStaffWriteBranch } from '@/lib/staff-branch-access'
@@ -13,10 +13,7 @@ import { relativeStoredPath } from '@/lib/stored-file-url'
 export async function DELETE(request: Request) {
   const auth = await getSessionProfile()
   if (!auth.user || !auth.profile) return safeClientError('غير مصرح', 401)
-  if (isAccountant(auth.profile.role) || isViewer(auth.profile.role)) return apiForbiddenResponse()
-  if (!['admin', 'employee'].includes(auth.profile.role)) {
-    return safeClientError('صلاحية غير كافية', 403)
-  }
+  if (!canEditDebtor(auth.profile.role)) return apiForbiddenResponse()
 
   const { fileId, filePath, fileName } = await request.json().catch(() => ({}))
   if (!fileId || !filePath) return safeClientError('fileId and filePath required', 400)

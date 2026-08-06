@@ -5,8 +5,10 @@ import {
   fetchLawyerTaskStatusCounts,
 } from '@/lib/task-assignment'
 import { fetchLawyerWalletBalances } from '@/lib/lawyer-wallet'
+import { fetchStationeryBalances } from '@/lib/lawyer-stationery-wallet'
 import { resolveTaskLabel } from '@/lib/task-display-label'
 import LawyerWalletSummary from '@/components/LawyerWalletSummary'
+import LawyerStationerySummary from '@/components/LawyerStationerySummary'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
@@ -66,10 +68,11 @@ export default async function LawyerDashboardPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const [{ data: profile }, lawyerTasksRes, walletBalances, counts] = await Promise.all([
+  const [{ data: profile }, lawyerTasksRes, walletBalances, stationery, counts] = await Promise.all([
     supabase.from('profiles').select('full_name, governorate, is_active, phone, lawyer_type, role').eq('id', user.id).single(),
     fetchLawyerAssignedTasks(supabase, user.id, { limit: 50 }),
     fetchLawyerWalletBalances(supabase, user.id, { viewerRole: 'lawyer' }),
+    fetchStationeryBalances(supabase, user.id),
     fetchLawyerTaskStatusCounts(supabase, user.id),
   ])
 
@@ -151,6 +154,10 @@ export default async function LawyerDashboardPage() {
       <LawyerWalletSummary
         feeBalance={walletBalances.fees}
         savingsBalance={walletBalances.savings}
+      />
+      <LawyerStationerySummary
+        filesBalance={stationery.files}
+        stampsBalance={stationery.stamps}
       />
 
       <div>

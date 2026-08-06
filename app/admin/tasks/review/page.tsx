@@ -688,7 +688,7 @@ export default function TaskReviewPage() {
 
     if (append) setLoadingMore(true)
     else {
-      const cacheKey = `tasks:review:v9:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`
+      const cacheKey = `tasks:review:v10:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`
       const cached = cacheGet<{ tasks: any[]; lawyers: any[]; delegates: any[]; total: number }>(cacheKey)
       if (cached && !append) {
         setTasks(cached.tasks)
@@ -752,7 +752,7 @@ export default function TaskReviewPage() {
 
       setTasks(prev => {
         const merged = append ? [...prev, ...nextTasks] : nextTasks
-        cacheSet(`tasks:review:v5:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`, {
+        cacheSet(`tasks:review:v10:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`, {
           tasks: merged,
           lawyers: l ?? [],
           delegates: nextDelegates,

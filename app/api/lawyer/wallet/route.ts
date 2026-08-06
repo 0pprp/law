@@ -5,6 +5,10 @@ import {
   fetchLawyerWalletBalances,
   fetchLawyerWalletTransactions,
 } from '@/lib/lawyer-wallet'
+import {
+  fetchStationeryBalances,
+  fetchStationeryTransactions,
+} from '@/lib/lawyer-stationery-wallet'
 
 /** Lawyer wallet — service role read so RLS cannot hide balances. */
 export async function GET() {
@@ -25,13 +29,21 @@ export async function GET() {
 
     const admin = createAdminClient()
     const viewerOpts = { viewerRole: profile?.role ?? 'lawyer' }
-    const [balances, feeTxs, savingsTxs] = await Promise.all([
+    const [balances, feeTxs, savingsTxs, stationery, stationeryTxs] = await Promise.all([
       fetchLawyerWalletBalances(admin, user.id, viewerOpts),
       fetchLawyerWalletTransactions(admin, user.id, 30, 'fees', viewerOpts),
       fetchLawyerWalletTransactions(admin, user.id, 30, 'savings'),
+      fetchStationeryBalances(admin, user.id),
+      fetchStationeryTransactions(admin, user.id, 30),
     ])
 
-    return NextResponse.json({ balances, feeTxs, savingsTxs })
+    return NextResponse.json({
+      balances,
+      feeTxs,
+      savingsTxs,
+      stationery,
+      stationeryTxs,
+    })
   } catch (e) {
     console.error('[lawyer/wallet]', e)
     return NextResponse.json({ error: 'حدث خطأ غير متوقع' }, { status: 500 })

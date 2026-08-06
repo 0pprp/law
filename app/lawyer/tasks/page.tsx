@@ -11,6 +11,7 @@ import {
   LAWYER_TASK_PAGE_SIZE,
 } from '@/lib/task-assignment'
 import LawyerWalletSummary from '@/components/LawyerWalletSummary'
+import LawyerStationerySummary from '@/components/LawyerStationerySummary'
 import LawyerTasksGrid from '@/components/LawyerTasksGrid'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { isGeneralLawyerType } from '@/lib/lawyer-type'
@@ -47,6 +48,7 @@ export default function LawyerTasksPage() {
   const [pageOffset, setPageOffset] = useState(0)
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({ all: 0 })
   const [walletBalances, setWalletBalances] = useState({ fees: 0, savings: 0 })
+  const [stationery, setStationery] = useState({ files: 0, stamps: 0 })
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [filter, setFilter] = useState<TaskStatus | 'all'>(
@@ -157,6 +159,12 @@ export default function LawyerTasksPage() {
       if (walletRes?.balances) {
         setWalletBalances(walletRes.balances)
       }
+      if (walletRes?.stationery) {
+        setStationery({
+          files: walletRes.stationery.files ?? 0,
+          stamps: walletRes.stationery.stamps ?? 0,
+        })
+      }
 
       await loadPage(false, 0, user.id)
     })
@@ -225,6 +233,13 @@ export default function LawyerTasksPage() {
             savingsBalance={walletBalances.savings}
             compact
           />
+          <div className="mt-2">
+            <LawyerStationerySummary
+              filesBalance={stationery.files}
+              stampsBalance={stationery.stamps}
+              compact
+            />
+          </div>
           <div className="mt-3 bg-white border border-slate-200 rounded-xl px-4 py-2.5 shadow-sm">
             <p className="text-[10px] text-slate-400 font-medium mb-0.5">المهام المعروضة</p>
             <p className="font-black text-slate-800 text-sm tabular-nums">{tasks.length} من {total}</p>

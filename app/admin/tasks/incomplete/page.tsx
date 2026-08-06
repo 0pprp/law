@@ -236,7 +236,7 @@ export default function IncompleteTasksPage() {
 
     if (append) setLoadingMore(true)
     else {
-      const cacheKey = `tasks:incomplete:v1:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`
+      const cacheKey = `tasks:incomplete:v2:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`
       const cached = cacheGet<{ tasks: any[]; lawyers: any[]; delegates: any[]; total: number }>(cacheKey)
       if (cached && !append) {
         setTasks(cached.tasks)
@@ -276,7 +276,7 @@ export default function IncompleteTasksPage() {
       setTasks(prev => {
         const merged = append ? [...prev, ...nextTasks] : nextTasks
         cacheSet(
-          `tasks:incomplete:v1:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`,
+          `tasks:incomplete:v2:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`,
           {
             tasks: merged,
             lawyers: l ?? [],

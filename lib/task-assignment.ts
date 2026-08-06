@@ -5,7 +5,7 @@ import {
   localTodayYmd,
   OVERDUE_TERMINAL_STATUSES,
 } from '@/lib/local-date'
-import { fetchAssignmentLawyers } from '@/lib/branch-profiles'
+import { fetchFilterLawyers } from '@/lib/branch-profiles'
 import { isGeneralLawyerType } from '@/lib/lawyer-type'
 import { formatErrorMessage } from '@/lib/format-error'
 import { isFindAddressTaskType } from '@/lib/delegate'
@@ -1285,7 +1285,7 @@ export async function fetchBranchLawyers(
   branchId: string | null,
   options?: { caseType?: 'civil' | 'criminal' | null },
 ): Promise<{ id: string; full_name: string }[]> {
-  const { lawyers, error } = await fetchAssignmentLawyers(supabase, branchId, options)
+  const { lawyers, error } = await fetchFilterLawyers(supabase, branchId, options)
   if (error) {
     console.error('[fetchBranchLawyers]', error)
     return []

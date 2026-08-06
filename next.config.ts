@@ -3,6 +3,13 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: 'standalone',
   poweredByHeader: false,
+  serverExternalPackages: ['pdfkit', 'arabic-persian-reshaper', 'bidi-js'],
+  outputFileTracingIncludes: {
+    '/api/admin/debtor-petition': [
+      './fonts/NotoNaskhArabic-Regular.ttf',
+      './public/fonts/NotoNaskhArabic-Regular.ttf',
+    ],
+  },
   headers: async () => [
     {
       source: '/:path*',

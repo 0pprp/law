@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import LawyerWalletSummary from '@/components/LawyerWalletSummary'
 import LawyerWalletHistory from '@/components/LawyerWalletHistory'
+import LawyerStationerySummary from '@/components/LawyerStationerySummary'
+import { stationeryTxLabel, type StationeryTxRow } from '@/lib/lawyer-stationery-wallet'
 
 function InfoRow({ label, value, dir }: { label: string; value?: string | null; dir?: 'ltr' }) {
   if (!value) return null
@@ -19,9 +21,17 @@ function InfoRow({ label, value, dir }: { label: string; value?: string | null; 
 export default function LawyerProfilePage() {
   const router = useRouter()
   const [profile, setProfile] = useState<any>(null)
-  const [stats, setStats] = useState({ completed: 0, total: 0, feeBalance: 0, savingsBalance: 0 })
+  const [stats, setStats] = useState({
+    completed: 0,
+    total: 0,
+    feeBalance: 0,
+    savingsBalance: 0,
+    filesBalance: 0,
+    stampsBalance: 0,
+  })
   const [feeTxs, setFeeTxs] = useState<any[]>([])
   const [savingsTxs, setSavingsTxs] = useState<any[]>([])
+  const [stationeryTxs, setStationeryTxs] = useState<StationeryTxRow[]>([])
   const [loading, setLoading] = useState(true)
   const [loggingOut, setLoggingOut] = useState(false)
 
@@ -41,6 +51,7 @@ export default function LawyerProfilePage() {
       if (walletRes?.balances) {
         setFeeTxs(walletRes.feeTxs ?? [])
         setSavingsTxs(walletRes.savingsTxs ?? [])
+        setStationeryTxs(walletRes.stationeryTxs ?? [])
       }
       const allTasks = tasks ?? []
       const completed = allTasks.filter(t => t.task_status === 'approved' || t.task_status === 'completed')
@@ -49,6 +60,8 @@ export default function LawyerProfilePage() {
         total: allTasks.length,
         feeBalance: walletRes?.balances?.fees ?? 0,
         savingsBalance: walletRes?.balances?.savings ?? 0,
+        filesBalance: walletRes?.stationery?.files ?? 0,
+        stampsBalance: walletRes?.stationery?.stamps ?? 0,
       })
       setLoading(false)
   }
@@ -109,6 +122,7 @@ export default function LawyerProfilePage() {
           <p className="text-xs text-slate-400 mt-0.5">من {stats.total} مهمة إجمالاً</p>
         </div>
         <LawyerWalletSummary feeBalance={stats.feeBalance} savingsBalance={stats.savingsBalance} compact />
+        <LawyerStationerySummary filesBalance={stats.filesBalance} stampsBalance={stats.stampsBalance} compact />
       </div>
 
       {/* Contact info */}
@@ -136,6 +150,27 @@ export default function LawyerProfilePage() {
       <LawyerWalletHistory title="سجل محفظة الأتعاب" transactions={feeTxs} />
       <LawyerWalletHistory title="سجل محفظة الصرفيات" transactions={savingsTxs} />
 
+      <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-emerald-50">
+          <p className="text-xs font-bold text-emerald-900">سجل محفظة القرطاسية</p>
+        </div>
+        <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+          {stationeryTxs.map(tx => (
+            <div key={tx.id} className="px-4 py-2.5 flex items-center justify-between gap-2 text-xs">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-800 truncate">{stationeryTxLabel(tx)}</p>
+                <p className="text-[10px] text-slate-400" dir="ltr">{new Date(tx.created_at).toLocaleString('ar-IQ')}</p>
+              </div>
+              <span className={`font-black tabular-nums shrink-0 ${tx.amount >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {tx.amount >= 0 ? '+' : ''}{tx.amount}
+              </span>
+            </div>
+          ))}
+          {!stationeryTxs.length && (
+            <p className="px-4 py-4 text-xs text-slate-400 text-center">لا حركات بعد</p>
+          )}
+        </div>
+      </div>
       {/* Logout */}
       <button onClick={handleLogout} disabled={loggingOut}
         className="w-full flex items-center justify-center gap-2 border-2 border-red-200 text-red-600 hover:bg-red-50 active:bg-red-100 disabled:opacity-60 font-bold py-3.5 rounded-2xl transition-colors text-sm">

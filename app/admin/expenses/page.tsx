@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
 import AdminDisbursementWalletPanel from '@/components/AdminDisbursementWalletPanel'
+import AdminStationeryWalletPanel from '@/components/AdminStationeryWalletPanel'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { parseMoneyInput, formatMoney } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
@@ -335,6 +336,7 @@ export default function ExpensesPage() {
       />
 
       <AdminDisbursementWalletPanel readOnly={!canWrite} />
+      <AdminStationeryWalletPanel readOnly={!canWrite} />
 
       {typeFilter && (
         <div className="flex items-center justify-between bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5">
