@@ -144,7 +144,8 @@ export default function DebtorPetitionButton({ debtorId, defaults }: Props) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-xs text-white/90 border border-white/25 hover:border-white/50 px-3 py-1.5 rounded-lg transition-colors font-semibold"
+        className="text-xs text-white px-3 py-1.5 rounded-lg transition-colors font-semibold hover:opacity-90"
+        style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}
       >
         إنشاء عريضة الدعوى
       </button>
