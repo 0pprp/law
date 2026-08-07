@@ -23,6 +23,7 @@ const INP =
 export interface DebtorPetitionDefaults {
   courtName?: string | null
   defendantName?: string | null
+  defendantOccupation?: string | null
   defendantAddress?: string | null
   amount?: number | null
   lawyerName?: string | null
@@ -51,6 +52,7 @@ export default function DebtorPetitionButton({ debtorId, defaults }: Props) {
       courtName: (defaults.courtName ?? '').trim(),
       plaintiffName: (defaults.plaintiffName ?? DEFAULT_PLAINTIFF_NAME).trim() || DEFAULT_PLAINTIFF_NAME,
       defendantName: (defaults.defendantName ?? '').trim(),
+      defendantOccupation: (defaults.defendantOccupation ?? '').trim(),
       defendantAddress: (defaults.defendantAddress ?? '').trim(),
       amountDigits,
       amountWords: amountDigits ? arabicAmountInWords(amountDigits) : '',

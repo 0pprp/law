@@ -3,7 +3,6 @@
 
 CREATE TABLE IF NOT EXISTS public.lawyer_stationery_wallets (
   lawyer_id uuid PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
-  files_balance integer NOT NULL DEFAULT 0 CHECK (files_balance >= 0),
   stamps_balance integer NOT NULL DEFAULT 0 CHECK (stamps_balance >= 0),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -11,7 +10,7 @@ CREATE TABLE IF NOT EXISTS public.lawyer_stationery_wallets (
 CREATE TABLE IF NOT EXISTS public.lawyer_stationery_transactions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   lawyer_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  item text NOT NULL CHECK (item IN ('files', 'stamps')),
+  item text NOT NULL CHECK (item = 'stamps'),
   amount integer NOT NULL,
   type text NOT NULL CHECK (type IN ('deposit', 'withdrawal', 'lawsuit_deduction')),
   notes text,

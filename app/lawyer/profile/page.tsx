@@ -26,7 +26,6 @@ export default function LawyerProfilePage() {
     total: 0,
     feeBalance: 0,
     savingsBalance: 0,
-    filesBalance: 0,
     stampsBalance: 0,
   })
   const [feeTxs, setFeeTxs] = useState<any[]>([])
@@ -60,7 +59,6 @@ export default function LawyerProfilePage() {
         total: allTasks.length,
         feeBalance: walletRes?.balances?.fees ?? 0,
         savingsBalance: walletRes?.balances?.savings ?? 0,
-        filesBalance: walletRes?.stationery?.files ?? 0,
         stampsBalance: walletRes?.stationery?.stamps ?? 0,
       })
       setLoading(false)
@@ -122,7 +120,7 @@ export default function LawyerProfilePage() {
           <p className="text-xs text-slate-400 mt-0.5">من {stats.total} مهمة إجمالاً</p>
         </div>
         <LawyerWalletSummary feeBalance={stats.feeBalance} savingsBalance={stats.savingsBalance} compact />
-        <LawyerStationerySummary filesBalance={stats.filesBalance} stampsBalance={stats.stampsBalance} compact />
+        <LawyerStationerySummary stampsBalance={stats.stampsBalance} compact />
       </div>
 
       {/* Contact info */}

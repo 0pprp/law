@@ -15,6 +15,7 @@ import {
 import {
   normalizePetitionFields,
   validatePetitionFields,
+  PETITION_ATTACHMENT_LABEL,
   type DebtorPetitionFields,
 } from '@/lib/debtor-petition'
 import { generateDebtorPetitionPdf } from '@/lib/debtor-petition-pdf'
@@ -130,7 +131,7 @@ export async function POST(request: NextRequest) {
     action: 'create_debtor_petition',
     entity_type: 'debtor',
     entity_id: debtorId,
-    description: 'تم إنشاء عريضة الدعوى وحفظها في مرفقات المدين',
+    description: `تم إنشاء ${PETITION_ATTACHMENT_LABEL} وحفظها في مرفقات المدين`,
     case_type: gate.caseType,
     metadata: {
       attachment_id: row.id,

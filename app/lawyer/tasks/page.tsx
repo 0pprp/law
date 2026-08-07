@@ -48,7 +48,7 @@ export default function LawyerTasksPage() {
   const [pageOffset, setPageOffset] = useState(0)
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({ all: 0 })
   const [walletBalances, setWalletBalances] = useState({ fees: 0, savings: 0 })
-  const [stationery, setStationery] = useState({ files: 0, stamps: 0 })
+  const [stationery, setStationery] = useState({ stamps: 0 })
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [filter, setFilter] = useState<TaskStatus | 'all'>(
@@ -161,7 +161,6 @@ export default function LawyerTasksPage() {
       }
       if (walletRes?.stationery) {
         setStationery({
-          files: walletRes.stationery.files ?? 0,
           stamps: walletRes.stationery.stamps ?? 0,
         })
       }
@@ -235,7 +234,6 @@ export default function LawyerTasksPage() {
           />
           <div className="mt-2">
             <LawyerStationerySummary
-              filesBalance={stationery.files}
               stampsBalance={stationery.stamps}
               compact
             />

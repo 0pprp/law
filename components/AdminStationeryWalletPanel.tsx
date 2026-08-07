@@ -11,7 +11,6 @@ import { CASE_TYPE_FILTER_OPTIONS, normalizeCaseType } from '@/lib/case-type'
 import {
   STATIONERY_WALLET_LABEL,
   STATIONERY_ITEM_LABELS,
-  type StationeryItem,
   type StationeryBalances,
   type StationeryTxRow,
   fetchStationeryBalancesMap,
@@ -39,7 +38,6 @@ export default function AdminStationeryWalletPanel({ readOnly = false }: { readO
   const [lawyers, setLawyers] = useState<Lawyer[]>([])
   const [balanceMap, setBalanceMap] = useState<Map<string, StationeryBalances>>(new Map())
   const [selectedId, setSelectedId] = useState('')
-  const [item, setItem] = useState<StationeryItem>('files')
   const [depositQty, setDepositQty] = useState('')
   const [depositNotes, setDepositNotes] = useState('')
   const [withdrawQty, setWithdrawQty] = useState('')
@@ -75,7 +73,7 @@ export default function AdminStationeryWalletPanel({ readOnly = false }: { readO
   }, [selectedId, saving])
 
   const selected = lawyers.find(l => l.id === selectedId)
-  const balance = balanceMap.get(selectedId) ?? { files: 0, stamps: 0 }
+  const balance = balanceMap.get(selectedId) ?? { stamps: 0 }
   const selectedCaseType = normalizeCaseType(selected?.case_type)
 
   async function handleDeposit() {
@@ -89,9 +87,8 @@ export default function AdminStationeryWalletPanel({ readOnly = false }: { readO
     if (!user) { setSaving(false); return }
     const result = await depositStationery(supabase, {
       lawyerId: selectedId,
-      item,
       amount: qty,
-      notes: depositNotes.trim() || `إيداع ${STATIONERY_ITEM_LABELS[item]} — محفظة القرطاسية`,
+      notes: depositNotes.trim() || `إيداع ${STATIONERY_ITEM_LABELS.stamps} — محفظة القرطاسية`,
       createdBy: user.id,
       referenceId: crypto.randomUUID(),
     })
@@ -100,7 +97,7 @@ export default function AdminStationeryWalletPanel({ readOnly = false }: { readO
       action: 'lawyer_stationery_deposit',
       entity_type: 'lawyer',
       entity_id: selectedId,
-      description: `إيداع ${qty} ${STATIONERY_ITEM_LABELS[item]} — ${selected?.full_name ?? ''}`,
+      description: `إيداع ${qty} ${STATIONERY_ITEM_LABELS.stamps} — ${selected?.full_name ?? ''}`,
       case_type: selectedCaseType,
     }, supabase)
     setDepositQty(''); setDepositNotes('')
@@ -118,9 +115,8 @@ export default function AdminStationeryWalletPanel({ readOnly = false }: { readO
     if (!user) { setSaving(false); return }
     const result = await withdrawStationery(supabase, {
       lawyerId: selectedId,
-      item,
       amount: qty,
-      notes: withdrawNotes.trim() || `سحب ${STATIONERY_ITEM_LABELS[item]} — محفظة القرطاسية`,
+      notes: withdrawNotes.trim() || `سحب ${STATIONERY_ITEM_LABELS.stamps} — محفظة القرطاسية`,
       createdBy: user.id,
       referenceId: crypto.randomUUID(),
     })
@@ -129,7 +125,7 @@ export default function AdminStationeryWalletPanel({ readOnly = false }: { readO
       action: 'lawyer_stationery_withdraw',
       entity_type: 'lawyer',
       entity_id: selectedId,
-      description: `سحب ${qty} ${STATIONERY_ITEM_LABELS[item]} — ${selected?.full_name ?? ''}`,
+      description: `سحب ${qty} ${STATIONERY_ITEM_LABELS.stamps} — ${selected?.full_name ?? ''}`,
       case_type: selectedCaseType,
     }, supabase)
     setWithdrawQty(''); setWithdrawNotes('')
@@ -141,7 +137,7 @@ export default function AdminStationeryWalletPanel({ readOnly = false }: { readO
       <div>
         <h2 className="text-sm font-black text-emerald-900">{STATIONERY_WALLET_LABEL}</h2>
         <p className="text-xs text-[#767676] mt-0.5">
-          إيداع وسحب الفايلات والطوابع — يُخصم تلقائياً عند الاعتماد النهائي لإقامة دعوى
+          إيداع وسحب الطوابع — يُخصم طابع واحد تلقائياً عند الاعتماد النهائي لإقامة دعوى
         </p>
       </div>
 
@@ -165,12 +161,12 @@ export default function AdminStationeryWalletPanel({ readOnly = false }: { readO
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
         {lawyers.map(l => {
-          const b = balanceMap.get(l.id) ?? { files: 0, stamps: 0 }
+          const b = balanceMap.get(l.id) ?? { stamps: 0 }
           return (
             <button key={l.id} type="button" onClick={() => setSelectedId(l.id)}
               className={`text-right rounded-xl p-3 border transition-all ${selectedId === l.id ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200' : 'border-slate-200 hover:border-emerald-300'}`}>
               <p className="text-xs font-bold text-[#231F20] truncate">{l.full_name}</p>
-              <p className="text-[10px] text-emerald-700 mt-1">فايلات: {b.files} · طوابع: {b.stamps}</p>
+              <p className="text-[10px] text-emerald-700 mt-1">طوابع: {b.stamps}</p>
             </button>
           )
         })}
@@ -182,43 +178,29 @@ export default function AdminStationeryWalletPanel({ readOnly = false }: { readO
       {selectedId && (
         <div className="space-y-3 border-t border-emerald-100 pt-4">
           <p className="text-sm font-bold text-[#231F20]">
-            {selected?.full_name} — فايلات: <span className="text-emerald-700 tabular-nums">{balance.files}</span>
-            {' · '}
-            طوابع: <span className="text-emerald-700 tabular-nums">{balance.stamps}</span>
+            {selected?.full_name} — الطوابع:{' '}
+            <span className="text-emerald-700 tabular-nums">{balance.stamps}</span>
           </p>
 
           {!readOnly && (
-            <>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setItem('files')}
-                  className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-colors ${item === 'files' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-800 border-emerald-200'}`}>
-                  {STATIONERY_ITEM_LABELS.files}
-                </button>
-                <button type="button" onClick={() => setItem('stamps')}
-                  className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-colors ${item === 'stamps' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-800 border-emerald-200'}`}>
-                  {STATIONERY_ITEM_LABELS.stamps}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <input value={depositQty} onChange={e => setDepositQty(e.target.value)} className={INP} placeholder="كمية إيداع الطوابع" inputMode="numeric" />
+                <input value={depositNotes} onChange={e => setDepositNotes(e.target.value)} className={INP} placeholder="ملاحظة" />
+                <button type="button" onClick={() => void handleDeposit()} disabled={saving}
+                  className="w-full py-2 rounded-xl text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50">
+                  إيداع الطوابع
                 </button>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <input value={depositQty} onChange={e => setDepositQty(e.target.value)} className={INP} placeholder={`كمية إيداع ${STATIONERY_ITEM_LABELS[item]}`} inputMode="numeric" />
-                  <input value={depositNotes} onChange={e => setDepositNotes(e.target.value)} className={INP} placeholder="ملاحظة" />
-                  <button type="button" onClick={() => void handleDeposit()} disabled={saving}
-                    className="w-full py-2 rounded-xl text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50">
-                    إيداع {STATIONERY_ITEM_LABELS[item]}
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <input value={withdrawQty} onChange={e => setWithdrawQty(e.target.value)} className={INP} placeholder={`كمية سحب ${STATIONERY_ITEM_LABELS[item]}`} inputMode="numeric" />
-                  <input value={withdrawNotes} onChange={e => setWithdrawNotes(e.target.value)} className={INP} placeholder="ملاحظة" />
-                  <button type="button" onClick={() => void handleWithdraw()} disabled={saving}
-                    className="w-full py-2 rounded-xl text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50">
-                    سحب {STATIONERY_ITEM_LABELS[item]}
-                  </button>
-                </div>
+              <div className="space-y-2">
+                <input value={withdrawQty} onChange={e => setWithdrawQty(e.target.value)} className={INP} placeholder="كمية سحب الطوابع" inputMode="numeric" />
+                <input value={withdrawNotes} onChange={e => setWithdrawNotes(e.target.value)} className={INP} placeholder="ملاحظة" />
+                <button type="button" onClick={() => void handleWithdraw()} disabled={saving}
+                  className="w-full py-2 rounded-xl text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50">
+                  سحب الطوابع
+                </button>
               </div>
-            </>
+            </div>
           )}
 
           {error && <p className="text-xs text-red-600">{error}</p>}

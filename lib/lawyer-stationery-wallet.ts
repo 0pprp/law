@@ -1,23 +1,20 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-export type StationeryItem = 'files' | 'stamps'
+export type StationeryItem = 'stamps'
 export type StationeryTxType = 'deposit' | 'withdrawal' | 'lawsuit_deduction'
 
 export const STATIONERY_ITEM_LABELS: Record<StationeryItem, string> = {
-  files: 'الفايلات',
   stamps: 'الطوابع',
 }
 
 export const STATIONERY_WALLET_LABEL = 'محفظة القرطاسية'
 
-/** خصم تلقائي عند الاعتماد النهائي لإقامة دعوى */
+/** خصم تلقائي عند الاعتماد النهائي لإقامة دعوى — طابع واحد */
 export const LAWSUIT_STATIONERY_DEDUCT = {
-  files: 1,
   stamps: 1,
 } as const
 
 export interface StationeryBalances {
-  files: number
   stamps: number
 }
 
@@ -34,7 +31,7 @@ export interface StationeryTxRow {
 }
 
 function emptyBalances(): StationeryBalances {
-  return { files: 0, stamps: 0 }
+  return { stamps: 0 }
 }
 
 export async function ensureStationeryWallet(
@@ -56,12 +53,12 @@ export async function fetchStationeryBalances(
 ): Promise<StationeryBalances> {
   const { data, error } = await supabase
     .from('lawyer_stationery_wallets')
-    .select('files_balance, stamps_balance')
+    .select('stamps_balance')
     .eq('lawyer_id', lawyerId)
     .maybeSingle()
 
   if (error) {
-    if (/lawyer_stationery_wallets|schema cache|does not exist/i.test(error.message)) {
+    if (/lawyer_stationery_wallets|schema cache|does not exist|files_balance/i.test(error.message)) {
       return emptyBalances()
     }
     console.error('[fetchStationeryBalances]', error.message)
@@ -69,7 +66,6 @@ export async function fetchStationeryBalances(
   }
   if (!data) return emptyBalances()
   return {
-    files: Math.max(0, Number(data.files_balance ?? 0)),
     stamps: Math.max(0, Number(data.stamps_balance ?? 0)),
   }
 }
@@ -84,7 +80,7 @@ export async function fetchStationeryBalancesMap(
 
   const { data, error } = await supabase
     .from('lawyer_stationery_wallets')
-    .select('lawyer_id, files_balance, stamps_balance')
+    .select('lawyer_id, stamps_balance')
     .in('lawyer_id', lawyerIds)
 
   if (error) {
@@ -93,7 +89,6 @@ export async function fetchStationeryBalancesMap(
   }
   for (const row of data ?? []) {
     map.set(row.lawyer_id, {
-      files: Math.max(0, Number(row.files_balance ?? 0)),
       stamps: Math.max(0, Number(row.stamps_balance ?? 0)),
     })
   }
@@ -109,6 +104,7 @@ export async function fetchStationeryTransactions(
     .from('lawyer_stationery_transactions')
     .select('id, lawyer_id, item, amount, type, notes, reference_id, created_at, created_by')
     .eq('lawyer_id', lawyerId)
+    .eq('item', 'stamps')
     .order('created_at', { ascending: false })
     .limit(limit)
 
@@ -119,29 +115,24 @@ export async function fetchStationeryTransactions(
   return (data ?? []) as StationeryTxRow[]
 }
 
-async function adjustBalance(
+async function adjustStampsBalance(
   supabase: SupabaseClient,
   lawyerId: string,
-  item: StationeryItem,
   delta: number,
 ): Promise<{ ok: boolean; error?: string; balance?: number }> {
   await ensureStationeryWallet(supabase, lawyerId)
   const current = await fetchStationeryBalances(supabase, lawyerId)
-  const key = item === 'files' ? 'files' : 'stamps'
-  const next = current[key] + delta
+  const next = current.stamps + delta
   if (next < 0) {
     return {
       ok: false,
-      error: item === 'files'
-        ? `رصيد الفايلات غير كافٍ (المتوفر: ${current.files})`
-        : `رصيد الطوابع غير كافٍ (المتوفر: ${current.stamps})`,
+      error: `رصيد الطوابع غير كافٍ (المتوفر: ${current.stamps})`,
     }
   }
 
-  const col = item === 'files' ? 'files_balance' : 'stamps_balance'
   const { error } = await supabase
     .from('lawyer_stationery_wallets')
-    .update({ [col]: next, updated_at: new Date().toISOString() } as any)
+    .update({ stamps_balance: next, updated_at: new Date().toISOString() } as any)
     .eq('lawyer_id', lawyerId)
 
   if (error) return { ok: false, error: error.message }
@@ -152,11 +143,12 @@ export async function depositStationery(
   supabase: SupabaseClient,
   params: {
     lawyerId: string
-    item: StationeryItem
     amount: number
     notes?: string | null
     createdBy: string
     referenceId?: string | null
+    /** للتوافق — يُتجاهل إن وُجد، الطوابع فقط */
+    item?: StationeryItem
   },
 ): Promise<{ ok: boolean; error?: string }> {
   const amount = Math.floor(Number(params.amount))
@@ -164,21 +156,21 @@ export async function depositStationery(
     return { ok: false, error: 'الكمية يجب أن تكون أكبر من صفر' }
   }
 
-  const adj = await adjustBalance(supabase, params.lawyerId, params.item, amount)
+  const adj = await adjustStampsBalance(supabase, params.lawyerId, amount)
   if (!adj.ok) return adj
 
   const { error } = await supabase.from('lawyer_stationery_transactions').insert({
     lawyer_id: params.lawyerId,
-    item: params.item,
+    item: 'stamps',
     amount,
     type: 'deposit',
-    notes: params.notes?.trim() || `إيداع ${STATIONERY_ITEM_LABELS[params.item]}`,
+    notes: params.notes?.trim() || `إيداع ${STATIONERY_ITEM_LABELS.stamps}`,
     reference_id: params.referenceId ?? null,
     created_by: params.createdBy,
   })
 
   if (error) {
-    await adjustBalance(supabase, params.lawyerId, params.item, -amount)
+    await adjustStampsBalance(supabase, params.lawyerId, -amount)
     return { ok: false, error: error.message }
   }
   return { ok: true }
@@ -188,11 +180,11 @@ export async function withdrawStationery(
   supabase: SupabaseClient,
   params: {
     lawyerId: string
-    item: StationeryItem
     amount: number
     notes?: string | null
     createdBy: string
     referenceId?: string | null
+    item?: StationeryItem
   },
 ): Promise<{ ok: boolean; error?: string }> {
   const amount = Math.floor(Number(params.amount))
@@ -200,28 +192,28 @@ export async function withdrawStationery(
     return { ok: false, error: 'الكمية يجب أن تكون أكبر من صفر' }
   }
 
-  const adj = await adjustBalance(supabase, params.lawyerId, params.item, -amount)
+  const adj = await adjustStampsBalance(supabase, params.lawyerId, -amount)
   if (!adj.ok) return adj
 
   const { error } = await supabase.from('lawyer_stationery_transactions').insert({
     lawyer_id: params.lawyerId,
-    item: params.item,
+    item: 'stamps',
     amount: -amount,
     type: 'withdrawal',
-    notes: params.notes?.trim() || `سحب ${STATIONERY_ITEM_LABELS[params.item]}`,
+    notes: params.notes?.trim() || `سحب ${STATIONERY_ITEM_LABELS.stamps}`,
     reference_id: params.referenceId ?? null,
     created_by: params.createdBy,
   })
 
   if (error) {
-    await adjustBalance(supabase, params.lawyerId, params.item, amount)
+    await adjustStampsBalance(supabase, params.lawyerId, amount)
     return { ok: false, error: error.message }
   }
   return { ok: true }
 }
 
 /**
- * خصم تلقائي عند الاعتماد النهائي لإقامة دعوى — فايل واحد + طابع واحد.
+ * خصم تلقائي عند الاعتماد النهائي لإقامة دعوى — طابع واحد.
  * idempotent عبر reference_id = taskId.
  */
 export async function deductStationeryOnLawsuitApproval(
@@ -237,6 +229,7 @@ export async function deductStationeryOnLawsuitApproval(
     .select('id')
     .eq('reference_id', params.taskId)
     .eq('type', 'lawsuit_deduction')
+    .eq('item', 'stamps')
     .limit(1)
 
   if (existing?.length) {
@@ -244,15 +237,8 @@ export async function deductStationeryOnLawsuitApproval(
   }
 
   const balances = await fetchStationeryBalances(supabase, params.lawyerId)
-  const needFiles = LAWSUIT_STATIONERY_DEDUCT.files
   const needStamps = LAWSUIT_STATIONERY_DEDUCT.stamps
 
-  if (balances.files < needFiles) {
-    return {
-      ok: false,
-      error: `رصيد الفايلات غير كافٍ لاعتماد إقامة الدعوى (المتوفر: ${balances.files}، المطلوب: ${needFiles})`,
-    }
-  }
   if (balances.stamps < needStamps) {
     return {
       ok: false,
@@ -260,39 +246,21 @@ export async function deductStationeryOnLawsuitApproval(
     }
   }
 
-  const filesAdj = await adjustBalance(supabase, params.lawyerId, 'files', -needFiles)
-  if (!filesAdj.ok) return filesAdj
+  const stampsAdj = await adjustStampsBalance(supabase, params.lawyerId, -needStamps)
+  if (!stampsAdj.ok) return stampsAdj
 
-  const stampsAdj = await adjustBalance(supabase, params.lawyerId, 'stamps', -needStamps)
-  if (!stampsAdj.ok) {
-    await adjustBalance(supabase, params.lawyerId, 'files', needFiles)
-    return stampsAdj
-  }
-
-  const { error } = await supabase.from('lawyer_stationery_transactions').insert([
-    {
-      lawyer_id: params.lawyerId,
-      item: 'files',
-      amount: -needFiles,
-      type: 'lawsuit_deduction',
-      notes: 'خصم تلقائي — اعتماد إنجاز إقامة دعوى (فايل)',
-      reference_id: params.taskId,
-      created_by: params.reviewedBy,
-    },
-    {
-      lawyer_id: params.lawyerId,
-      item: 'stamps',
-      amount: -needStamps,
-      type: 'lawsuit_deduction',
-      notes: 'خصم تلقائي — اعتماد إنجاز إقامة دعوى (طابع)',
-      reference_id: params.taskId,
-      created_by: params.reviewedBy,
-    },
-  ])
+  const { error } = await supabase.from('lawyer_stationery_transactions').insert({
+    lawyer_id: params.lawyerId,
+    item: 'stamps',
+    amount: -needStamps,
+    type: 'lawsuit_deduction',
+    notes: 'خصم تلقائي — اعتماد إنجاز إقامة دعوى (طابع)',
+    reference_id: params.taskId,
+    created_by: params.reviewedBy,
+  })
 
   if (error) {
-    await adjustBalance(supabase, params.lawyerId, 'files', needFiles)
-    await adjustBalance(supabase, params.lawyerId, 'stamps', needStamps)
+    await adjustStampsBalance(supabase, params.lawyerId, needStamps)
     return { ok: false, error: error.message }
   }
 
@@ -315,10 +283,11 @@ export async function reverseStationeryLawsuitDeduction(
 
   const lawyerId = rows[0].lawyer_id as string
   for (const row of rows) {
-    const item = row.item as StationeryItem
+    // نتجاهل أي حركات فايلات قديمة إن وُجدت — لا عمود لها بعد الترحيل
+    if (row.item !== 'stamps') continue
     const deducted = Math.abs(Number(row.amount ?? 0))
     if (deducted <= 0) continue
-    const adj = await adjustBalance(supabase, lawyerId, item, deducted)
+    const adj = await adjustStampsBalance(supabase, lawyerId, deducted)
     if (!adj.ok) return adj
   }
 
@@ -333,7 +302,7 @@ export async function reverseStationeryLawsuitDeduction(
 }
 
 export function stationeryTxLabel(row: Pick<StationeryTxRow, 'type' | 'item' | 'amount'>): string {
-  const item = STATIONERY_ITEM_LABELS[row.item] ?? row.item
+  const item = STATIONERY_ITEM_LABELS[row.item as StationeryItem] ?? 'الطوابع'
   if (row.type === 'deposit') return `إيداع ${item}`
   if (row.type === 'withdrawal') return `سحب ${item}`
   if (row.type === 'lawsuit_deduction') return `خصم إقامة دعوى — ${item}`

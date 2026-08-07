@@ -4,6 +4,7 @@ export interface DebtorPetitionFields {
   courtName: string
   plaintiffName: string
   defendantName: string
+  defendantOccupation: string
   defendantAddress: string
   amountDigits: string
   amountWords: string
@@ -16,6 +17,7 @@ export const PETITION_FIELD_KEYS = [
   'courtName',
   'plaintiffName',
   'defendantName',
+  'defendantOccupation',
   'defendantAddress',
   'amountDigits',
   'amountWords',
@@ -26,6 +28,7 @@ export const PETITION_FIELD_LABELS: Record<(typeof PETITION_FIELD_KEYS)[number],
   courtName: 'اسم المحكمة',
   plaintiffName: 'اسم المدعي',
   defendantName: 'اسم المدعى عليه',
+  defendantOccupation: 'طبيعة عمل المدعى عليه',
   defendantAddress: 'عنوان المدعى عليه',
   amountDigits: 'المبلغ رقمًا',
   amountWords: 'المبلغ كتابةً',
@@ -37,6 +40,7 @@ export function emptyPetitionFields(): DebtorPetitionFields {
     courtName: '',
     plaintiffName: DEFAULT_PLAINTIFF_NAME,
     defendantName: '',
+    defendantOccupation: '',
     defendantAddress: '',
     amountDigits: '',
     amountWords: '',
@@ -52,6 +56,7 @@ export function normalizePetitionFields(raw: Partial<DebtorPetitionFields>): Deb
     courtName: String(raw.courtName ?? '').trim(),
     plaintiffName: String(raw.plaintiffName ?? '').trim(),
     defendantName: String(raw.defendantName ?? '').trim(),
+    defendantOccupation: String(raw.defendantOccupation ?? '').trim(),
     defendantAddress: String(raw.defendantAddress ?? '').trim(),
     amountDigits,
     amountWords,
@@ -81,7 +86,7 @@ export function buildPetitionTextLines(fields: DebtorPetitionFields): string[] {
     '',
     `المدعي / ${f.plaintiffName} / إضافة لوظيفته / وكيله المحامي ${f.lawyerName}`,
     '',
-    `المدعى عليه / ${f.defendantName} / يسكن / ${f.defendantAddress}`,
+    `المدعى عليه / ${f.defendantName} / ${f.defendantOccupation} / يسكن / ${f.defendantAddress}`,
     '',
     'جهة الدعوى',
     '',
@@ -212,7 +217,7 @@ export function buildPetitionHtml(fields: DebtorPetitionFields): string {
   <div class="sheet">
     <p class="court-line">السيد قاضي محكمة ${esc(f.courtName)} المحترم</p>
     <p class="party">المدعي / ${esc(f.plaintiffName)} / إضافة لوظيفته / وكيله المحامي ${esc(f.lawyerName)}</p>
-    <p class="party">المدعى عليه / ${esc(f.defendantName)} / يسكن / ${esc(f.defendantAddress)}</p>
+    <p class="party">المدعى عليه / ${esc(f.defendantName)} / ${esc(f.defendantOccupation)} / يسكن / ${esc(f.defendantAddress)}</p>
     <p class="section-title">جهة الدعوى</p>
     <p class="para">لموكلي بذمة المدعى عليه مبلغ مقداره ${esc(amountParen)} ${esc(f.amountWords)} دينار عراقي، ورغم المطالبة المستمرة لموكلي إلا أنه ممتنع عن التسديد بدون وجه حق.</p>
     <p class="para">عليه أطلب من محكمتكم الموقرة دعوة المدعى عليه للمرافعة والحكم بإلزامه بتأدية المبلغ المذكور أعلاه والبالغ ${esc(amountParen)} ${esc(f.amountWords)} دينار عراقي وتحميله كافة الرسوم والمصاريف وأتعاب المحاماة.</p>

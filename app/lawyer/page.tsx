@@ -156,7 +156,6 @@ export default async function LawyerDashboardPage() {
         savingsBalance={walletBalances.savings}
       />
       <LawyerStationerySummary
-        filesBalance={stationery.files}
         stampsBalance={stationery.stamps}
       />
 
