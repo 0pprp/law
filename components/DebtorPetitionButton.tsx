@@ -6,6 +6,7 @@ import CenteredModalPortal from '@/components/ui/centered-modal-portal'
 import { arabicAmountInWords, formatPetitionAmountDigits } from '@/lib/arabic-tafqeet'
 import {
   buildPetitionHtml,
+  buildPetitionFileName,
   DEFAULT_PLAINTIFF_NAME,
   emptyPetitionFields,
   normalizePetitionFields,
@@ -16,6 +17,11 @@ import {
 } from '@/lib/debtor-petition'
 import { formatMoneyInput, parseMoneyInput } from '@/lib/money-input'
 import { appAlert } from '@/lib/app-dialog'
+import {
+  blobToBase64,
+  htmlToPetitionPdfBlob,
+  triggerBlobDownload,
+} from '@/lib/debtor-petition-client-pdf'
 
 const INP =
   'w-full px-3 py-2.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
@@ -101,32 +107,32 @@ export default function DebtorPetitionButton({ debtorId, defaults }: Props) {
     setBusy(true)
     setError('')
     try {
+      const normalized = normalizePetitionFields(fields)
+      const html = buildPetitionHtml(normalized)
+      const fileName = buildPetitionFileName(normalized.defendantName)
+      const pdfBlob = await htmlToPetitionPdfBlob(html)
+
+      // تنزيل فوري من نفس شكل المعاينة (عربية صحيحة)
+      triggerBlobDownload(pdfBlob, fileName)
+
+      // حفظ في المرفقات عبر رفع الـ PDF الجاهز
+      const pdfBase64 = await blobToBase64(pdfBlob)
       const res = await fetch('/api/admin/debtor-petition', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'save',
-          download: true,
+          download: false,
           debtorId,
-          fields,
+          fields: normalized,
+          pdfBase64,
+          fileName,
         }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error(typeof data.error === 'string' ? data.error : 'فشل تنزيل وحفظ العريضة')
+        throw new Error(typeof data.error === 'string' ? data.error : 'تم التنزيل لكن فشل الحفظ في المرفقات')
       }
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      const disposition = res.headers.get('Content-Disposition') ?? ''
-      const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/i)
-      const rawName = decodeURIComponent(match?.[1] || match?.[2] || 'عريضة-دعوى.pdf')
-      a.href = url
-      a.download = rawName
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
 
       await appAlert({
         message: 'تم تنزيل العريضة وحفظها في مرفقات المدين',

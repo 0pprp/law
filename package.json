@@ -19,6 +19,8 @@
     "@supabase/supabase-js": "^2.108.2",
     "arabic-persian-reshaper": "^1.0.1",
     "bidi-js": "^1.0.3",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
     "jszip": "^3.10.1",
     "next": "16.2.9",
     "pdfkit": "^0.19.1",

@@ -16,11 +16,24 @@ import {
   normalizePetitionFields,
   validatePetitionFields,
   PETITION_ATTACHMENT_LABEL,
+  buildPetitionFileName,
   type DebtorPetitionFields,
 } from '@/lib/debtor-petition'
 import { generateDebtorPetitionPdf } from '@/lib/debtor-petition-pdf'
 
 type PetitionAction = 'pdf' | 'save'
+
+function decodePdfBase64(raw: unknown): Buffer | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null
+  const cleaned = raw.replace(/^data:application\/pdf;base64,/i, '').trim()
+  try {
+    const buf = Buffer.from(cleaned, 'base64')
+    if (buf.length < 100 || buf.slice(0, 4).toString() !== '%PDF') return null
+    return buf
+  } catch {
+    return null
+  }
+}
 
 export async function POST(request: NextRequest) {
   const auth = await requireStaffProfile()
@@ -32,6 +45,8 @@ export async function POST(request: NextRequest) {
     debtorId?: unknown
     fields?: Partial<DebtorPetitionFields>
     download?: unknown
+    pdfBase64?: unknown
+    fileName?: unknown
   }
   try {
     body = await request.json()
@@ -64,15 +79,21 @@ export async function POST(request: NextRequest) {
 
   let pdfBuffer: Buffer
   let fileName: string
-  try {
-    ;({ buffer: pdfBuffer, fileName } = await generateDebtorPetitionPdf(fields))
-  } catch (e) {
-    const detail = e instanceof Error ? e.message : 'خطأ غير معروف'
-    // أظهر سبباً مختصراً للمستخدم إن وُجد، مع الإبقاء على السجل الكامل في السيرفر
-    const clientHint = /خط عربي|Chrome|Edge|متصفح|pdfkit|احتياطي/i.test(detail)
-      ? `فشل توليد ملف العريضة — ${detail.slice(0, 180)}`
-      : 'فشل توليد ملف العريضة'
-    return apiServerError('debtor-petition:pdf', e, clientHint)
+
+  const clientPdf = decodePdfBase64(body.pdfBase64)
+  if (clientPdf) {
+    pdfBuffer = clientPdf
+    fileName = String(body.fileName ?? '').trim() || buildPetitionFileName(fields.defendantName)
+  } else {
+    try {
+      ;({ buffer: pdfBuffer, fileName } = await generateDebtorPetitionPdf(fields))
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : 'خطأ غير معروف'
+      const clientHint = /خط عربي|Chrome|Edge|متصفح|pdfkit|احتياطي/i.test(detail)
+        ? `فشل توليد ملف العريضة — ${detail.slice(0, 180)}`
+        : 'فشل توليد ملف العريضة'
+      return apiServerError('debtor-petition:pdf', e, clientHint)
+    }
   }
 
   if (action === 'pdf') {
@@ -146,6 +167,7 @@ export async function POST(request: NextRequest) {
       case_type: gate.caseType,
       defendant_name: fields.defendantName,
       downloaded: alsoDownload,
+      client_pdf: Boolean(clientPdf),
     },
   }, auth.supabase)
 
