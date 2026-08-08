@@ -67,7 +67,12 @@ export async function POST(request: NextRequest) {
   try {
     ;({ buffer: pdfBuffer, fileName } = await generateDebtorPetitionPdf(fields))
   } catch (e) {
-    return apiServerError('debtor-petition:pdf', e, 'فشل توليد ملف العريضة')
+    const detail = e instanceof Error ? e.message : 'خطأ غير معروف'
+    // أظهر سبباً مختصراً للمستخدم إن وُجد، مع الإبقاء على السجل الكامل في السيرفر
+    const clientHint = /خط عربي|Chrome|Edge|متصفح|pdfkit|احتياطي/i.test(detail)
+      ? `فشل توليد ملف العريضة — ${detail.slice(0, 180)}`
+      : 'فشل توليد ملف العريضة'
+    return apiServerError('debtor-petition:pdf', e, clientHint)
   }
 
   if (action === 'pdf') {

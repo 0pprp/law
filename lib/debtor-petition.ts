@@ -57,7 +57,7 @@ export function normalizePetitionFields(raw: Partial<DebtorPetitionFields>): Deb
     plaintiffName: String(raw.plaintiffName ?? '').trim(),
     defendantName: String(raw.defendantName ?? '').trim(),
     defendantOccupation: String(raw.defendantOccupation ?? '').trim(),
-    defendantAddress: String(raw.defendantAddress ?? '').trim(),
+    defendantAddress: String(raw.defendantAddress ?? '').trim().replace(/\|/g, ' / '),
     amountDigits,
     amountWords,
     lawyerName: String(raw.lawyerName ?? '').trim(),
