@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
     username, branch_id: bodyBranchId, role: bodyRole, lawyer_type: bodyLawyerType,
     accountant_type: bodyAccountantType,
     case_type: bodyCaseType,
+    chief_branch_ids: bodyChiefBranchIds,
   } = await request.json()
 
   const { branchId: cookieBranchId } = await getBranchContext()
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
     : bodyRole === 'viewer' ? 'viewer'
     : bodyRole === 'criminal_legal_manager' ? 'criminal_legal_manager'
     : bodyRole === 'payment_follow_up' ? 'payment_follow_up'
+    : bodyRole === 'chief_accountant' ? 'chief_accountant'
     : 'lawyer'
 
   if (isLegalManager(callerRole) && userRole !== 'lawyer') {
@@ -67,6 +69,16 @@ export async function POST(request: NextRequest) {
 
   if (userRole === 'payment_follow_up' && !isAdmin(callerRole)) {
     return NextResponse.json({ error: 'إضافة مسؤول متابعة التسديد للمدير فقط' }, { status: 400 })
+  }
+  if (userRole === 'chief_accountant' && !isAdmin(callerRole)) {
+    return NextResponse.json({ error: 'إضافة محاسب رئيسي للمدير فقط' }, { status: 403 })
+  }
+
+  const chiefBranchIds = Array.isArray(bodyChiefBranchIds)
+    ? [...new Set(bodyChiefBranchIds.map((v: unknown) => String(v ?? '').trim()).filter(Boolean))]
+    : []
+  if (userRole === 'chief_accountant' && chiefBranchIds.length === 0) {
+    return NextResponse.json({ error: 'يجب اختيار فرع واحد على الأقل للمحاسب الرئيسي' }, { status: 400 })
   }
   if (userRole === 'criminal_legal_manager' && !isAdmin(callerRole)) {
     return NextResponse.json({ error: 'إضافة مسؤول الجزائيات للمدير فقط' }, { status: 403 })
@@ -167,6 +179,45 @@ export async function POST(request: NextRequest) {
     description: `إنشاء مستخدم: ${full_name} (${userRole})`,
     case_type: userRole === 'lawyer' ? lawyerCaseType : null,
   }, supabase)
+
+  if (userRole === 'chief_accountant' && chiefBranchIds.length) {
+    const { data: validBranches, error: brErr } = await admin
+      .from('branches')
+      .select('id')
+      .in('id', chiefBranchIds)
+    if (brErr) {
+      return NextResponse.json({
+        success: true,
+        lawyerId: authData.user.id,
+        role: userRole,
+        warning: 'تم إنشاء الحساب لكن تعذر التحقق من الفروع',
+      })
+    }
+    if ((validBranches ?? []).length !== chiefBranchIds.length) {
+      return NextResponse.json({
+        success: true,
+        lawyerId: authData.user.id,
+        role: userRole,
+        warning: 'تم إنشاء الحساب لكن بعض الفروع غير صالحة',
+      })
+    }
+    const { error: linkErr } = await admin.from('chief_accountant_branches').insert(
+      chiefBranchIds.map(branch_id => ({
+        profile_id: authData.user.id,
+        branch_id,
+      })),
+    )
+    if (linkErr) {
+      return NextResponse.json({
+        success: true,
+        lawyerId: authData.user.id,
+        role: userRole,
+        warning: linkErr.message.includes('chief_accountant_branches')
+          ? 'تم إنشاء الحساب — طبّق هجرة فروع المحاسب الرئيسي ثم اربط الفروع من التعديل'
+          : `تم إنشاء الحساب لكن فشل ربط الفروع: ${linkErr.message}`,
+      })
+    }
+  }
 
   return NextResponse.json({
     success: true,

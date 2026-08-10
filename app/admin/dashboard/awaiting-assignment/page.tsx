@@ -9,7 +9,7 @@ import { BackButton } from '@/components/ui/back-button'
 import AwaitingAssignmentCard from '@/components/AwaitingAssignmentCard'
 import { cacheInvalidatePrefix } from '@/lib/query-cache'
 
-/** الأسماء التي تحت إسناد مهمة — بدون كارد الأسماء المكررة */
+/** الأسماء التي تحت إسناد مهمة / تجهيز الملفات */
 export default function DashboardAwaitingAssignmentPage() {
   const branchId = useBranchId()
   const { viewAllBranches, listId } = useBranch()
@@ -17,6 +17,8 @@ export default function DashboardAwaitingAssignmentPage() {
   const searchParams = useSearchParams()
   const ctParam = searchParams.get('ct')
   const caseType = ctParam === 'civil' || ctParam === 'criminal' ? ctParam : undefined
+  const isPrepMode = searchParams.get('prep') === '1'
+  const mode = isPrepMode ? 'preparing' as const : 'awaiting' as const
 
   function refreshDashboardCache() {
     cacheInvalidatePrefix('dashboard:v')
@@ -33,8 +35,8 @@ export default function DashboardAwaitingAssignmentPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="إسناد المهام"
-        subtitle="الأسماء التي تحت إسناد مهمة"
+        title={isPrepMode ? 'تجهيز الملفات' : 'إسناد المهام'}
+        subtitle={isPrepMode ? 'مدينون قيد تجهيز الملف لدى المحاسب الرئيسي' : 'الأسماء التي تحت إسناد مهمة'}
         actions={<BackButton fallback="/admin/dashboard" />}
       />
       {!branchId && !viewAllBranches ? (
@@ -46,12 +48,14 @@ export default function DashboardAwaitingAssignmentPage() {
           aria-labelledby="awaiting-card-title"
           className="rounded-2xl border border-[rgba(118,118,118,0.2)] bg-white shadow-sm ring-1 ring-black/[0.03]"
         >
-          <div className="px-4 sm:px-5 py-3 border-b border-amber-100 bg-amber-50/80">
+          <div className={`px-4 sm:px-5 py-3 border-b ${isPrepMode ? 'border-sky-100 bg-sky-50/80' : 'border-amber-100 bg-amber-50/80'}`}>
             <h2 id="awaiting-card-title" className="font-black text-[#231F20] text-base sm:text-lg">
-              الأسماء التي تحت إسناد مهمة
+              {isPrepMode ? 'تجهيز الملفات' : 'الأسماء التي تحت إسناد مهمة'}
             </h2>
             <p className="text-xs text-[#767676] mt-0.5">
-              حدّد الأسماء ثم حوّلها إلى تبويب الأسماء التي تحتاج مراقبة عند الحاجة
+              {isPrepMode
+                ? 'أسماء أُرسلت للمحاسب الرئيسي لتجهيز الملفات'
+                : 'حدّد الأسماء ثم أرسلها للتجهيز أو حوّلها للمراقبة عند الحاجة'}
             </p>
           </div>
           <div className="p-4 sm:p-5">
@@ -60,6 +64,7 @@ export default function DashboardAwaitingAssignmentPage() {
               viewAllBranches={viewAllBranches}
               listId={listId}
               caseType={caseType}
+              mode={mode}
               hideHeader
               onAssigned={refreshDashboardCache}
             />

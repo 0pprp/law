@@ -3,10 +3,11 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { apiForbiddenResponse, canAddDebtor, canDelete, canEditDebtor } from '@/lib/permissions'
 import {
-  assertDebtorSafeToHardDelete,
   cleanupFailedDebtorCreate,
+  hardDeleteDebtorCascade,
 } from '@/lib/debtor-hard-delete'
-import { canStaffReadBranch, canStaffWriteBranch } from '@/lib/staff-branch-access'
+import { canStaffOrChiefReadDebtor, canStaffOrChiefWriteDebtor } from '@/lib/chief-accountant-access'
+import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import {
   findDuplicateReceiptInBranch,
   isReceiptNumberMissing,
@@ -55,7 +56,10 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!debtor) return NextResponse.json({ error: 'المدين غير موجود' }, { status: 404 })
-  if (!canStaffReadBranch(auth.profile, debtor.branch_id)) return apiForbiddenResponse()
+  if (!canStaffOrChiefReadDebtor(
+    { ...auth.profile!, id: auth.user!.id },
+    debtor,
+  )) return apiForbiddenResponse()
 
   const scope = sessionCaseScope(auth.profile)
   if (!assertDebtorSection(scope, (debtor as { case_type?: string }).case_type)) {
@@ -88,13 +92,16 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
   const admin = createAdminClient()
   const { data: debtor, error: debtorError } = await admin
     .from('debtors')
-    .select('id, branch_id, total_payments, total_expenses, case_type')
+    .select('id, branch_id, total_payments, total_expenses, case_type, assigned_chief_accountant_id')
     .eq('id', id)
     .maybeSingle()
 
   if (debtorError) return NextResponse.json({ error: debtorError.message }, { status: 500 })
   if (!debtor) return NextResponse.json({ error: 'المدين غير موجود' }, { status: 404 })
-  if (!canStaffWriteBranch(auth.profile, debtor.branch_id)) return apiForbiddenResponse()
+  if (!canStaffOrChiefWriteDebtor(
+    { ...auth.profile!, id: auth.user!.id },
+    debtor,
+  )) return apiForbiddenResponse()
 
   const scope = sessionCaseScope(auth.profile)
   if (!assertDebtorSection(scope, debtor.case_type)) return sectionForbiddenResponse()
@@ -275,9 +282,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
 /**
  * حذف مدين:
- * - admin عبر canDelete مع منع الحذف عند وجود علاقات تشغيلية
+ * - المدير (canDelete): حذف تام مع كل البيانات المرتبطة (مهام، تسديدات، مرفقات، …)
  * - أو rollback إنشاء فاشل: canAddDebtor + created_by = المستخدم + عمر قصير + بلا تسديدات
- * لا يُستخدم كحذف تشغيلي عام لمسؤولي الأقسام.
  */
 export async function DELETE(_request: NextRequest, { params }: RouteContext) {
   const auth = await requireStaffProfile()
@@ -337,22 +343,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: cleaned.error || 'فشل حذف المدين' }, { status: 500 })
     }
   } else {
-    const safe = await assertDebtorSafeToHardDelete(admin, id)
-    if (!safe.ok) {
-      const messages: Record<string, string> = {
-        payments: 'لا يمكن حذف مدين لديه تسديدات',
-        tasks: 'لا يمكن حذف مدين لديه مهام',
-        attachments: 'لا يمكن حذف مدين لديه مرفقات',
-        expenses: 'لا يمكن حذف مدين لديه صرفيات',
-        wallet: 'لا يمكن حذف مدين لديه حركات مالية',
-        not_found: 'المدين غير موجود',
-      }
-      return NextResponse.json(
-        { error: messages[safe.reason] ?? 'الحذف مرفوض' },
-        { status: 409 },
-      )
-    }
-    const cleaned = await cleanupFailedDebtorCreate(admin, id, {
+    const cleaned = await hardDeleteDebtorCascade(admin, id, {
       caseType: debtor.case_type === 'criminal' ? 'criminal' : 'civil',
     })
     if (!cleaned.ok) {

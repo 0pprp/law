@@ -23,6 +23,7 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { LAWYER_TYPE_OPTIONS } from '@/lib/lawyer-type'
 import { ACCOUNTANT_TYPE_OPTIONS } from '@/lib/accountant-type'
 import { uploadLawyerAttachment } from '@/lib/lawyer-attachments'
+import ChiefAccountantBranchesPicker from '@/components/ChiefAccountantBranchesPicker'
 
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
@@ -32,6 +33,7 @@ const ALL_ROLE_OPTIONS = [
   { value: 'viewer', label: USER_ROLE_LABELS.viewer },
   { value: 'criminal_legal_manager', label: USER_ROLE_LABELS.criminal_legal_manager },
   { value: 'payment_follow_up', label: USER_ROLE_LABELS.payment_follow_up },
+  { value: 'chief_accountant', label: USER_ROLE_LABELS.chief_accountant },
 ]
 
 function Field({ label, required: req, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
@@ -76,7 +78,8 @@ export default function NewLawyerPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
-  const [userRole, setUserRole] = useState<'lawyer' | 'accountant' | 'viewer' | 'criminal_legal_manager' | 'payment_follow_up'>('lawyer')
+  const [userRole, setUserRole] = useState<'lawyer' | 'accountant' | 'viewer' | 'criminal_legal_manager' | 'payment_follow_up' | 'chief_accountant'>('lawyer')
+  const [chiefBranchIds, setChiefBranchIds] = useState<string[]>([])
 
   const [form, setForm] = useState({
     full_name: '', username: '', temporary_password: '',
@@ -90,6 +93,7 @@ export default function NewLawyerPage() {
   const isAccountantRole = userRole === 'accountant'
   const isViewerRole = userRole === 'viewer'
   const isCriminalManagerRole = userRole === 'criminal_legal_manager'
+  const isChiefAccountantRole = userRole === 'chief_accountant'
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
 
@@ -128,6 +132,10 @@ export default function NewLawyerPage() {
         return
       }
     }
+    if (isChiefAccountantRole && chiefBranchIds.length === 0) {
+      setError('يجب اختيار فرع واحد على الأقل للمحاسب الرئيسي')
+      return
+    }
     setSaving(true); setError('')
     const res = await fetch('/api/admin/lawyers', {
       method: 'POST',
@@ -147,11 +155,16 @@ export default function NewLawyerPage() {
           : undefined,
         branch_id: branchId,
         role: userRole,
+        chief_branch_ids: isChiefAccountantRole ? chiefBranchIds : undefined,
       }),
     })
     const data = await res.json()
     if (!res.ok) { setError(data.error ?? 'حدث خطأ غير متوقع'); setSaving(false); return }
     const userId: string = data.lawyerId
+    if (data.warning) {
+      // الحساب أُنشئ — التوجيه للتعديل لإكمال ربط الفروع إن لزم
+      setError(String(data.warning))
+    }
     if (isLawyer && pendingFiles.length > 0) {
       const uploadFailures: string[] = []
       for (const { file, description } of pendingFiles) {
@@ -168,7 +181,11 @@ export default function NewLawyerPage() {
       ? 'محاسب عام'
       : USER_ROLE_LABELS[userRole as UserRole]
     await logActivity({
-      action: userRole === 'accountant' ? 'create_accountant' : userRole === 'viewer' ? 'create_viewer' : userRole === 'criminal_legal_manager' ? 'create_criminal_legal_manager' : 'create_lawyer',
+      action: userRole === 'accountant' ? 'create_accountant'
+        : userRole === 'viewer' ? 'create_viewer'
+        : userRole === 'criminal_legal_manager' ? 'create_criminal_legal_manager'
+        : userRole === 'chief_accountant' ? 'create_chief_accountant'
+        : 'create_lawyer',
       entity_type: 'profile',
       entity_id: userId,
       description: `إنشاء مستخدم (${roleLabel}): ${form.full_name}`,
@@ -222,6 +239,11 @@ export default function NewLawyerPage() {
             {isCriminalManagerRole && !legalOfficerMode && (
               <span className="block mt-1 text-[#2C8780]">مسؤول الجزائيات: نطاق الدعاوى الجزائية فقط.</span>
             )}
+            {isChiefAccountantRole && !legalOfficerMode && (
+              <span className="block mt-1 text-[#2C8780]">
+                المحاسب الرئيسي — اختر الفروع المسؤول عنها أدناه (الفرع أعلاه للملف الشخصي فقط).
+              </span>
+            )}
           </p>
         ) : (
           <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
@@ -235,11 +257,28 @@ export default function NewLawyerPage() {
             <Field label="الدور" required>
               <PremiumSelect
                 value={userRole}
-                onChange={v => setUserRole(v as 'lawyer' | 'accountant' | 'viewer' | 'criminal_legal_manager' | 'payment_follow_up')}
+                onChange={v => {
+                  const next = v as typeof userRole
+                  setUserRole(next)
+                  if (next !== 'chief_accountant') setChiefBranchIds([])
+                }}
                 options={roleOptions}
                 disabled={legalOfficerMode}
               />
             </Field>
+            {isChiefAccountantRole && (
+              <Field
+                label="الفروع المسؤول عنها"
+                required
+                hint="المحافظات/الفروع التي يتابعها المحاسب الرئيسي (تجهيز الملفات)"
+              >
+                <ChiefAccountantBranchesPicker
+                  selectedIds={chiefBranchIds}
+                  onChange={setChiefBranchIds}
+                  disabled={readOnly}
+                />
+              </Field>
+            )}
             {isLawyer && (
               <Field
                 label="قسم المحامي"

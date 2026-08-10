@@ -10,11 +10,17 @@ export const STAFF_ROLES: UserRole[] = [
   'viewer',
   'payment_follow_up',
   'criminal_legal_manager',
+  'chief_accountant',
 ]
 
 /** مسؤول متابعة التسديد */
 export function isPaymentFollowUp(role: string | null | undefined): boolean {
   return role === 'payment_follow_up'
+}
+
+/** محاسب رئيسي — مدينون معيَّنون فقط */
+export function isChiefAccountant(role: string | null | undefined): boolean {
+  return role === 'chief_accountant'
 }
 
 export function isAdmin(role: string | null | undefined): boolean {
@@ -189,9 +195,9 @@ export function canEditRecords(role: string | null | undefined): boolean {
   return isAdmin(role)
 }
 
-/** تعديل بيانات المدين — المدير والمحاسب ومسؤولو الأقسام (القسم يُفرض في API) */
+/** تعديل بيانات المدين — المدير والمحاسب ومسؤولو الأقسام والمحاسب الرئيسي (النطاق يُفرض في API/RLS) */
 export function canEditDebtor(role: string | null | undefined): boolean {
-  return isAdmin(role) || isAccountant(role) || isAnyLegalManager(role)
+  return isAdmin(role) || isAccountant(role) || isAnyLegalManager(role) || isChiefAccountant(role)
 }
 
 /** إدارة حسابات (تفعيل/تعطيل) — المدير فقط؛ التعديل عبر canEditLawyerProfile */
@@ -317,6 +323,11 @@ export function canMoveToPaymentInProgress(role: string | null | undefined): boo
   return isAdmin(role) || isLegalManager(role)
 }
 
+/** إرسال مدينين لتجهيز الملفات لدى المحاسب الرئيسي — المدير فقط */
+export function canSendToFilePreparation(role: string | null | undefined): boolean {
+  return isAdmin(role)
+}
+
 /** إرسال طلب عدم التزام — مسؤول متابعة التسديد فقط */
 export function canSubmitPaymentNoncomplianceRequest(role: string | null | undefined): boolean {
   return isPaymentFollowUp(role)
@@ -349,6 +360,11 @@ const PAYMENT_FOLLOW_UP_HREFS = new Set([
   '/admin/payments',
 ])
 
+/** محاسب رئيسي: المدينون المعيَّنون فقط */
+const CHIEF_ACCOUNTANT_HREFS = new Set([
+  '/admin/debtors',
+])
+
 /** إدارة المهام (مدني/جزائي) — المدير والمحاسب */
 export function canManageTaskManagement(role: string | null | undefined): boolean {
   return isAdmin(role) || isAccountant(role)
@@ -361,6 +377,7 @@ export function canManageTaskManagement(role: string | null | undefined): boolea
  * - مسؤول الجزائيات: عمليات + تقارير + نظام (بدون مالية / مندوبين)
  * - المحاسب: روابطه فقط
  * - مسؤول متابعة التسديد: لوحته والتسديدات فقط
+ * - المحاسب الرئيسي: المدينون فقط
  */
 export function isNavVisibleForRole(href: string, role: string | null | undefined): boolean {
   if (href === '/admin/special-statuses' || href.startsWith('/admin/special-statuses/')) {
@@ -377,6 +394,9 @@ export function isNavVisibleForRole(href: string, role: string | null | undefine
   }
   if (isPaymentFollowUp(role)) {
     return PAYMENT_FOLLOW_UP_HREFS.has(href)
+  }
+  if (isChiefAccountant(role)) {
+    return CHIEF_ACCOUNTANT_HREFS.has(href)
   }
   if (isAccountant(role)) {
     return ACCOUNTANT_HREFS.has(href)
@@ -422,6 +442,16 @@ export function isPaymentFollowUpPathAllowed(pathname: string): boolean {
   if (pathname === '/admin/payment-follow-up' || pathname.startsWith('/admin/payment-follow-up/')) return true
   if (pathname.startsWith('/admin/payments')) return true
   if (/^\/admin\/debtors\/[^/]+\/account\/?$/.test(pathname)) return true
+  return false
+}
+
+/** مسارات المحاسب الرئيسي — قائمة/حساب/تعديل المدينين المعيَّنين */
+export function isChiefAccountantPathAllowed(pathname: string): boolean {
+  if (pathname === '/admin/debtors') return true
+  if (/^\/admin\/debtors\/[^/]+\/account\/?$/.test(pathname)) return true
+  if (/^\/admin\/debtors\/[^/]+\/profile\/?$/.test(pathname)) return true
+  if (/^\/admin\/debtors\/[^/]+\/edit\/?$/.test(pathname)) return true
+  if (/^\/admin\/debtors\/[^/]+$/.test(pathname) && !pathname.endsWith('/edit')) return true
   return false
 }
 

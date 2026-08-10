@@ -2,6 +2,14 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import type { UserRole } from '@/lib/types'
 
+function homeForRole(role: UserRole | string | undefined): string {
+  if (role === 'lawyer') return '/lawyer'
+  if (role === 'delegate') return '/delegate'
+  if (role === 'payment_follow_up') return '/admin/payment-follow-up'
+  if (role === 'chief_accountant') return '/chief-accountant/tasks'
+  return '/admin/dashboard'
+}
+
 export default async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
@@ -33,6 +41,7 @@ export default async function proxy(request: NextRequest) {
   const isAdminRoute = pathname.startsWith('/admin')
   const isLawyerRoute = pathname.startsWith('/lawyer')
   const isDelegateRoute = pathname.startsWith('/delegate')
+  const isChiefAccountantRoute = pathname.startsWith('/chief-accountant')
 
   if (!user && !isLoginPage && !isPublicAuthApi) {
     if (isApiRoute) {
@@ -54,15 +63,14 @@ export default async function proxy(request: NextRequest) {
     }
 
     const role = profile?.role as UserRole
-    const dest =
-      role === 'lawyer' ? '/lawyer'
-      : role === 'delegate' ? '/delegate'
-      : role === 'payment_follow_up' ? '/admin/payment-follow-up'
-      : '/admin/dashboard'
-    return NextResponse.redirect(new URL(dest, request.url))
+    return NextResponse.redirect(new URL(homeForRole(role), request.url))
   }
 
-  if (user && (isAdminRoute || isLawyerRoute || isDelegateRoute || (isApiRoute && !isPublicAuthApi))) {
+  if (
+    user
+    && (isAdminRoute || isLawyerRoute || isDelegateRoute || isChiefAccountantRoute
+      || (isApiRoute && !isPublicAuthApi))
+  ) {
     const { data: profile } = await supabase
       .from('profiles')
       .select('role, is_active')
@@ -79,25 +87,23 @@ export default async function proxy(request: NextRequest) {
 
     const role = profile?.role as UserRole
 
+    if (isChiefAccountantRoute && role !== 'chief_accountant') {
+      return NextResponse.redirect(new URL(homeForRole(role), request.url))
+    }
     if (isLawyerRoute && role !== 'lawyer') {
-      const dest =
-        role === 'delegate' ? '/delegate'
-        : role === 'payment_follow_up' ? '/admin/payment-follow-up'
-        : '/admin/dashboard'
-      return NextResponse.redirect(new URL(dest, request.url))
+      return NextResponse.redirect(new URL(homeForRole(role), request.url))
     }
     if (isDelegateRoute && role !== 'delegate') {
-      const dest =
-        role === 'lawyer' ? '/lawyer'
-        : role === 'payment_follow_up' ? '/admin/payment-follow-up'
-        : '/admin/dashboard'
-      return NextResponse.redirect(new URL(dest, request.url))
+      return NextResponse.redirect(new URL(homeForRole(role), request.url))
     }
     if (isAdminRoute && role === 'lawyer') {
       return NextResponse.redirect(new URL('/lawyer/tasks', request.url))
     }
     if (isAdminRoute && role === 'delegate') {
       return NextResponse.redirect(new URL('/delegate/tasks', request.url))
+    }
+    if (isAdminRoute && role === 'chief_accountant') {
+      return NextResponse.redirect(new URL('/chief-accountant/tasks', request.url))
     }
     if (isAdminRoute && role === 'payment_follow_up' && pathname === '/admin/dashboard') {
       return NextResponse.redirect(new URL('/admin/payment-follow-up', request.url))

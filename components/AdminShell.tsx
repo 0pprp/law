@@ -15,6 +15,7 @@ import ListSelector from '@/components/ListSelector'
 import {
   isNavVisibleForRole,
   isAccountant,
+  isChiefAccountant,
   isViewer,
   isCriminalLegalManager,
   isAnyLegalManager,
@@ -587,6 +588,13 @@ function AdminShellInner({
               <span className="font-bold">مسؤول الجزائيات</span>
               {' — '}
               يرى الدعاوى الجزائية فقط. بعض الشاشات المدنية (مثل المندوبين) غير متاحة.
+            </div>
+          )}
+          {isChiefAccountant(userRole) && (
+            <div className="shrink-0 bg-teal-50 border-b border-teal-200 px-4 py-2.5 text-center text-sm text-teal-950 font-medium">
+              <span className="font-bold">محاسب رئيسي</span>
+              {' — '}
+              متابعة المدينين المعيَّنين وتجهيز الملفات ضمن الفروع المرتبطة بحسابك.
             </div>
           )}
 

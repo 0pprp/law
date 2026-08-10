@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
-import { canStaffReadBranch } from '@/lib/staff-branch-access'
+import { canStaffOrChiefReadDebtor } from '@/lib/chief-accountant-access'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireDebtorInScope } from '@/lib/section-guard'
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   const admin = createAdminClient()
   let q = admin
     .from('debtor_attachments')
-    .select('id, file_path, debtor_id, debtor:debtors!debtor_attachments_debtor_id_fkey(branch_id)')
+    .select('id, file_path, debtor_id, debtor:debtors!debtor_attachments_debtor_id_fkey(branch_id, assigned_chief_accountant_id)')
   if (fileId) q = q.eq('id', fileId)
   else q = q.eq('file_path', path!)
 
@@ -49,7 +49,11 @@ export async function POST(request: Request) {
 
   const debtor = Array.isArray(row.debtor) ? row.debtor[0] : row.debtor
   const branchId = (debtor as { branch_id?: string | null } | null)?.branch_id ?? null
-  if (!canStaffReadBranch(auth.profile, branchId)) {
+  const assigned = (debtor as { assigned_chief_accountant_id?: string | null } | null)?.assigned_chief_accountant_id ?? null
+  if (!canStaffOrChiefReadDebtor(
+    { ...auth.profile!, id: auth.user!.id },
+    { branch_id: branchId, assigned_chief_accountant_id: assigned },
+  )) {
     return safeClientError('صلاحية غير كافية', 403)
   }
 

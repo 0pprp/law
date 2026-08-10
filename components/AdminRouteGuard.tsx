@@ -11,6 +11,8 @@ import {
   isCriminalLegalManagerPathAllowed,
   isPaymentFollowUp,
   isPaymentFollowUpPathAllowed,
+  isChiefAccountant,
+  isChiefAccountantPathAllowed,
   canViewLegalManagerWallet,
   canManageDelegates,
   canManageTaskManagement,
@@ -23,6 +25,7 @@ import PermissionDenied from '@/components/PermissionDenied'
  * - المدير: لا قيود هنا
  * - المحاسب: مسارات مالية + مدينين فقط
  * - مسؤول متابعة التسديد: لوحته + التسديدات + كشف الحساب فقط
+ * - المحاسب الرئيسي: المدينون المعيَّنون فقط
  * - مسؤول الدعاوى المدنية / مسؤول الجزائيات: عرض؛ التنفيذ عبر canWriteData / APIs
  */
 export default function AdminRouteGuard({ children }: { children: React.ReactNode }) {
@@ -39,6 +42,10 @@ export default function AdminRouteGuard({ children }: { children: React.ReactNod
 
   if (isPaymentFollowUp(role) && !isPaymentFollowUpPathAllowed(pathname)) {
     return <PermissionDenied message="صلاحيات متابعة التسديد: لوحة جاري التسديد والتسديدات فقط." />
+  }
+
+  if (isChiefAccountant(role) && !isChiefAccountantPathAllowed(pathname)) {
+    return <PermissionDenied message="صلاحيات المحاسب الرئيسي: المدينون المعيَّنون فقط." />
   }
 
   if (isAccountant(role) && !isAccountantPathAllowed(pathname)) {

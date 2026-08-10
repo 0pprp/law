@@ -13,6 +13,7 @@ import {
 } from '@/lib/permissions'
 import { countPaymentInProgress } from '@/lib/payment-in-progress'
 import { fetchAwaitingAssignmentDebtors } from '@/lib/awaiting-assignment'
+import { countFilePreparationDebtors } from '@/lib/file-preparation'
 import { useCaseScope } from '@/hooks/use-case-scope'
 
 function MoneyIcon() {
@@ -35,6 +36,14 @@ function PersonPlusIcon() {
   return (
     <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z" />
+    </svg>
+  )
+}
+
+function FolderPrepIcon() {
+  return (
+    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75A2.25 2.25 0 016 4.5h4.172a2.25 2.25 0 011.591.659l.828.828A2.25 2.25 0 0014.182 6.75H18a2.25 2.25 0 012.25 2.25v8.25A2.25 2.25 0 0118 19.5H6a2.25 2.25 0 01-2.25-2.25V6.75z" />
     </svg>
   )
 }
@@ -122,12 +131,14 @@ export default function PaymentOpsCards({
   const showPayment = showPaymentSection && canViewPaymentInProgressCard(role)
   const showNoncompliance = showPaymentSection && canReviewPaymentNoncomplianceRequest(role)
   const [awaitingCount, setAwaitingCount] = useState<number | null>(null)
+  const [prepCount, setPrepCount] = useState<number | null>(null)
   const [paymentCount, setPaymentCount] = useState<number | null>(null)
   const [pendingCount, setPendingCount] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     if (!branchId && !viewAllBranches) {
       setAwaitingCount(0)
+      setPrepCount(0)
       setPaymentCount(0)
       setPendingCount(0)
       return
@@ -141,14 +152,24 @@ export default function PaymentOpsCards({
     if (showAwaiting) {
       void (async () => {
         if (caseTypeFilter === null && listScope) {
-          const [civilRes, crimRes] = await Promise.all([
+          const [civilRes, crimRes, civilPrep, crimPrep] = await Promise.all([
             fetchAwaitingAssignmentDebtors(supabase, scope, {
               limit: 1,
               branchListId: listScope,
               caseType: 'civil',
+              mode: 'awaiting',
             }),
             fetchAwaitingAssignmentDebtors(supabase, scope, {
               limit: 1,
+              branchListId: null,
+              caseType: 'criminal',
+              mode: 'awaiting',
+            }),
+            countFilePreparationDebtors(supabase, scope, {
+              branchListId: listScope,
+              caseType: 'civil',
+            }),
+            countFilePreparationDebtors(supabase, scope, {
               branchListId: null,
               caseType: 'criminal',
             }),
@@ -156,13 +177,22 @@ export default function PaymentOpsCards({
           setAwaitingCount(
             (civilRes.error ? 0 : civilRes.total) + (crimRes.error ? 0 : crimRes.total),
           )
+          setPrepCount(civilPrep + crimPrep)
         } else {
-          const res = await fetchAwaitingAssignmentDebtors(supabase, scope, {
-            limit: 1,
-            branchListId: listScope,
-            caseType: caseTypeFilter,
-          })
+          const [res, prep] = await Promise.all([
+            fetchAwaitingAssignmentDebtors(supabase, scope, {
+              limit: 1,
+              branchListId: listScope,
+              caseType: caseTypeFilter,
+              mode: 'awaiting',
+            }),
+            countFilePreparationDebtors(supabase, scope, {
+              branchListId: listScope,
+              caseType: caseTypeFilter,
+            }),
+          ])
           setAwaitingCount(res.error ? 0 : res.total)
+          setPrepCount(prep)
         }
       })()
     }
@@ -243,6 +273,23 @@ export default function PaymentOpsCards({
                 softBg="linear-gradient(135deg,rgba(124,58,237,0.08),rgba(255,255,255,0.9))"
                 border="rgba(124,58,237,0.3)"
                 icon={<PersonPlusIcon />}
+              />
+              <ColorCard
+                label="تجهيز الملفات"
+                value={prepCount ?? '—'}
+                sub="مدين قيد تجهيز الملف لدى المحاسب الرئيسي"
+                href={
+                  caseTypeFilter === 'civil'
+                    ? '/admin/dashboard/awaiting-assignment?prep=1&ct=civil'
+                    : caseTypeFilter === 'criminal'
+                      ? '/admin/dashboard/awaiting-assignment?prep=1&ct=criminal'
+                      : '/admin/dashboard/awaiting-assignment?prep=1'
+                }
+                buttonLabel="عرض الأسماء"
+                gradient="linear-gradient(135deg,#0369a1,#0c4a6e)"
+                softBg="linear-gradient(135deg,rgba(3,105,161,0.08),rgba(255,255,255,0.9))"
+                border="rgba(3,105,161,0.35)"
+                icon={<FolderPrepIcon />}
               />
             </div>
           </div>

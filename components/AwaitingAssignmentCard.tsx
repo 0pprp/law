@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useAdminRole } from '@/context/admin-role'
-import { canAssignTasks, canManageSpecialStatuses, isAdmin, isLegalManager } from '@/lib/permissions'
+import { canAssignTasks, canManageSpecialStatuses, canSendToFilePreparation, isAdmin, isLegalManager } from '@/lib/permissions'
 import { fmtDate } from '@/lib/utils'
 import { CASE_TYPE_LABELS } from '@/lib/case-type'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
@@ -19,6 +19,7 @@ import {
 } from '@/lib/awaiting-assignment'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
+import { appAlert, appConfirm } from '@/lib/app-dialog'
 
 const PAGE_SIZE = 20
 
@@ -39,6 +40,8 @@ interface Props {
   hideHeader?: boolean
   /** فلتر من لوحة التحكم عبر ?ct= — يتجاوز نطاق الدور عند التمرير */
   caseType?: 'civil' | 'criminal' | null
+  /** awaiting = تحت إسناد · preparing = تجهيز الملفات */
+  mode?: 'awaiting' | 'preparing'
 }
 
 function NoteModal({
@@ -345,9 +348,11 @@ function BranchAwaitingBox({
   search,
   caseTypeFilter,
   initialListId,
+  mode,
   allowNote,
   allowAssign,
   allowMonitor,
+  allowSendPrep,
   onAssigned,
   onNote,
   notePatch,
@@ -356,9 +361,11 @@ function BranchAwaitingBox({
   search: string
   caseTypeFilter: 'civil' | 'criminal' | null
   initialListId: string
+  mode: 'awaiting' | 'preparing'
   allowNote: boolean
   allowAssign: boolean
   allowMonitor: boolean
+  allowSendPrep: boolean
   onAssigned?: () => void
   onNote: (r: AwaitingAssignmentDebtor) => void
   notePatch?: { id: string; note: string | null } | null
@@ -373,6 +380,9 @@ function BranchAwaitingBox({
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [monitorModalOpen, setMonitorModalOpen] = useState(false)
   const [monitorError, setMonitorError] = useState('')
+  const [sendingPrep, setSendingPrep] = useState(false)
+  const [prepError, setPrepError] = useState('')
+  const allowSelect = (allowMonitor || allowSendPrep) && mode === 'awaiting'
 
   useEffect(() => {
     setListId(initialListId)
@@ -394,6 +404,7 @@ function BranchAwaitingBox({
       limit: fetchLimit ?? PAGE_SIZE,
       branchListId: effectiveListId,
       caseType: caseTypeFilter,
+      mode,
     })
     if (res.error) {
       setError('فشل تحميل الأسماء')
@@ -420,7 +431,7 @@ function BranchAwaitingBox({
     }
     setLoading(false)
     setLoadingMore(false)
-  }, [summary.branchId, search, listId, caseTypeFilter])
+  }, [summary.branchId, search, listId, caseTypeFilter, mode])
 
   useEffect(() => { void load(0, false) }, [load])
 
@@ -438,6 +449,56 @@ function BranchAwaitingBox({
     const allSelected = rows.length > 0 && rows.every(r => selectedIds.includes(r.id))
     if (allSelected) setSelectedIds([])
     else setSelectedIds(rows.map(r => r.id))
+  }
+
+  async function sendToPreparation() {
+    if (!selectedIds.length || sendingPrep) return
+    setPrepError('')
+    const ok = await appConfirm({
+      title: 'إرسال للتجهيز',
+      message: `إرسال ${selectedIds.length} اسم إلى المحاسب الرئيسي لتجهيز الملفات؟`,
+      confirmLabel: 'إرسال',
+    })
+    if (!ok) return
+    setSendingPrep(true)
+    try {
+      const res = await fetch('/api/admin/debtors/send-to-preparation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ debtorIds: selectedIds }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const msg = typeof data?.error === 'string'
+          ? data.error
+          : Array.isArray(data?.failed) && data.failed[0]?.reason
+            ? data.failed[0].reason
+            : 'فشل الإرسال للتجهيز'
+        setPrepError(msg)
+        await appAlert({ title: 'تعذر الإرسال', message: msg })
+        return
+      }
+      const updatedIds: string[] = Array.isArray(data.updatedIds) ? data.updatedIds : []
+      const failed: { name?: string; reason?: string }[] = Array.isArray(data.failed) ? data.failed : []
+      const moved = new Set(updatedIds)
+      preserveScrollDuring(() => {
+        setRows(prev => prev.filter(row => !moved.has(row.id)))
+        setTotal(prev => Math.max(0, prev - moved.size))
+        setSelectedIds([])
+      })
+      onAssigned?.()
+      if (failed.length) {
+        const sample = failed.slice(0, 3).map(f => `«${f.name}»: ${f.reason}`).join('\n')
+        await appAlert({
+          title: 'إرسال جزئي',
+          message: `تم إرسال ${updatedIds.length} بنجاح.\nتعذّر ${failed.length}:\n${sample}`,
+        })
+      }
+    } catch {
+      setPrepError('فشل الاتصال بالخادم')
+    } finally {
+      setSendingPrep(false)
+    }
   }
 
   // لا تعرض البوكس إن صارت القائمة فارغة بعد الفلتر (ما عدا أثناء التحميل الأول)
@@ -485,36 +546,55 @@ function BranchAwaitingBox({
         </div>
       ) : (
         <>
-          {allowMonitor && (
+          {allowSelect && (
             <div className="mx-4 mt-3 mb-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#2C8780]/25 bg-[#2C8780]/8 px-3 py-2.5">
               <p className="text-xs text-[#454042] font-medium">
                 {selectedIds.length > 0
-                  ? `محدَّد: ${selectedIds.length} — جاهز للتحويل`
-                  : 'حدّد اسماً أو أكثر ثم حوّل للمراقبة'}
+                  ? `محدَّد: ${selectedIds.length}`
+                  : 'حدّد اسماً أو أكثر ثم اختر إجراءً'}
               </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setMonitorError('')
-                  setMonitorModalOpen(true)
-                }}
-                disabled={selectedIds.length === 0}
-                className="text-xs font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-2 rounded-lg transition-colors"
-                style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
-              >
-                تحويل إلى تبويب الأسماء التي تحتاج مراقبة
-                {selectedIds.length ? ` (${selectedIds.length})` : ''}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                {allowSendPrep && (
+                  <button
+                    type="button"
+                    onClick={() => void sendToPreparation()}
+                    disabled={selectedIds.length === 0 || sendingPrep}
+                    className="text-xs font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-2 rounded-lg transition-colors"
+                    style={{ background: 'linear-gradient(135deg,#0369a1,#0c4a6e)' }}
+                  >
+                    {sendingPrep
+                      ? 'جارٍ الإرسال...'
+                      : `إرسال للتجهيز${selectedIds.length ? ` (${selectedIds.length})` : ''}`}
+                  </button>
+                )}
+                {allowMonitor && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMonitorError('')
+                      setMonitorModalOpen(true)
+                    }}
+                    disabled={selectedIds.length === 0}
+                    className="text-xs font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-2 rounded-lg transition-colors"
+                    style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+                  >
+                    تحويل إلى تبويب الأسماء التي تحتاج مراقبة
+                    {selectedIds.length ? ` (${selectedIds.length})` : ''}
+                  </button>
+                )}
+              </div>
             </div>
           )}
-          {monitorError && (
-            <div className="mx-4 mt-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{monitorError}</div>
+          {(monitorError || prepError) && (
+            <div className="mx-4 mt-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
+              {prepError || monitorError}
+            </div>
           )}
           <DebtorRowsTable
             rows={rows}
             allowNote={allowNote}
-            allowAssign={allowAssign}
-            allowSelect={allowMonitor}
+            allowAssign={allowAssign && mode === 'awaiting'}
+            allowSelect={allowSelect}
             noteMissing={noteMissing}
             onNote={onNote}
             selectedIds={selectedIds}
@@ -542,7 +622,7 @@ function BranchAwaitingBox({
               </button>
             )}
           </div>
-          {allowMonitor && (
+          {allowMonitor && mode === 'awaiting' && (
             <MoveToMonitoringModal
               open={monitorModalOpen}
               branchId={summary.branchId}
@@ -566,7 +646,7 @@ function BranchAwaitingBox({
   )
 }
 
-/** كارد «الأسماء التي تحت إسناد مهمة» — بوكسات حسب الفرع + فلتر قوائم لكل فرع */
+/** كارد «الأسماء التي تحت إسناد مهمة» / «تجهيز الملفات» — بوكسات حسب الفرع */
 export default function AwaitingAssignmentCard({
   branchId,
   viewAllBranches,
@@ -574,13 +654,16 @@ export default function AwaitingAssignmentCard({
   onAssigned,
   hideHeader,
   caseType,
+  mode = 'awaiting',
 }: Props) {
   const role = useAdminRole()
   const allowNote = isAdmin(role) || isLegalManager(role)
   const allowAssign = canAssignTasks(role)
-  const allowMonitor = canManageSpecialStatuses(role)
+  const allowMonitor = canManageSpecialStatuses(role) && mode === 'awaiting'
+  const allowSendPrep = canSendToFilePreparation(role) && mode === 'awaiting'
   const { caseTypeFilter: roleCaseType } = useCaseScope()
   const caseTypeFilter = caseType !== undefined ? caseType : roleCaseType
+  const isPrepMode = mode === 'preparing'
 
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -607,6 +690,7 @@ export default function AwaitingAssignmentCard({
       const res = await fetchAwaitingAssignmentBranchSummaries(createClient(), scopeBranchId, {
         search: term,
         caseType: caseTypeFilter,
+        mode,
       })
       if (res.error) {
         if (!soft) {
@@ -644,7 +728,7 @@ export default function AwaitingAssignmentCard({
       }
     }
     setLoading(false)
-  }, [branchId, viewAllBranches, scopeBranchId, caseTypeFilter])
+  }, [branchId, viewAllBranches, scopeBranchId, caseTypeFilter, mode])
 
   useEffect(() => { void loadSummaries(debouncedSearch) }, [loadSummaries, debouncedSearch])
 
@@ -663,12 +747,16 @@ export default function AwaitingAssignmentCard({
       {!hideHeader && (
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2.5">
-            <h2 className="font-black text-[#231F20] text-base sm:text-lg">الأسماء التي تحت إسناد مهمة</h2>
-            <span className="inline-flex items-center justify-center min-w-[1.75rem] h-7 px-2 rounded-full bg-amber-100 text-amber-800 text-sm font-black tabular-nums">
+            <h2 className="font-black text-[#231F20] text-base sm:text-lg">
+              {isPrepMode ? 'تجهيز الملفات' : 'الأسماء التي تحت إسناد مهمة'}
+            </h2>
+            <span className={`inline-flex items-center justify-center min-w-[1.75rem] h-7 px-2 rounded-full text-sm font-black tabular-nums ${isPrepMode ? 'bg-sky-100 text-sky-900' : 'bg-amber-100 text-amber-800'}`}>
               {loading ? '—' : grandTotal}
             </span>
           </div>
-          <span className="hidden sm:inline text-sm text-[#454042] font-medium">مدينون بانتظار إسناد مهمة — الأقدم أولاً</span>
+          <span className="hidden sm:inline text-sm text-[#454042] font-medium">
+            {isPrepMode ? 'مدينون قيد تجهيز الملف' : 'مدينون بانتظار إسناد مهمة — الأقدم أولاً'}
+          </span>
         </div>
       )}
 
@@ -704,10 +792,18 @@ export default function AwaitingAssignmentCard({
       ) : branches.length === 0 ? (
         <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] px-4 py-10 text-center">
           <p className="text-sm font-semibold text-[#231F20]">
-            {debouncedSearch ? 'لا نتائج للبحث' : 'لا توجد أسماء تحت إسناد مهمة حالياً'}
+            {debouncedSearch
+              ? 'لا نتائج للبحث'
+              : isPrepMode
+                ? 'لا توجد أسماء قيد تجهيز الملفات حالياً'
+                : 'لا توجد أسماء تحت إسناد مهمة حالياً'}
           </p>
           <p className="text-xs text-[#767676] mt-1.5">
-            {debouncedSearch ? 'جرّب كلمات بحث مختلفة' : 'كل المدينين المفتوحين لديهم مهمة مطلوبة'}
+            {debouncedSearch
+              ? 'جرّب كلمات بحث مختلفة'
+              : isPrepMode
+                ? 'أرسل أسماء من كارد تحت إسناد مهمة عبر «إرسال للتجهيز»'
+                : 'كل المدينين المفتوحين لديهم مهمة مطلوبة'}
           </p>
         </div>
       ) : (
@@ -719,9 +815,11 @@ export default function AwaitingAssignmentCard({
               search={debouncedSearch}
               caseTypeFilter={caseTypeFilter}
               initialListId={initialListForBox}
+              mode={mode}
               allowNote={allowNote}
               allowAssign={allowAssign}
               allowMonitor={allowMonitor}
+              allowSendPrep={allowSendPrep}
               onAssigned={() => {
                 onAssigned?.()
                 preserveScrollDuring(() => {

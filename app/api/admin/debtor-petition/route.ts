@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { apiForbiddenResponse, canEditDebtor } from '@/lib/permissions'
-import { canStaffWriteBranch } from '@/lib/staff-branch-access'
+import { canStaffOrChiefWriteDebtor } from '@/lib/chief-accountant-access'
 import { logActivity } from '@/lib/activity-log'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireDebtorInScope } from '@/lib/section-guard'
@@ -69,11 +69,19 @@ export async function POST(request: NextRequest) {
 
   const admin = createAdminClient()
   const scope = sessionCaseScope(auth.profile)
-  const gate = await requireDebtorInScope(admin, scope, debtorId, 'id, branch_id, case_type')
+  const gate = await requireDebtorInScope(admin, scope, debtorId, 'id, branch_id, case_type, assigned_chief_accountant_id')
   if (!gate.ok) return gate.error
 
-  const debtor = gate.data as { id: string; branch_id: string | null; case_type?: string | null }
-  if (!canStaffWriteBranch(auth.profile, debtor.branch_id)) {
+  const debtor = gate.data as {
+    id: string
+    branch_id: string | null
+    case_type?: string | null
+    assigned_chief_accountant_id?: string | null
+  }
+  if (!canStaffOrChiefWriteDebtor(
+    { ...auth.profile!, id: auth.user!.id },
+    debtor,
+  )) {
     return safeClientError('صلاحية غير كافية', 403)
   }
 

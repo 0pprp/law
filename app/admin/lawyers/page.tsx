@@ -20,6 +20,7 @@ const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange
   accountant: 'success',
   lawyer: 'orange',
   viewer: 'gray',
+  chief_accountant: 'navy',
 }
 
 export default async function LawyersPage() {
@@ -37,6 +38,7 @@ export default async function LawyersPage() {
   let profiles: any[] = []
   let attachmentRows: { lawyer_id: string }[] = []
   let branchRows: { id: string; name: string }[] = []
+  let chiefBranchRows: { profile_id: string }[] = []
 
   if (branchId || viewAllBranches) {
     let profilesQ = supabase.from('profiles').select('*').order('created_at', { ascending: false })
@@ -48,10 +50,13 @@ export default async function LawyersPage() {
       showBranchCol
         ? supabase.from('branches').select('id, name')
         : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+      supabase.from('chief_accountant_branches').select('profile_id'),
     ])
     profiles = (result[0].data as any[]) ?? []
     attachmentRows = (result[1].data as { lawyer_id: string }[]) ?? []
     branchRows = (result[2].data as { id: string; name: string }[]) ?? []
+    const chiefRes = result[3] as { data: { profile_id: string }[] | null; error?: unknown }
+    chiefBranchRows = chiefRes.error ? [] : (chiefRes.data ?? [])
 
     const scope = resolveCaseScope(myProfile?.role)
     const sectionFilter = filterBySection(scope)
@@ -73,6 +78,10 @@ export default async function LawyersPage() {
   const attachCountMap = new Map<string, number>()
   for (const row of attachmentRows) {
     attachCountMap.set(row.lawyer_id, (attachCountMap.get(row.lawyer_id) ?? 0) + 1)
+  }
+  const chiefBranchCountMap = new Map<string, number>()
+  for (const row of chiefBranchRows) {
+    chiefBranchCountMap.set(row.profile_id, (chiefBranchCountMap.get(row.profile_id) ?? 0) + 1)
   }
 
   const activeCount = profiles.filter(p => p.is_active).length
@@ -133,13 +142,20 @@ export default async function LawyersPage() {
                               {user.full_name?.split(' ').filter(Boolean).slice(0, 2).map((w: string) => w[0]).join('') || '؟'}
                             </span>
                           </div>
-                          {canEditLawyerProfile(myProfile?.role, user.role) ? (
-                            <Link href={`/admin/lawyers/${user.id}/edit`} className="font-semibold text-[#231F20] hover:text-[#2C8780] transition-colors">
-                              {user.full_name}
-                            </Link>
-                          ) : (
-                            <span className="font-semibold text-[#231F20]">{user.full_name}</span>
-                          )}
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            {canEditLawyerProfile(myProfile?.role, user.role) ? (
+                              <Link href={`/admin/lawyers/${user.id}/edit`} className="font-semibold text-[#231F20] hover:text-[#2C8780] transition-colors">
+                                {user.full_name}
+                              </Link>
+                            ) : (
+                              <span className="font-semibold text-[#231F20]">{user.full_name}</span>
+                            )}
+                            {user.role === 'chief_accountant' && (
+                              <span className="text-[11px] font-semibold text-[#2C8780] bg-[#2C8780]/8 border border-[#2C8780]/20 px-2 py-0.5 rounded-full">
+                                {chiefBranchCountMap.get(user.id) ?? 0} فرع
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </TD>
                       <TD>
@@ -208,7 +224,14 @@ export default async function LawyersPage() {
                         </span>
                       </div>
                       <div>
-                        <p className="font-semibold text-[#231F20] text-sm">{user.full_name}</p>
+                        <p className="font-semibold text-[#231F20] text-sm">
+                          {user.full_name}
+                          {user.role === 'chief_accountant' && (
+                            <span className="mr-2 text-[11px] font-semibold text-[#2C8780]">
+                              ({chiefBranchCountMap.get(user.id) ?? 0} فرع)
+                            </span>
+                          )}
+                        </p>
                         {user.username && <p className="text-xs text-[#767676] font-mono">{user.username}</p>}
                       </div>
                     </div>

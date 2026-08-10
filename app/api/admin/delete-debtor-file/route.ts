@@ -3,7 +3,7 @@ import { logActivity } from '@/lib/activity-log'
 import { canEditDebtor, apiForbiddenResponse } from '@/lib/permissions'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSessionProfile, sessionCaseScope } from '@/lib/api-auth'
-import { canStaffWriteBranch } from '@/lib/staff-branch-access'
+import { canStaffOrChiefWriteDebtor } from '@/lib/chief-accountant-access'
 import { isSafeStoragePath } from '@/lib/storage-path'
 import { apiServerError, safeClientError } from '@/lib/safe-api-error'
 import { requireDebtorInScope } from '@/lib/section-guard'
@@ -21,7 +21,7 @@ export async function DELETE(request: Request) {
   const admin = createAdminClient()
   const { data: row, error } = await admin
     .from('debtor_attachments')
-    .select('id, file_path, debtor_id, debtor:debtors!debtor_attachments_debtor_id_fkey(branch_id)')
+    .select('id, file_path, debtor_id, debtor:debtors!debtor_attachments_debtor_id_fkey(branch_id, assigned_chief_accountant_id)')
     .eq('id', fileId)
     .maybeSingle()
 
@@ -37,7 +37,11 @@ export async function DELETE(request: Request) {
 
   const debtor = Array.isArray(row.debtor) ? row.debtor[0] : row.debtor
   const branchId = (debtor as { branch_id?: string | null } | null)?.branch_id ?? null
-  if (!canStaffWriteBranch(auth.profile, branchId)) return apiForbiddenResponse()
+  const assigned = (debtor as { assigned_chief_accountant_id?: string | null } | null)?.assigned_chief_accountant_id ?? null
+  if (!canStaffOrChiefWriteDebtor(
+    { ...auth.profile!, id: auth.user!.id },
+    { branch_id: branchId, assigned_chief_accountant_id: assigned },
+  )) return apiForbiddenResponse()
 
   const rel = relativeStoredPath('debtor-files', row.file_path)
   if (!rel) return safeClientError('مسار غير صالح', 400)

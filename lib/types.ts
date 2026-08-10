@@ -7,6 +7,10 @@ export type UserRole =
   | 'delegate'
   | 'payment_follow_up'
   | 'criminal_legal_manager'
+  | 'chief_accountant'
+
+/** حالة تجهيز الملف عند المحاسب الرئيسي */
+export type FilePreparationStatus = 'preparing' | 'ready'
 
 /** حالة جاري التسديد على debtors.case_status */
 export const CASE_STATUS_PAYMENT_IN_PROGRESS = 'payment_in_progress' as const
@@ -185,6 +189,10 @@ export interface Debtor {
   payment_type?: PaymentScheduleType | null
   /** مكان التسديد عند جاري التسديد */
   payment_location?: PaymentLocation | null
+  /** تجهيز الملف لدى المحاسب الرئيسي */
+  file_preparation_status?: FilePreparationStatus | null
+  /** المحاسب الرئيسي المعيَّن على المدين */
+  assigned_chief_accountant_id?: string | null
   created_by: string
   created_at: string
   updated_at: string
@@ -401,6 +409,7 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   delegate: 'مندوب',
   payment_follow_up: 'مسؤول متابعة التسديد',
   criminal_legal_manager: 'مسؤول الجزائيات',
+  chief_accountant: 'محاسب رئيسي',
 }
 
 export const LAWYER_TYPE_LABELS: Record<LawyerType, string> = {

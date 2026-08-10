@@ -83,6 +83,7 @@ export async function POST(request: Request) {
         role === 'lawyer' ? '/lawyer'
         : role === 'delegate' ? '/delegate'
         : role === 'payment_follow_up' ? '/admin/payment-follow-up'
+        : role === 'chief_accountant' ? '/chief-accountant/tasks'
         : '/admin/dashboard'
       return NextResponse.json({ redirectTo })
     }
@@ -132,6 +133,7 @@ export async function POST(request: Request) {
       role === 'lawyer' ? '/lawyer'
       : role === 'delegate' ? '/delegate'
       : role === 'payment_follow_up' ? '/admin/payment-follow-up'
+      : role === 'chief_accountant' ? '/chief-accountant/tasks'
       : '/admin/dashboard'
     return NextResponse.json({ redirectTo })
 

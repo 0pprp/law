@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/server'
 import { deleteStaffUserAccount } from '@/lib/delete-staff-user'
 import { formatErrorMessage } from '@/lib/format-error'
 
-const DELETABLE_ROLES = new Set(['lawyer', 'delegate', 'accountant', 'employee', 'viewer', 'criminal_legal_manager'])
+const DELETABLE_ROLES = new Set(['lawyer', 'delegate', 'accountant', 'employee', 'viewer', 'criminal_legal_manager', 'payment_follow_up', 'chief_accountant'])
 
 async function handleDelete(request: NextRequest) {
   const ctx = await requireCanDeleteProfile()

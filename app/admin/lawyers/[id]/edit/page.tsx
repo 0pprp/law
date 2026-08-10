@@ -22,8 +22,9 @@ import { ACCOUNTANT_TYPE_OPTIONS } from '@/lib/accountant-type'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { uploadLawyerAttachment } from '@/lib/lawyer-attachments'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
+import ChiefAccountantBranchesPicker from '@/components/ChiefAccountantBranchesPicker'
 
-const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer', 'viewer', 'criminal_legal_manager', 'payment_follow_up']
+const ROLES: UserRole[] = ['admin', 'employee', 'accountant', 'lawyer', 'viewer', 'criminal_legal_manager', 'payment_follow_up', 'chief_accountant']
 const INP = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 
 function Field({ label, required: req, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
@@ -80,6 +81,7 @@ export default function EditLawyerPage() {
     case_type: 'civil' as 'civil' | 'criminal',
   })
   const [profileBranchId, setProfileBranchId] = useState<string | null>(null)
+  const [chiefBranchIds, setChiefBranchIds] = useState<string[]>([])
 
   useEffect(() => {
     async function load() {
@@ -109,6 +111,19 @@ export default function EditLawyerPage() {
           case_type: data.case_type === 'criminal' ? 'criminal' : 'civil',
         })
         setTargetRole((data.role ?? 'lawyer') as UserRole)
+        if (data.role === 'chief_accountant') {
+          try {
+            const brRes = await fetch(`/api/admin/chief-accountant-branches?profileId=${encodeURIComponent(id)}`)
+            if (brRes.ok) {
+              const brJson = await brRes.json() as { branches?: { id: string }[] }
+              setChiefBranchIds((brJson.branches ?? []).map(b => b.id).filter(Boolean))
+            }
+          } catch {
+            setChiefBranchIds([])
+          }
+        } else {
+          setChiefBranchIds([])
+        }
       }
       setAttachments(files ?? [])
       setTargetLoaded(true)
@@ -125,6 +140,10 @@ export default function EditLawyerPage() {
     if (legalOfficerMode && form.role !== 'lawyer') {
       setError('لا يمكنك تعديل هذا المستخدم')
       setSaving(false)
+      return
+    }
+    if (form.role === 'chief_accountant' && chiefBranchIds.length === 0) {
+      setError('يجب اختيار فرع واحد على الأقل للمحاسب الرئيسي')
       return
     }
     setSaving(true); setError('')
@@ -145,6 +164,20 @@ export default function EditLawyerPage() {
     if (!legalOfficerMode) updatePayload.role = form.role
     if (!profileBranchId && branchId) updatePayload.branch_id = branchId
 
+    if (!legalOfficerMode && targetRole === 'chief_accountant' && form.role !== 'chief_accountant') {
+      const clearRes = await fetch('/api/admin/chief-accountant-branches', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: id, branchIds: [] }),
+      })
+      if (!clearRes.ok) {
+        const brJson = await clearRes.json().catch(() => ({})) as { error?: string }
+        setError(brJson.error ?? 'فشل إزالة فروع المحاسب الرئيسي قبل تغيير الدور')
+        setSaving(false)
+        return
+      }
+    }
+
     const { error: dbError } = await supabase.from('profiles').update(updatePayload).eq('id', id)
     if (dbError) {
       const missingAccountantCol = String(dbError.message ?? '').includes('accountant_type')
@@ -160,6 +193,21 @@ export default function EditLawyerPage() {
         setSaving(false); return
       }
     }
+
+    if (!legalOfficerMode && form.role === 'chief_accountant') {
+      const brRes = await fetch('/api/admin/chief-accountant-branches', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: id, branchIds: chiefBranchIds }),
+      })
+      if (!brRes.ok) {
+        const brJson = await brRes.json().catch(() => ({})) as { error?: string }
+        setError(brJson.error ?? 'تم حفظ البيانات لكن فشل تحديث فروع المحاسب الرئيسي')
+        setSaving(false)
+        return
+      }
+    }
+
     const descRole = form.role === 'accountant' && form.accountant_type === 'general'
       ? 'محاسب عام'
       : USER_ROLE_LABELS[form.role]
@@ -261,7 +309,11 @@ export default function EditLawyerPage() {
             {!legalOfficerMode && (
             <PremiumSelect
               value={form.role}
-              onChange={v => set('role', v)}
+              onChange={v => {
+                const next = v as UserRole
+                set('role', next)
+                if (next !== 'chief_accountant') setChiefBranchIds([])
+              }}
               options={ROLES.map(r => ({ value: r, label: USER_ROLE_LABELS[r] }))}
               fieldLabel="الدور"
               headerTitle="اختر الدور"
@@ -276,6 +328,25 @@ export default function EditLawyerPage() {
             )}
           </div>
         </Card>
+
+        {form.role === 'chief_accountant' && !legalOfficerMode && (
+          <Card>
+            <CardHeader title="فروع المحاسب الرئيسي" />
+            <div className="p-5">
+              <Field
+                label="الفروع المسؤول عنها"
+                required
+                hint="أضف أو احذف المحافظات التي يتابعها هذا المحاسب"
+              >
+                <ChiefAccountantBranchesPicker
+                  selectedIds={chiefBranchIds}
+                  onChange={setChiefBranchIds}
+                  disabled={readOnly}
+                />
+              </Field>
+            </div>
+          </Card>
+        )}
 
         <Card>
           <CardHeader title="بيانات الهوية" />

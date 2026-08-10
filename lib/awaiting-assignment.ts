@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { attachLastNotes } from '@/lib/debtor-last-notes'
 import { resolveSpecialStatus } from '@/lib/special-statuses'
+import { OVERDUE_TERMINAL_STATUSES } from '@/lib/local-date'
 
 /**
  * «الأسماء التي تحت إسناد مهمة» — مدينون بانتظار تعيين مهمة مطلوبة:
@@ -37,6 +38,11 @@ export interface FetchAwaitingAssignmentOptions {
   branchListId?: string | null
   /** عزل القسم — يُمرَّر من filterBySection(resolveCaseScope(...)) */
   caseType?: 'civil' | 'criminal' | null
+  /**
+   * awaiting (افتراضي): تحت إسناد مهمة — يستثني preparing
+   * preparing: قيد تجهيز الملفات فقط
+   */
+  mode?: 'awaiting' | 'preparing'
 }
 
 export interface FetchAwaitingAssignmentResult {
@@ -66,14 +72,8 @@ function awaitingBaseCols(): string {
   return awaitingCourtColReady === false ? BASE_COLS_NO_COURT : BASE_COLS_WITH_COURT
 }
 
-/** حالات نهائية لا تُحسب ضمن صفوف «تحت إسناد» للمهام اليتيمة */
-const TERMINAL_TASK_STATUSES = new Set([
-  'approved',
-  'completed',
-  'closed',
-  'cancelled',
-  'rejected_final',
-])
+/** حالات نهائية لا تُحسب ضمن صفوف «تحت إسناد» للمهام اليتيمة — يجب أن تطابق enum task_status */
+const TERMINAL_TASK_STATUSES = new Set<string>(OVERDUE_TERMINAL_STATUSES)
 
 function isMissingNoteColumnError(message: string | undefined | null): boolean {
   return !!message && message.includes('assignment_note')
@@ -83,11 +83,33 @@ function isMissingDuplicateColumnError(message: string | undefined | null): bool
   return !!message && message.includes('duplicate_flagged_at')
 }
 
+function isMissingPrepColumnError(message: string | undefined | null): boolean {
+  if (!message) return false
+  const m = message.toLowerCase()
+  return m.includes('file_preparation_status') && (m.includes('column') || m.includes('schema cache') || m.includes('does not exist'))
+}
+
 /** يستثني المحوّلين للأسماء المكررة — يتجاهل الشرط إن العمود غير مطبّق بعد */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyNotDuplicateFilter(q: any, columnReady: boolean): any {
   if (!columnReady) return q
   return q.is('duplicate_flagged_at', null)
+}
+
+/**
+ * awaiting: استثناء قيد التجهيز
+ * preparing: فقط preparing
+ * يتجاهل الفلتر إن العمود غير موجود
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyFilePreparationModeFilter(
+  q: any,
+  mode: 'awaiting' | 'preparing',
+  columnReady: boolean,
+): any {
+  if (!columnReady) return q
+  if (mode === 'preparing') return q.eq('file_preparation_status', 'preparing')
+  return q.or('file_preparation_status.is.null,file_preparation_status.neq.preparing')
 }
 
 /**
@@ -227,10 +249,12 @@ async function fetchUntypedUnassignedDebtors(
   const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
   const branchListId = options?.branchListId?.trim() || null
   const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
+  const mode = options?.mode === 'preparing' ? 'preparing' : 'awaiting'
   const PAGE = 500
   const terminalFilter = `(${[...TERMINAL_TASK_STATUSES].join(',')})`
   let noteColumnMissing = false
   let duplicateColumnReady = true
+  let prepColumnReady = true
 
   const colsWithNote = `${awaitingBaseCols()}, assignment_note, current_task_id`
   const colsBase = `${awaitingBaseCols()}, current_task_id`
@@ -252,11 +276,17 @@ async function fetchUntypedUnassignedDebtors(
     if (caseType) q = q.eq('case_type', caseType)
     if (search) q = q.ilike('full_name', `%${search}%`)
     q = applyNotDuplicateFilter(q, duplicateColumnReady)
+    q = applyFilePreparationModeFilter(q, mode, prepColumnReady)
     return q
   }
 
   async function runPage(from: number, to: number) {
     let res = await build(colsWithNote, from, to)
+    if (res.error && isMissingPrepColumnError(res.error.message)) {
+      prepColumnReady = false
+      if (mode === 'preparing') return { data: [], error: null }
+      res = await build(colsWithNote, from, to)
+    }
     if (res.error && isMissingDuplicateColumnError(res.error.message)) {
       duplicateColumnReady = false
       res = await build(colsWithNote, from, to)
@@ -272,33 +302,27 @@ async function fetchUntypedUnassignedDebtors(
         duplicateColumnReady = false
         res = await build(`${awaitingBaseCols()}, current_task_id`, from, to)
       }
+      if (res.error && isMissingPrepColumnError(res.error.message)) {
+        prepColumnReady = false
+        if (mode === 'preparing') return { data: [], error: null }
+        res = await build(`${awaitingBaseCols()}, current_task_id`, from, to)
+      }
     } else if (!res.error && awaitingCourtColReady !== false) {
       awaitingCourtColReady = true
     }
     return res
   }
 
-  const first = await runPage(0, PAGE - 1)
-  if (first.error) return { rows: [], error: first.error.message, noteColumnMissing }
-
-  const firstRows = (first.data ?? []) as unknown as RawDebtor[]
-  const out: RawDebtor[] = firstRows.map(r => ({ ...r, needs_task_definition: true }))
-
-  // إن تجاوزت الصفحة الأولى: صفحات متوازية بدل while متسلسل
-  if (firstRows.length >= PAGE) {
-    const extraPages = 3
-    const results = await Promise.all(
-      Array.from({ length: extraPages }, (_, i) => {
-        const from = (i + 1) * PAGE
-        return runPage(from, from + PAGE - 1)
-      }),
-    )
-    for (const res of results) {
-      if (res.error) return { rows: [], error: res.error.message, noteColumnMissing }
-      const rows = (res.data ?? []) as unknown as RawDebtor[]
-      for (const r of rows) out.push({ ...r, needs_task_definition: true })
-      if (rows.length < PAGE) break
-    }
+  const out: RawDebtor[] = []
+  let pageIdx = 0
+  while (pageIdx <= 100) {
+    const from = pageIdx * PAGE
+    const res = await runPage(from, from + PAGE - 1)
+    if (res.error) return { rows: [], error: res.error.message, noteColumnMissing }
+    const rows = (res.data ?? []) as unknown as RawDebtor[]
+    for (const r of rows) out.push({ ...r, needs_task_definition: true })
+    if (rows.length < PAGE) break
+    pageIdx += 1
   }
 
   return { rows: out, error: null, noteColumnMissing }
@@ -316,8 +340,10 @@ export async function fetchAwaitingAssignmentDebtors(
   const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
   const branchListId = options?.branchListId?.trim() || null
   const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
+  const mode = options?.mode === 'preparing' ? 'preparing' : 'awaiting'
 
   let duplicateColumnReady = true
+  let prepColumnReady = true
 
   const buildNoTaskQuery = (cols: string) => {
     let q = supabase
@@ -332,6 +358,7 @@ export async function fetchAwaitingAssignmentDebtors(
     if (caseType) q = q.eq('case_type', caseType)
     if (search) q = q.ilike('full_name', `%${search}%`)
     q = applyNotDuplicateFilter(q, duplicateColumnReady)
+    q = applyFilePreparationModeFilter(q, mode, prepColumnReady)
     return q
   }
 
@@ -360,7 +387,26 @@ export async function fetchAwaitingAssignmentDebtors(
   if (caseType) countQ = countQ.eq('case_type', caseType)
   if (search) countQ = countQ.ilike('full_name', `%${search}%`)
   countQ = applyNotDuplicateFilter(countQ, duplicateColumnReady)
+  countQ = applyFilePreparationModeFilter(countQ, mode, prepColumnReady)
   let { count: noTaskTotal, error: countErr } = await countQ
+  if (countErr && isMissingPrepColumnError(countErr.message)) {
+    prepColumnReady = false
+    if (mode === 'preparing') {
+      return { rows: [], total: 0, noteColumnMissing, error: null }
+    }
+    countQ = supabase
+      .from('debtors')
+      .select('id', { count: 'exact', head: true })
+      .is('current_task_id', null)
+      .is('special_status_id', null)
+    countQ = applyAwaitingCaseStatusFilter(countQ)
+    if (branchId) countQ = countQ.eq('branch_id', branchId)
+    countQ = applyAwaitingBranchListFilter(countQ, branchListId, caseType)
+    if (caseType) countQ = countQ.eq('case_type', caseType)
+    if (search) countQ = countQ.ilike('full_name', `%${search}%`)
+    countQ = applyNotDuplicateFilter(countQ, duplicateColumnReady)
+    ;({ count: noTaskTotal, error: countErr } = await countQ)
+  }
   if (countErr && isMissingDuplicateColumnError(countErr.message)) {
     duplicateColumnReady = false
     countQ = supabase
@@ -373,6 +419,7 @@ export async function fetchAwaitingAssignmentDebtors(
     countQ = applyAwaitingBranchListFilter(countQ, branchListId, caseType)
     if (caseType) countQ = countQ.eq('case_type', caseType)
     if (search) countQ = countQ.ilike('full_name', `%${search}%`)
+    countQ = applyFilePreparationModeFilter(countQ, mode, prepColumnReady)
     ;({ count: noTaskTotal, error: countErr } = await countQ)
   }
   if (countErr) {
@@ -391,6 +438,14 @@ export async function fetchAwaitingAssignmentDebtors(
     const noTaskOffset = Math.max(0, offset - untypedSorted.length)
     let res = await buildNoTaskQuery(`${awaitingBaseCols()}, assignment_note`)
       .range(noTaskOffset, noTaskOffset + remaining - 1)
+    if (res.error && isMissingPrepColumnError(res.error.message)) {
+      prepColumnReady = false
+      if (mode === 'preparing') {
+        return { rows: [], total: 0, noteColumnMissing, error: null }
+      }
+      res = await buildNoTaskQuery(`${awaitingBaseCols()}, assignment_note`)
+        .range(noTaskOffset, noTaskOffset + remaining - 1)
+    }
     if (res.error && isMissingDuplicateColumnError(res.error.message)) {
       duplicateColumnReady = false
       res = await buildNoTaskQuery(`${awaitingBaseCols()}, assignment_note`)
@@ -443,9 +498,11 @@ async function countNoTaskAwaiting(
   search: string,
   caseType: 'civil' | 'criminal' | null,
   duplicateColumnReady: boolean,
-): Promise<{ count: number; error: string | null; duplicateColumnReady: boolean }> {
+  mode: 'awaiting' | 'preparing',
+  prepColumnReady: boolean,
+): Promise<{ count: number; error: string | null; duplicateColumnReady: boolean; prepColumnReady: boolean }> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const build = (dupReady: boolean): any => {
+  const build = (dupReady: boolean, prepReady: boolean): any => {
     let q = supabase
       .from('debtors')
       .select('id', { count: 'exact', head: true })
@@ -456,17 +513,24 @@ async function countNoTaskAwaiting(
     if (caseType) q = q.eq('case_type', caseType)
     if (search) q = q.ilike('full_name', `%${search}%`)
     q = applyNotDuplicateFilter(q, dupReady)
+    q = applyFilePreparationModeFilter(q, mode, prepReady)
     return q
   }
 
-  let ready = duplicateColumnReady
-  let res = await build(ready)
-  if (res.error && isMissingDuplicateColumnError(res.error.message)) {
-    ready = false
-    res = await build(false)
+  let dupReady = duplicateColumnReady
+  let prepReady = prepColumnReady
+  let res = await build(dupReady, prepReady)
+  if (res.error && isMissingPrepColumnError(res.error.message)) {
+    prepReady = false
+    if (mode === 'preparing') return { count: 0, error: null, duplicateColumnReady: dupReady, prepColumnReady: false }
+    res = await build(dupReady, false)
   }
-  if (res.error) return { count: 0, error: res.error.message, duplicateColumnReady: ready }
-  return { count: res.count ?? 0, error: null, duplicateColumnReady: ready }
+  if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+    dupReady = false
+    res = await build(false, prepReady)
+  }
+  if (res.error) return { count: 0, error: res.error.message, duplicateColumnReady: dupReady, prepColumnReady: prepReady }
+  return { count: res.count ?? 0, error: null, duplicateColumnReady: dupReady, prepColumnReady: prepReady }
 }
 
 async function countUntypedAwaiting(
@@ -475,10 +539,12 @@ async function countUntypedAwaiting(
   search: string,
   caseType: 'civil' | 'criminal' | null,
   duplicateColumnReady: boolean,
-): Promise<{ count: number; error: string | null; duplicateColumnReady: boolean }> {
+  mode: 'awaiting' | 'preparing',
+  prepColumnReady: boolean,
+): Promise<{ count: number; error: string | null; duplicateColumnReady: boolean; prepColumnReady: boolean }> {
   const terminalFilter = `(${[...TERMINAL_TASK_STATUSES].join(',')})`
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const build = (dupReady: boolean): any => {
+  const build = (dupReady: boolean, prepReady: boolean): any => {
     let q = supabase
       .from('debtors')
       .select('id, current_task:tasks!current_task_id!inner(id)', { count: 'exact', head: true })
@@ -491,17 +557,24 @@ async function countUntypedAwaiting(
     if (caseType) q = q.eq('case_type', caseType)
     if (search) q = q.ilike('full_name', `%${search}%`)
     q = applyNotDuplicateFilter(q, dupReady)
+    q = applyFilePreparationModeFilter(q, mode, prepReady)
     return q
   }
 
-  let ready = duplicateColumnReady
-  let res = await build(ready)
-  if (res.error && isMissingDuplicateColumnError(res.error.message)) {
-    ready = false
-    res = await build(false)
+  let dupReady = duplicateColumnReady
+  let prepReady = prepColumnReady
+  let res = await build(dupReady, prepReady)
+  if (res.error && isMissingPrepColumnError(res.error.message)) {
+    prepReady = false
+    if (mode === 'preparing') return { count: 0, error: null, duplicateColumnReady: dupReady, prepColumnReady: false }
+    res = await build(dupReady, false)
   }
-  if (res.error) return { count: 0, error: res.error.message, duplicateColumnReady: ready }
-  return { count: res.count ?? 0, error: null, duplicateColumnReady: ready }
+  if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+    dupReady = false
+    res = await build(false, prepReady)
+  }
+  if (res.error) return { count: 0, error: res.error.message, duplicateColumnReady: dupReady, prepColumnReady: prepReady }
+  return { count: res.count ?? 0, error: null, duplicateColumnReady: dupReady, prepColumnReady: prepReady }
 }
 
 /**
@@ -511,11 +584,12 @@ async function countUntypedAwaiting(
 export async function fetchAwaitingAssignmentBranchSummaries(
   supabase: SupabaseClient,
   branchId: string | null,
-  options?: Pick<FetchAwaitingAssignmentOptions, 'search' | 'caseType'>,
+  options?: Pick<FetchAwaitingAssignmentOptions, 'search' | 'caseType' | 'mode'>,
 ): Promise<{ branches: AwaitingBranchSummary[]; error: string | null }> {
   try {
     const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
     const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
+    const mode = options?.mode === 'preparing' ? 'preparing' : 'awaiting'
 
     let branchRows: { id: string; name: string }[] = []
     if (branchId) {
@@ -543,6 +617,7 @@ export async function fetchAwaitingAssignmentBranchSummaries(
     if (!branchRows.length) return { branches: [], error: null }
 
     let duplicateColumnReady = true
+    let prepColumnReady = true
     const summaries: AwaitingBranchSummary[] = []
 
     // دفعات متوازية لتفادي ضغط الشبكة عند «الكل»
@@ -551,12 +626,18 @@ export async function fetchAwaitingAssignmentBranchSummaries(
       const chunk = branchRows.slice(i, i + BATCH)
       const counted = await Promise.all(
         chunk.map(async b => {
-          const noTask = await countNoTaskAwaiting(supabase, b.id, search, caseType, duplicateColumnReady)
+          const noTask = await countNoTaskAwaiting(
+            supabase, b.id, search, caseType, duplicateColumnReady, mode, prepColumnReady,
+          )
           if (noTask.error) return { error: noTask.error as string | null, summary: null as AwaitingBranchSummary | null }
           duplicateColumnReady = noTask.duplicateColumnReady
-          const untyped = await countUntypedAwaiting(supabase, b.id, search, caseType, duplicateColumnReady)
+          prepColumnReady = noTask.prepColumnReady
+          const untyped = await countUntypedAwaiting(
+            supabase, b.id, search, caseType, duplicateColumnReady, mode, prepColumnReady,
+          )
           if (untyped.error) return { error: untyped.error as string | null, summary: null as AwaitingBranchSummary | null }
           duplicateColumnReady = untyped.duplicateColumnReady
+          prepColumnReady = untyped.prepColumnReady
           const count = noTask.count + untyped.count
           if (count <= 0) return { error: null, summary: null }
           return {

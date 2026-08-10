@@ -16,6 +16,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   if (profile?.role === 'lawyer') redirect('/lawyer')
   if (profile?.role === 'delegate') redirect('/delegate')
+  if (profile?.role === 'chief_accountant') redirect('/chief-accountant/tasks')
 
   // لا نفترض employee إذا فشل التحميل — نُبقي الأدمن يعمل بعد إصلاح الاستعلام
   const role = profile?.role ?? null
