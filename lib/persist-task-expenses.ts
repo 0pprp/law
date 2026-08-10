@@ -32,6 +32,56 @@ export async function persistTaskExpenses(
     caseType?: string | null
   },
 ): Promise<{ ok: boolean; error?: string; count: number; total: number }> {
+  // من المتصفح: API بـ service role (يتجاوز قيود RLS على فرع المحامي العام)
+  if (typeof window !== 'undefined') {
+    try {
+      const res = await fetch('/api/lawyer/persist-task-expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: params.taskId,
+          debtorId: params.debtorId,
+          caseId: params.caseId ?? null,
+          branchId: params.branchId ?? null,
+          rows: params.rows,
+          caseType: params.caseType ?? null,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        return { ok: false, error: data.error ?? 'فشل حفظ الصرفيات', count: 0, total: 0 }
+      }
+      return {
+        ok: true,
+        count: Number(data.count ?? 0),
+        total: Number(data.total ?? 0),
+      }
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : 'فشل الاتصال بحفظ الصرفيات',
+        count: 0,
+        total: 0,
+      }
+    }
+  }
+
+  return persistTaskExpensesDirect(supabase, params)
+}
+
+/** إدراج مباشر (service role / سيرفر) */
+export async function persistTaskExpensesDirect(
+  supabase: SupabaseClient,
+  params: {
+    taskId: string
+    debtorId: string
+    caseId?: string | null
+    branchId?: string | null
+    lawyerId: string
+    rows: PendingTaskExpense[]
+    caseType?: string | null
+  },
+): Promise<{ ok: boolean; error?: string; count: number; total: number }> {
   const { taskId, debtorId, caseId, branchId, lawyerId, rows } = params
 
   await supabase
