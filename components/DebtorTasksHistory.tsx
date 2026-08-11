@@ -47,7 +47,7 @@ export default async function DebtorTasksHistory({
     : 'id, task_type, task_status, assigned_to, assigned_at, accepted_at, completed_at, updated_at, created_at, task_definition_id'
 
   const [{ data: debtor }, { data: tasks }] = await Promise.all([
-    supabase.from('debtors').select('current_task_id, first_hearing_date').eq('id', debtorId).single(),
+    supabase.from('debtors').select('current_task_id, first_hearing_date, full_name').eq('id', debtorId).single(),
     supabase
       .from('tasks')
       .select(selectCols)
@@ -169,7 +169,12 @@ export default async function DebtorTasksHistory({
   return (
     <Card>
       <CardHeader title={`سجل المهام (${rows.length})`} />
-      <DebtorTasksHistoryList rows={rows} fullArchive={fullArchive} debtorId={debtorId} />
+      <DebtorTasksHistoryList
+        rows={rows}
+        fullArchive={fullArchive}
+        debtorId={debtorId}
+        debtorName={debtor?.full_name ?? null}
+      />
     </Card>
   )
 }

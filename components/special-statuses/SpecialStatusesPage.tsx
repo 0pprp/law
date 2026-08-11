@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useBranch, useBranchId } from '@/context/branch'
 import { useAdminRole } from '@/context/admin-role'
@@ -15,6 +15,8 @@ import {
   specialStatusColorOption,
 } from '@/lib/special-statuses'
 import { appConfirm } from '@/lib/app-dialog'
+import { SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 
 interface SpecialStatusDebtor {
   id: string
@@ -27,6 +29,8 @@ interface SpecialStatusDebtor {
   special_status_id: string | null
   special_status_name: string | null
   special_status_color: string | null
+  return_task_id?: string | null
+  return_task_label?: string | null
   last_note: string
 }
 
@@ -200,7 +204,21 @@ function DebtorTable({
   showBranch: boolean
   onAddNote: (debtor: SpecialStatusDebtor) => void
 }) {
-  const allOn = rows.length > 0 && rows.every(r => selected.has(r.id))
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(rows, {
+    name: r => r.full_name,
+    phone: r => r.phone,
+    branch: r => r.branch_name,
+    list: r => r.branch_list_name,
+    court: r => r.court_name,
+    returnTask: r => r.return_task_label,
+    lastNote: r => r.last_note,
+  })
+  const allOn = sortedRows.length > 0 && sortedRows.every(r => selected.has(r.id))
   if (!rows.length) {
     return <div className="px-4 py-8 text-center text-sm text-[#767676]">لا يوجد مدينون في هذه الصفة</div>
   }
@@ -212,17 +230,20 @@ function DebtorTable({
             <th className="px-3 py-2.5 w-10">
               <input type="checkbox" checked={allOn} onChange={onToggleAll} className="w-4 h-4 accent-[#2C8780]" />
             </th>
-            <th className="px-3 py-2.5 text-right font-semibold">الاسم</th>
-            <th className="px-3 py-2.5 text-right font-semibold">الهاتف</th>
-            {showBranch && <th className="px-3 py-2.5 text-right font-semibold">الفرع</th>}
-            <th className="px-3 py-2.5 text-right font-semibold">القائمة</th>
-            <th className="px-3 py-2.5 text-right font-semibold">المحكمة</th>
-            <th className="px-3 py-2.5 text-right font-semibold">آخر ملاحظة</th>
+            <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">الاسم</SortableTH>
+            <SortableTH variant="plain" sortKey="phone" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">الهاتف</SortableTH>
+            {showBranch && (
+              <SortableTH variant="plain" sortKey="branch" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">الفرع</SortableTH>
+            )}
+            <SortableTH variant="plain" sortKey="list" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">القائمة</SortableTH>
+            <SortableTH variant="plain" sortKey="court" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">المحكمة</SortableTH>
+            <SortableTH variant="plain" sortKey="returnTask" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">المهمة المرتبطة</SortableTH>
+            <SortableTH variant="plain" sortKey="lastNote" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">آخر ملاحظة</SortableTH>
             <th className="px-3 py-2.5 text-center font-semibold">الإجراء</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[rgba(118,118,118,0.08)]">
-          {rows.map(r => (
+          {sortedRows.map(r => (
             <tr key={r.id} className="hover:bg-[#F8F7F8]">
               <td className="px-3 py-3">
                 <input
@@ -241,6 +262,7 @@ function DebtorTable({
               {showBranch && <td className="px-3 py-3 text-xs text-[#767676]">{r.branch_name ?? '—'}</td>}
               <td className="px-3 py-3 text-xs text-[#767676]">{r.branch_list_name ?? '—'}</td>
               <td className="px-3 py-3 text-xs text-[#767676]">{r.court_name ?? '—'}</td>
+              <td className="px-3 py-3 text-xs font-semibold text-[#1D6365]">{r.return_task_label ?? '—'}</td>
               <td className="px-3 py-3 text-xs text-[#454042] max-w-[14rem] truncate">{r.last_note || '—'}</td>
               <td className="px-3 py-3 text-center">
                 <button
@@ -280,6 +302,8 @@ export default function SpecialStatusesPage() {
   const [modalSaving, setModalSaving] = useState(false)
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
   const [noteDebtor, setNoteDebtor] = useState<SpecialStatusDebtor | null>(null)
+  const [debtorsLoadingKey, setDebtorsLoadingKey] = useState<string | null>(null)
+  const debtorsCacheRef = useRef<Map<string, SpecialStatusDebtor[]>>(new Map())
 
   const load = useCallback(async () => {
     if (!branchId && !viewAllBranches) {
@@ -295,16 +319,13 @@ export default function SpecialStatusesPage() {
     else if (branchId) params.set('branchId', branchId)
 
     try {
-      const [stRes, dRes] = await Promise.all([
-        fetch(`/api/admin/special-statuses?${params}`),
-        fetch(`/api/admin/special-statuses/debtors?${params}`),
-      ])
+      // الكروت فقط أولاً — بدون تحميل كل المدينين
+      const stRes = await fetch(`/api/admin/special-statuses?${params}`)
       const stJson = await stRes.json().catch(() => ({}))
-      const dJson = await dRes.json().catch(() => ({}))
       if (!stRes.ok) throw new Error(stJson.error ?? 'فشل تحميل الصفات')
-      if (!dRes.ok) throw new Error(dJson.error ?? 'فشل تحميل المدينين')
       setStatuses(stJson.statuses ?? [])
-      setDebtors(dJson.debtors ?? [])
+      setDebtors([])
+      debtorsCacheRef.current.clear()
       setSelected(new Set())
       setExpandedKey(null)
     } catch (e) {
@@ -318,15 +339,57 @@ export default function SpecialStatusesPage() {
 
   useEffect(() => { void load() }, [load])
 
-  const activeStatuses = useMemo(
-    () => statuses.filter(s => s.is_active !== false),
-    [statuses],
-  )
-
   // عند «كل الفروع» الصفة الواحدة لها نسخة بكل فرع — التجميع بالاسم بدل المعرّف
   const groupKeyOf = useCallback(
     (status: Pick<SpecialStatus, 'id' | 'name'>) => (viewAllBranches ? status.name.trim() : status.id),
     [viewAllBranches],
+  )
+
+  const loadDebtorsForStatus = useCallback(async (status: SpecialStatus, key: string) => {
+    if (debtorsCacheRef.current.has(key)) {
+      setDebtors(debtorsCacheRef.current.get(key) ?? [])
+      return
+    }
+    setDebtorsLoadingKey(key)
+    setError('')
+    const params = new URLSearchParams()
+    if (viewAllBranches) {
+      params.set('viewAll', '1')
+      params.set('statusName', status.name)
+      if (status.ids?.length) params.set('statusIds', status.ids.join(','))
+    } else {
+      if (branchId) params.set('branchId', branchId)
+      params.set('statusId', status.id)
+    }
+    try {
+      const res = await fetch(`/api/admin/special-statuses/debtors?${params}`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error ?? 'فشل تحميل الأسماء')
+      const rows = (json.debtors ?? []) as SpecialStatusDebtor[]
+      debtorsCacheRef.current.set(key, rows)
+      setDebtors(rows)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'فشل تحميل الأسماء')
+      setDebtors([])
+    } finally {
+      setDebtorsLoadingKey(null)
+    }
+  }, [branchId, viewAllBranches])
+
+  async function toggleExpand(status: SpecialStatus) {
+    const key = groupKeyOf(status)
+    if (expandedKey === key) {
+      setExpandedKey(null)
+      return
+    }
+    setExpandedKey(key)
+    if (!debtorsCacheRef.current.has(key)) setDebtors([])
+    await loadDebtorsForStatus(status, key)
+  }
+
+  const activeStatuses = useMemo(
+    () => statuses.filter(s => s.is_active !== false),
+    [statuses],
   )
 
   const debtorsByStatus = useMemo(() => {
@@ -368,6 +431,14 @@ export default function SpecialStatusesPage() {
   async function applyStatus(statusId: string | null) {
     const ids = Array.from(selected)
     if (!ids.length) return
+    if (!statusId) {
+      const ok = await appConfirm({
+        title: 'إرجاع للمهام',
+        message: `سيتم إرجاع ${ids.length} مدين إلى المهام المرتبطة بهم وإزالتهم من تبويب المراقبة. هل تريد المتابعة؟`,
+        confirmLabel: 'إرجاع للمهام',
+      })
+      if (!ok) return
+    }
     setBusy(true)
     setError('')
     setSuccess('')
@@ -379,9 +450,14 @@ export default function SpecialStatusesPage() {
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json.error ?? 'فشل تحديث الصفة')
-      setSuccess(statusId ? `تم تعيين الصفة لـ ${ids.length} مدين` : `تمت إزالة الصفة عن ${ids.length} مدين`)
+      setSuccess(statusId
+        ? `تم تعيين الصفة لـ ${ids.length} مدين`
+        : `تم إرجاع ${ids.length} مدين للمهام المرتبطة بهم`)
       setSelected(new Set())
       setAssignStatusId('')
+      debtorsCacheRef.current.clear()
+      setDebtors([])
+      setExpandedKey(null)
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'فشل التحديث')
@@ -538,8 +614,9 @@ export default function SpecialStatusesPage() {
               disabled={busy}
               onClick={() => void applyStatus(null)}
               className="text-xs font-bold text-orange-700 bg-orange-50 border border-orange-200 px-3 py-2 rounded-lg disabled:opacity-50"
+              title="يرجع المدين للمهمة التي كان عليها عند التحويل"
             >
-              إزالة الصفة
+              إرجاع للمهام
             </button>
             <button type="button" onClick={() => setSelected(new Set())} className="text-xs font-semibold text-[#767676]">إلغاء التحديد</button>
           </div>
@@ -558,10 +635,11 @@ export default function SpecialStatusesPage() {
             {activeStatuses.map(status => {
               const key = groupKeyOf(status)
               const rows = debtorsByStatus.get(key) ?? []
-              const count = rows.length || Number(status.debtor_count ?? 0)
+              const count = Number(status.debtor_count ?? 0) || rows.length
               const opt = specialStatusColorOption(status.color)
               const selectedHere = rows.filter(r => selected.has(r.id)).length
               const isOpen = expandedKey === key
+              const isLoadingRows = debtorsLoadingKey === key
               return (
                 <div
                   key={status.id}
@@ -569,7 +647,7 @@ export default function SpecialStatusesPage() {
                 >
                   <button
                     type="button"
-                    onClick={() => setExpandedKey(isOpen ? null : key)}
+                    onClick={() => void toggleExpand(status)}
                     className="w-full text-right"
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -589,11 +667,11 @@ export default function SpecialStatusesPage() {
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setExpandedKey(isOpen ? null : key)}
+                      onClick={() => void toggleExpand(status)}
                       className="text-xs font-bold text-white px-3 py-1.5 rounded-lg"
                       style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
                     >
-                      {isOpen ? 'إخفاء الأسماء' : 'عرض الأسماء'}
+                      {isLoadingRows ? 'جارٍ التحميل...' : isOpen ? 'إخفاء الأسماء' : 'عرض الأسماء'}
                     </button>
                     <button type="button" onClick={() => openEdit(status)} className="text-xs font-semibold text-[#2C8780] hover:underline">
                       تعديل
@@ -615,7 +693,9 @@ export default function SpecialStatusesPage() {
                 <span className={`w-1.5 h-8 rounded-full ${specialStatusColorOption(expandedStatus.color).bar}`} />
                 <div className="flex-1 min-w-0">
                   <h3 className="text-base font-black text-[#231F20]">{expandedStatus.name}</h3>
-                  <p className="text-xs text-[#767676]">{expandedRows.length} مدين</p>
+                  <p className="text-xs text-[#767676]">
+                    {debtorsLoadingKey === expandedKey ? 'جارٍ تحميل الأسماء...' : `${expandedRows.length} مدين`}
+                  </p>
                 </div>
                 <SpecialStatusBadge name={expandedStatus.name} color={expandedStatus.color} />
                 <button
@@ -626,6 +706,9 @@ export default function SpecialStatusesPage() {
                   إغلاق
                 </button>
               </div>
+              {debtorsLoadingKey === expandedKey ? (
+                <div className="px-4 py-10 text-center text-sm text-[#767676]">جارٍ التحميل...</div>
+              ) : (
               <DebtorTable
                 rows={expandedRows}
                 selected={selected}
@@ -634,6 +717,7 @@ export default function SpecialStatusesPage() {
                 showBranch={showBranchCol}
                 onAddNote={setNoteDebtor}
               />
+              )}
             </div>
           )}
         </div>

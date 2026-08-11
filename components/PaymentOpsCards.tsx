@@ -12,9 +12,10 @@ import {
   isAnyLegalManager,
 } from '@/lib/permissions'
 import { countPaymentInProgress } from '@/lib/payment-in-progress'
-import { fetchAwaitingAssignmentDebtors } from '@/lib/awaiting-assignment'
+import { countAwaitingAssignmentDebtors } from '@/lib/awaiting-assignment'
 import { countFilePreparationDebtors } from '@/lib/file-preparation'
 import { useCaseScope } from '@/hooks/use-case-scope'
+import { cachePeek, cacheSet, CACHE_TTL } from '@/lib/query-cache'
 
 function MoneyIcon() {
   return (
@@ -143,24 +144,45 @@ export default function PaymentOpsCards({
       setPendingCount(0)
       return
     }
+
+    const cacheKey = `opsCards:v1:${branchId ?? 'all'}:${listId ?? 'all'}:${caseTypeFilter ?? 'both'}:${section}`
+    const cached = cachePeek<{
+      awaiting: number | null
+      prep: number | null
+      payment: number | null
+      pending: number | null
+    }>(cacheKey)
+    if (cached) {
+      setAwaitingCount(cached.value.awaiting)
+      setPrepCount(cached.value.prep)
+      setPaymentCount(cached.value.payment)
+      setPendingCount(cached.value.pending)
+      if (cached.fresh) return
+    }
+
     const supabase = createClient()
     const scope = viewAllBranches ? null : branchId
     // القائمة تخص المدني فقط — الجزائي بلا branch_list_id
     const listScope =
       viewAllBranches || caseTypeFilter === 'criminal' ? null : listId
 
+    let nextAwaiting: number | null = cached?.value.awaiting ?? null
+    let nextPrep: number | null = cached?.value.prep ?? null
+    let nextPayment: number | null = cached?.value.payment ?? null
+    let nextPending: number | null = cached?.value.pending ?? null
+
+    const tasks: Promise<void>[] = []
+
     if (showAwaiting) {
-      void (async () => {
+      tasks.push((async () => {
         if (caseTypeFilter === null && listScope) {
           const [civilRes, crimRes, civilPrep, crimPrep] = await Promise.all([
-            fetchAwaitingAssignmentDebtors(supabase, scope, {
-              limit: 1,
+            countAwaitingAssignmentDebtors(supabase, scope, {
               branchListId: listScope,
               caseType: 'civil',
               mode: 'awaiting',
             }),
-            fetchAwaitingAssignmentDebtors(supabase, scope, {
-              limit: 1,
+            countAwaitingAssignmentDebtors(supabase, scope, {
               branchListId: null,
               caseType: 'criminal',
               mode: 'awaiting',
@@ -174,14 +196,12 @@ export default function PaymentOpsCards({
               caseType: 'criminal',
             }),
           ])
-          setAwaitingCount(
-            (civilRes.error ? 0 : civilRes.total) + (crimRes.error ? 0 : crimRes.total),
-          )
-          setPrepCount(civilPrep + crimPrep)
+          nextAwaiting =
+            (civilRes.error ? 0 : civilRes.total) + (crimRes.error ? 0 : crimRes.total)
+          nextPrep = civilPrep + crimPrep
         } else {
           const [res, prep] = await Promise.all([
-            fetchAwaitingAssignmentDebtors(supabase, scope, {
-              limit: 1,
+            countAwaitingAssignmentDebtors(supabase, scope, {
               branchListId: listScope,
               caseType: caseTypeFilter,
               mode: 'awaiting',
@@ -191,26 +211,29 @@ export default function PaymentOpsCards({
               caseType: caseTypeFilter,
             }),
           ])
-          setAwaitingCount(res.error ? 0 : res.total)
-          setPrepCount(prep)
+          nextAwaiting = res.error ? 0 : res.total
+          nextPrep = prep
         }
-      })()
+        setAwaitingCount(nextAwaiting)
+        setPrepCount(nextPrep)
+      })())
     }
     if (showPayment) {
-      void (async () => {
+      tasks.push((async () => {
         if (caseTypeFilter === null && listScope) {
           const [civilN, crimN] = await Promise.all([
             countPaymentInProgress(supabase, scope, listScope, 'civil'),
             countPaymentInProgress(supabase, scope, null, 'criminal'),
           ])
-          setPaymentCount(civilN + crimN)
-          return
+          nextPayment = civilN + crimN
+        } else {
+          nextPayment = await countPaymentInProgress(supabase, scope, listScope, caseTypeFilter)
         }
-        setPaymentCount(await countPaymentInProgress(supabase, scope, listScope, caseTypeFilter))
-      })()
+        setPaymentCount(nextPayment)
+      })())
     }
     if (showNoncompliance) {
-      void (async () => {
+      tasks.push((async () => {
         let listDebtorIds: string[] | null = null
         {
           let dq = supabase.from('debtors').select('id')
@@ -220,11 +243,13 @@ export default function PaymentOpsCards({
           if (listScope || caseTypeFilter) {
             const { data: listDebtors, error: listErr } = await dq
             if (listErr) {
+              nextPending = 0
               setPendingCount(0)
               return
             }
             listDebtorIds = (listDebtors ?? []).map(d => d.id)
             if (!listDebtorIds.length) {
+              nextPending = 0
               setPendingCount(0)
               return
             }
@@ -237,10 +262,23 @@ export default function PaymentOpsCards({
         if (scope) q = q.eq('branch_id', scope)
         if (listDebtorIds) q = q.in('debtor_id', listDebtorIds)
         const { count, error } = await q
-        setPendingCount(error ? 0 : count ?? 0)
-      })()
+        nextPending = error ? 0 : count ?? 0
+        setPendingCount(nextPending)
+      })())
     }
-  }, [branchId, viewAllBranches, listId, caseTypeFilter, showAwaiting, showPayment, showNoncompliance])
+
+    await Promise.all(tasks)
+    cacheSet(
+      cacheKey,
+      {
+        awaiting: nextAwaiting,
+        prep: nextPrep,
+        payment: nextPayment,
+        pending: nextPending,
+      },
+      CACHE_TTL.opsCards,
+    )
+  }, [branchId, viewAllBranches, listId, caseTypeFilter, showAwaiting, showPayment, showNoncompliance, section])
 
   useEffect(() => { void load() }, [load])
 

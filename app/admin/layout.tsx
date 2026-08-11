@@ -1,18 +1,21 @@
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
-import { createClient } from '@/lib/supabase/server'
 import AdminShell from '@/components/AdminShell'
 import { BRANCH_COOKIE, BRANCH_COOKIE_ALL, BRANCH_LIST_COOKIE } from '@/lib/branch-context'
 import { isMainBranchName } from '@/lib/branch-constants'
 import { canReadAllBranches, canUseViewAllBranchesFilter, isGeneralAccountant, isPaymentFollowUp } from '@/lib/permissions'
-import { fetchStaffProfile } from '@/lib/staff-profile'
+import {
+  getRequestBranchList,
+  getRequestBranchName,
+  getRequestStaffProfile,
+  getRequestUser,
+} from '@/lib/request-cache'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getRequestUser()
   if (!user) redirect('/login')
 
-  const profile = await fetchStaffProfile(supabase, user.id)
+  const profile = await getRequestStaffProfile(user.id)
 
   if (profile?.role === 'lawyer') redirect('/lawyer')
   if (profile?.role === 'delegate') redirect('/delegate')
@@ -48,12 +51,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       initialViewAll = true
     } else if (raw) {
       initialBranchId = raw
-      const { data: branch } = await supabase
-        .from('branches')
-        .select('name')
-        .eq('id', initialBranchId)
-        .single()
-      initialBranchName = branch?.name ?? null
+      initialBranchName = await getRequestBranchName(initialBranchId)
       if (isMainBranchName(initialBranchName)) {
         initialBranchId = null
         initialBranchName = null
@@ -63,12 +61,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   } else {
     initialBranchId = profile?.branch_id ?? null
     if (initialBranchId) {
-      const { data: branch } = await supabase
-        .from('branches')
-        .select('name')
-        .eq('id', initialBranchId)
-        .single()
-      initialBranchName = branch?.name ?? null
+      initialBranchName = await getRequestBranchName(initialBranchId)
     }
   }
 
@@ -78,12 +71,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     const listRaw = cookieStore.get(BRANCH_LIST_COOKIE)?.value?.trim() || null
     if (listRaw) {
       if (initialBranchId && !initialViewAll) {
-        const { data: list } = await supabase
-          .from('branch_lists')
-          .select('id, name')
-          .eq('id', listRaw)
-          .eq('branch_id', initialBranchId)
-          .maybeSingle()
+        const list = await getRequestBranchList(listRaw, initialBranchId)
         if (list) {
           initialListId = list.id
           initialListName = list.name

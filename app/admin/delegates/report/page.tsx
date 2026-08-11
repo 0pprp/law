@@ -18,7 +18,8 @@ import type { DelegateReportRow } from '@/lib/delegate-wallet'
 import { fetchDelegateReport } from '@/lib/delegate-wallet'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
-import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
+import { Table, THead, TBody, TR, TD, SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Badge } from '@/components/ui/badge'
 import { PremiumSelect } from '@/components/ui/premium-select'
@@ -96,6 +97,23 @@ export default function DelegateReportPage() {
       return true
     })
   }, [rows, filterDelegate, filterFeeStatus])
+
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(filtered, {
+    delegate: r => r.delegate_name,
+    branch: r => r.branch_name,
+    list: r => r.debtor_list_name,
+    debtor: r => r.debtor_name,
+    task: r => r.task_label,
+    completed: r => r.completed_at,
+    notified: r => DEBTOR_NOTIFIED_LABELS[r.debtor_notified],
+    fee: r => Number(r.fee_amount ?? 0),
+    feeStatus: r => DELEGATE_FEE_STATUS_LABELS[r.fee_status],
+  })
 
   const totals = useMemo(() => {
     let pending = 0
@@ -247,19 +265,19 @@ export default function DelegateReportPage() {
             <Table>
               <THead>
                 <tr>
-                  <TH>المندوب</TH>
-                  <TH>الفرع</TH>
-                  <TH>قائمة المدين</TH>
-                  <TH>المدين</TH>
-                  <TH>المهمة</TH>
-                  <TH>الإنجاز</TH>
-                  <TH>هل تم تبليغ المدين</TH>
-                  <TH>الأتعاب</TH>
-                  <TH>حالة الأتعاب</TH>
+                  <SortableTH sortKey="delegate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المندوب</SortableTH>
+                  <SortableTH sortKey="branch" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الفرع</SortableTH>
+                  <SortableTH sortKey="list" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>قائمة المدين</SortableTH>
+                  <SortableTH sortKey="debtor" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المدين</SortableTH>
+                  <SortableTH sortKey="task" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المهمة</SortableTH>
+                  <SortableTH sortKey="completed" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الإنجاز</SortableTH>
+                  <SortableTH sortKey="notified" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>هل تم تبليغ المدين</SortableTH>
+                  <SortableTH sortKey="fee" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الأتعاب</SortableTH>
+                  <SortableTH sortKey="feeStatus" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>حالة الأتعاب</SortableTH>
                 </tr>
               </THead>
               <TBody>
-                {filtered.map(r => (
+                {sortedRows.map(r => (
                   <TR key={r.task_id}>
                     <TD><span className="font-semibold text-[#231F20]">{r.delegate_name}</span></TD>
                     <TD><span className="text-xs text-[#767676]">{r.branch_name}</span></TD>

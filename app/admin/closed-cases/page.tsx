@@ -15,6 +15,8 @@ import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debto
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { CASE_TYPE_FILTER_OPTIONS, CASE_TYPE_LABELS, type CaseType } from '@/lib/case-type'
 import { useCaseScope } from '@/hooks/use-case-scope'
+import { SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 
 interface ClosedCase {
   id: string
@@ -149,6 +151,22 @@ export default function ClosedCasesPage() {
     loadPage(false, 0)
   }, [loadPage])
 
+  const {
+    rows: sortedCases,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(cases, {
+    name: c => c.full_name,
+    caseType: c => CASE_TYPE_LABELS[c.case_type] ?? c.case_type,
+    phone: c => c.phone,
+    branch: c => c.branch_name,
+    lastTask: c => c.last_task_label,
+    closedAt: c => c.closed_at,
+    requiredAmount: c => c.required_amount,
+    totalPaid: c => c.total_paid,
+  })
+
   const hasMore = cases.length < total
 
   return (
@@ -205,19 +223,19 @@ export default function ClosedCasesPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-100">
               <tr>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">المدين</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">نوع الدعوى</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">الهاتف</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">الفرع</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">آخر مهمة منفذة</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">تاريخ الحسم</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">المبلغ المطلوب</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">مجموع التسديدات</th>
+                <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-medium text-slate-600">المدين</SortableTH>
+                <SortableTH variant="plain" sortKey="caseType" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-medium text-slate-600">نوع الدعوى</SortableTH>
+                <SortableTH variant="plain" sortKey="phone" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-medium text-slate-600">الهاتف</SortableTH>
+                <SortableTH variant="plain" sortKey="branch" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-medium text-slate-600">الفرع</SortableTH>
+                <SortableTH variant="plain" sortKey="lastTask" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-medium text-slate-600">آخر مهمة منفذة</SortableTH>
+                <SortableTH variant="plain" sortKey="closedAt" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-medium text-slate-600">تاريخ الحسم</SortableTH>
+                <SortableTH variant="plain" sortKey="requiredAmount" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-medium text-slate-600">المبلغ المطلوب</SortableTH>
+                <SortableTH variant="plain" sortKey="totalPaid" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-medium text-slate-600">مجموع التسديدات</SortableTH>
                 <th className="text-right px-4 py-3 font-medium text-slate-600"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {cases.map(c => (
+              {sortedCases.map(c => (
                 <tr key={c.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-900">{c.full_name}</td>
                   <td className="px-4 py-3 text-slate-600">{CASE_TYPE_LABELS[c.case_type]}</td>

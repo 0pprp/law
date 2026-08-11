@@ -16,7 +16,7 @@ import { canReviewTasks } from '@/lib/permissions'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { CASE_TYPE_FILTER_OPTIONS, type CaseType } from '@/lib/case-type'
 import { readIncompleteReason } from '@/lib/incomplete-completion'
-import { cacheGet, cacheSet, CACHE_TTL } from '@/lib/query-cache'
+import { cachePeek, cacheSet, CACHE_TTL } from '@/lib/query-cache'
 
 function IncompleteReviewModal({
   task,
@@ -237,18 +237,20 @@ export default function IncompleteTasksPage() {
     if (append) setLoadingMore(true)
     else {
       const cacheKey = `tasks:incomplete:v2:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`
-      const cached = cacheGet<{ tasks: any[]; lawyers: any[]; delegates: any[]; total: number }>(cacheKey)
-      if (cached && !append) {
+      const cachedHit = cachePeek<{ tasks: any[]; lawyers: any[]; delegates: any[]; total: number }>(cacheKey)
+      if (cachedHit) {
+        const cached = cachedHit.value
         setTasks(cached.tasks)
         setLawyers(cached.lawyers)
         setDelegates(cached.delegates ?? [])
         setTotal(cached.total)
         setPageOffset(cached.tasks.length)
         setLoading(false)
-        return
+        if (cachedHit.fresh) return
+      } else {
+        setLoading(true)
+        setTasks([])
       }
-      setLoading(true)
-      if (!append) setTasks([])
     }
 
     try {

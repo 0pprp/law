@@ -15,6 +15,8 @@ import BranchListsTab from '@/components/settings/BranchListsTab'
 import { formatMoney } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
+import { SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 
 async function settingsWrite(payload: Record<string, unknown>): Promise<{ ok: boolean; error?: string; row?: Record<string, unknown> }> {
   const res = await fetch('/api/admin/branch-settings', {
@@ -193,6 +195,20 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
 
   const getBranch = (id: string | null) => branches.find(b => b.id === id)
 
+  const {
+    rows: sortedCourts,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(courts, {
+    name: c => c.name,
+    branch: c => {
+      const b = getBranch(c.branch_id ?? null)
+      return b ? `${b.name}${b.city ? ` (${b.city})` : ''}` : null
+    },
+    status: c => (c.is_active ? 1 : 0),
+  })
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -208,14 +224,14 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
           <table className="w-full text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">المحكمة</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">الفرع</th>
-                <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحالة</th>
+                <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">المحكمة</SortableTH>
+                <SortableTH variant="plain" sortKey="branch" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">الفرع</SortableTH>
+                <SortableTH variant="plain" sortKey="status" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحالة</SortableTH>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">إجراء</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[rgba(118,118,118,0.06)]">
-              {courts.map(c => {
+              {sortedCourts.map(c => {
                 const b = getBranch(c.branch_id ?? null)
                 return (
                   <tr key={c.id} className={`hover:bg-[#F8F7F8] transition-colors ${!c.is_active ? 'opacity-50' : ''}`}>
@@ -360,6 +376,21 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
     return c ? branches.find(b => b.id === c.branch_id) ?? null : null
   }
 
+  const {
+    rows: sortedDepts,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(depts, {
+    name: d => d.name,
+    court: d => getCourtName(d.court_id ?? null),
+    branch: d => {
+      const branch = getBranchForCourt(d.court_id ?? null)
+      return branch ? `${branch.name}${branch.city ? ` (${branch.city})` : ''}` : null
+    },
+    status: d => (d.is_active ? 1 : 0),
+  })
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -374,15 +405,15 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
           <table className="w-full text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">الدائرة</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">المحكمة</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">الفرع</th>
-                <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحالة</th>
+                <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">الدائرة</SortableTH>
+                <SortableTH variant="plain" sortKey="court" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">المحكمة</SortableTH>
+                <SortableTH variant="plain" sortKey="branch" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">الفرع</SortableTH>
+                <SortableTH variant="plain" sortKey="status" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحالة</SortableTH>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">إجراء</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[rgba(118,118,118,0.06)]">
-              {depts.map(d => {
+              {sortedDepts.map(d => {
                 const branch = getBranchForCourt(d.court_id ?? null)
                 return (
                   <tr key={d.id} className={`hover:bg-[#F8F7F8] transition-colors ${!d.is_active ? 'opacity-50' : ''}`}>
@@ -687,6 +718,18 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
   const defFields = (def: TaskDef) => (reqFields as ReqField[]).filter(f => f.task_definition_id === def.id)
   const fieldDisplay = (f: ReqField) => f.field_label || REQUIRED_FIELD_LABELS[f.field_type as RequiredField] || f.field_type
 
+  const {
+    rows: sortedDefs,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(defs, {
+    label: def => def.label,
+    fee: def => Number(displayFee(def.fee_amount)),
+    fields: def => defFields(def).length,
+    status: def => (def.is_active ? 1 : 0),
+  })
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -703,15 +746,15 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
           <table className="w-full text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">نوع المهمة</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-[#767676]">الأتعاب (د.ع)</th>
-                <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحقول</th>
-                <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحالة</th>
+                <SortableTH variant="plain" sortKey="label" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">نوع المهمة</SortableTH>
+                <SortableTH variant="plain" sortKey="fee" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-left px-4 py-2.5 text-xs font-semibold text-[#767676]">الأتعاب (د.ع)</SortableTH>
+                <SortableTH variant="plain" sortKey="fields" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحقول</SortableTH>
+                <SortableTH variant="plain" sortKey="status" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحالة</SortableTH>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">إجراء</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[rgba(118,118,118,0.06)]">
-              {defs.map(def => (
+              {sortedDefs.map(def => (
                 <tr key={def.id} className={`hover:bg-[#F8F7F8] transition-colors ${!def.is_active ? 'opacity-40' : ''}`}>
                   <td className="px-4 py-3 font-semibold text-[#231F20]">{def.label}</td>
                   <td className="px-4 py-3 text-[#2C8780] font-black tabular-nums text-left" dir="ltr">
@@ -1016,6 +1059,19 @@ function ExpenseTypesTab() {
     )
   }
 
+  const {
+    rows: sortedTypes,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(types, {
+    name: t => t.name,
+    amount: t => t.default_amount,
+    attachment: t => (t.requires_attachment ? 1 : 0),
+    note: t => (t.requires_note ? 1 : 0),
+    status: t => (t.is_active ? 1 : 0),
+  })
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -1030,16 +1086,16 @@ function ExpenseTypesTab() {
           <table className="w-full text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">النوع</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-[#767676]">المبلغ (د.ع)</th>
-                <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">مرفق</th>
-                <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">ملاحظة</th>
-                <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحالة</th>
+                <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">النوع</SortableTH>
+                <SortableTH variant="plain" sortKey="amount" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-left px-4 py-2.5 text-xs font-semibold text-[#767676]">المبلغ (د.ع)</SortableTH>
+                <SortableTH variant="plain" sortKey="attachment" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">مرفق</SortableTH>
+                <SortableTH variant="plain" sortKey="note" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">ملاحظة</SortableTH>
+                <SortableTH variant="plain" sortKey="status" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">الحالة</SortableTH>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676]">إجراء</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[rgba(118,118,118,0.06)]">
-              {types.map(t => (
+              {sortedTypes.map(t => (
                 <tr key={t.id} className={`hover:bg-[#F8F7F8] transition-colors ${!t.is_active ? 'opacity-50' : ''}`}>
                   <td className="px-4 py-3 font-semibold text-[#231F20]">{t.name}</td>
                   <td className="px-4 py-3 text-[#767676] tabular-nums text-left font-bold" dir="ltr">

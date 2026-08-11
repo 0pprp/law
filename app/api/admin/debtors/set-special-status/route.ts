@@ -16,6 +16,16 @@ function parseDebtorIds(body: unknown): string[] | null {
   return ids.length ? ids.slice(0, MAX_IDS) : null
 }
 
+function isMissingReturnTaskColumn(error: { message?: string; code?: string } | null): boolean {
+  if (!error) return false
+  const msg = error.message ?? ''
+  return (
+    msg.includes('special_status_return_task_id')
+    || error.code === '42703'
+    || error.code === 'PGRST204'
+  )
+}
+
 export async function POST(request: NextRequest) {
   const auth = await requireStaffProfile()
   if (auth.error) return auth.error
@@ -39,25 +49,76 @@ export async function POST(request: NextRequest) {
   const admin = createAdminClient()
   const section = filterBySection(sessionCaseScope(auth.profile))
 
-  const { data: targets, error: targetsErr } = await admin
-    .from('debtors')
-    .select('id, branch_id, case_type')
-    .in('id', debtorIds)
-  if (targetsErr) return apiServerError('set-special-status:targets', targetsErr)
+  let supportReturnTask = true
+  let targets: Array<{
+    id: string
+    branch_id: string | null
+    case_type: string | null
+    current_task_id: string | null
+    special_status_id: string | null
+    special_status_return_task_id?: string | null
+  }> = []
 
-  // نطاق الدور يعزل القسم — لا تسمح بتعديل مدينين خارج قسم المسؤول
-  if (section && (targets ?? []).some(d => (d.case_type ?? 'civil') !== section)) {
+  {
+    const full = await admin
+      .from('debtors')
+      .select('id, branch_id, case_type, current_task_id, special_status_id, special_status_return_task_id')
+      .in('id', debtorIds)
+    if (full.error && isMissingReturnTaskColumn(full.error)) {
+      supportReturnTask = false
+      const basic = await admin
+        .from('debtors')
+        .select('id, branch_id, case_type, current_task_id, special_status_id')
+        .in('id', debtorIds)
+      if (basic.error) return apiServerError('set-special-status:targets', basic.error)
+      targets = (basic.data ?? []) as typeof targets
+    } else if (full.error) {
+      return apiServerError('set-special-status:targets', full.error)
+    } else {
+      targets = (full.data ?? []) as typeof targets
+    }
+  }
+
+  if (section && targets.some(d => (d.case_type ?? 'civil') !== section)) {
     return safeClientError('بعض المدينين خارج نطاق قسمك', 403)
   }
 
   let statusLabel = 'بدون صفة'
+  let restored = 0
 
   if (!statusId) {
-    const { error } = await admin
-      .from('debtors')
-      .update({ special_status_id: null })
-      .in('id', debtorIds)
-    if (error) return apiServerError('set-special-status:update', error)
+    // إرجاع للمهام: استعادة المهمة المحفوظة وإزالة الصفة
+    for (const d of targets) {
+      const patch: Record<string, unknown> = { special_status_id: null }
+      const returnTaskId = d.special_status_return_task_id ?? d.current_task_id ?? null
+      if (supportReturnTask) {
+        if (returnTaskId) {
+          const { data: task } = await admin
+            .from('tasks')
+            .select('id')
+            .eq('id', returnTaskId)
+            .eq('debtor_id', d.id)
+            .maybeSingle()
+          if (task?.id) {
+            patch.current_task_id = task.id
+            restored += 1
+          }
+        }
+        patch.special_status_return_task_id = null
+      }
+
+      const { error } = await admin.from('debtors').update(patch).eq('id', d.id)
+      if (error && supportReturnTask && isMissingReturnTaskColumn(error)) {
+        supportReturnTask = false
+        const { error: fallbackErr } = await admin
+          .from('debtors')
+          .update({ special_status_id: null })
+          .eq('id', d.id)
+        if (fallbackErr) return apiServerError('set-special-status:clear', fallbackErr)
+      } else if (error) {
+        return apiServerError('set-special-status:clear', error)
+      }
+    }
   } else {
     const { data: status, error: statusErr } = await admin
       .from('special_statuses')
@@ -68,7 +129,6 @@ export async function POST(request: NextRequest) {
     if (!status?.is_active) return safeClientError('الصفة غير موجودة أو غير نشطة', 404)
     statusLabel = status.name
 
-    // الصفة الواحدة لها نسخة بكل فرع — اربط كل مدين بنسخة فرعه
     const { data: siblings, error: sibErr } = await admin
       .from('special_statuses')
       .select('id, branch_id, is_active')
@@ -81,29 +141,37 @@ export async function POST(request: NextRequest) {
       byBranch.set(s.branch_id, s.id)
     }
 
-    const idsByStatus = new Map<string, string[]>()
     const orphans: string[] = []
-    for (const d of targets ?? []) {
+    for (const d of targets) {
       const resolved = d.branch_id ? byBranch.get(d.branch_id) : null
       if (!resolved) {
         orphans.push(d.id)
         continue
       }
-      const prev = idsByStatus.get(resolved) ?? []
-      prev.push(d.id)
-      idsByStatus.set(resolved, prev)
+
+      const patch: Record<string, unknown> = { special_status_id: resolved }
+      if (supportReturnTask && d.current_task_id) {
+        // دخول جديد أو بلا لقطة سابقة: احفظ المهمة الحالية للرجوع
+        if (!d.special_status_id || !d.special_status_return_task_id) {
+          patch.special_status_return_task_id = d.current_task_id
+        }
+      }
+
+      const { error } = await admin.from('debtors').update(patch).eq('id', d.id)
+      if (error && supportReturnTask && isMissingReturnTaskColumn(error)) {
+        supportReturnTask = false
+        const { error: fallbackErr } = await admin
+          .from('debtors')
+          .update({ special_status_id: resolved })
+          .eq('id', d.id)
+        if (fallbackErr) return apiServerError('set-special-status:update', fallbackErr)
+      } else if (error) {
+        return apiServerError('set-special-status:update', error)
+      }
     }
 
     if (orphans.length) {
       return safeClientError(`الصفة «${status.name}» غير متوفرة لفرع ${orphans.length} من المدينين المحددين`, 400)
-    }
-
-    for (const [sid, ids] of idsByStatus) {
-      const { error } = await admin
-        .from('debtors')
-        .update({ special_status_id: sid })
-        .in('id', ids)
-      if (error) return apiServerError('set-special-status:update', error)
     }
   }
 
@@ -111,10 +179,22 @@ export async function POST(request: NextRequest) {
     action: 'set_debtor_special_status',
     entity_type: 'debtor',
     description: statusId
-      ? `تعيين صفة «${statusLabel}» لـ ${debtorIds.length} مدين`
-      : `إزالة الصفة الخاصة عن ${debtorIds.length} مدين`,
-    metadata: { debtorIds, statusId, count: debtorIds.length },
+      ? `تعيين صفة «${statusLabel}» لـ ${debtorIds.length} مدين (مع حفظ المهمة المرتبطة)`
+      : `إرجاع ${debtorIds.length} مدين للمهام${restored ? ` (استعادة ${restored} مهمة)` : ''}`,
+    metadata: {
+      debtorIds,
+      statusId,
+      count: debtorIds.length,
+      restored,
+      savedReturnTask: supportReturnTask,
+    },
   }, auth.supabase)
 
-  return NextResponse.json({ ok: true, updated: debtorIds.length, statusId })
+  return NextResponse.json({
+    ok: true,
+    updated: debtorIds.length,
+    statusId,
+    restored,
+    savedReturnTask: supportReturnTask,
+  })
 }

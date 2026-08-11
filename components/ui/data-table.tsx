@@ -1,5 +1,29 @@
 import { cn } from '@/lib/utils'
 import { HTMLAttributes, ThHTMLAttributes, TdHTMLAttributes } from 'react'
+import type { SortDirection } from '@/lib/table-sort'
+
+function SortIndicator({ direction }: { direction: SortDirection | null | undefined }) {
+  if (direction === 'asc') {
+    return (
+      <span className="inline-flex flex-col leading-none text-[9px] text-[#2C8780]" aria-hidden>
+        <span>▲</span>
+      </span>
+    )
+  }
+  if (direction === 'desc') {
+    return (
+      <span className="inline-flex flex-col leading-none text-[9px] text-[#2C8780]" aria-hidden>
+        <span>▼</span>
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex flex-col leading-none text-[9px] text-[#767676]/45" aria-hidden>
+      <span>▲</span>
+      <span className="-mt-0.5">▼</span>
+    </span>
+  )
+}
 
 export function Table({ className, children, ...props }: HTMLAttributes<HTMLTableElement>) {
   return (
@@ -39,6 +63,60 @@ export function TH({ className, children, ...props }: ThHTMLAttributes<HTMLTable
   return (
     <th className={cn('text-right px-5 py-3.5 text-xs font-bold text-[#454042] bg-[rgba(118,118,118,0.05)] whitespace-nowrap', className)} {...props}>
       {children}
+    </th>
+  )
+}
+
+interface SortableTHProps extends Omit<ThHTMLAttributes<HTMLTableCellElement>, 'onClick'> {
+  /** مفتاح العمود للفرز */
+  sortKey: string
+  activeKey?: string | null
+  direction?: SortDirection | null
+  onCycle: (key: string) => void
+  /** plain = جداول العمليات ذات الرأس الرمادي الفاتح */
+  variant?: 'default' | 'plain'
+}
+
+/** رأس عمود قابل للفرز: ضغطة تصاعدي، ثانية تنازلي، ثالثة افتراضي */
+export function SortableTH({
+  sortKey,
+  activeKey,
+  direction,
+  onCycle,
+  variant = 'default',
+  className,
+  children,
+  ...props
+}: SortableTHProps) {
+  const active = activeKey === sortKey ? direction ?? null : null
+  const ariaSort = active === 'asc' ? 'ascending' : active === 'desc' ? 'descending' : 'none'
+
+  return (
+    <th
+      {...props}
+      aria-sort={ariaSort}
+      className={cn(
+        variant === 'default'
+          ? 'text-right px-5 py-3.5 text-xs font-bold text-[#454042] bg-[rgba(118,118,118,0.05)] whitespace-nowrap'
+          : 'px-4 py-2.5 font-semibold whitespace-nowrap',
+        'cursor-pointer select-none hover:text-[#2C8780] transition-colors',
+        className,
+      )}
+      onClick={() => onCycle(sortKey)}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onCycle(sortKey)
+        }
+      }}
+      tabIndex={0}
+      role="columnheader"
+      title="فرز: تصاعدي ← تنازلي ← افتراضي"
+    >
+      <span className="inline-flex items-center gap-1.5">
+        <span>{children}</span>
+        <SortIndicator direction={active} />
+      </span>
     </th>
   )
 }

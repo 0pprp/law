@@ -12,7 +12,7 @@ import { isFileLawsuitTask, pickPleadingDefinition } from '@/lib/default-next-ta
 import TaskExpensesReviewCard from '@/components/TaskExpensesReviewCard'
 import { fetchPendingReviewTasksPaginated, fetchPendingReviewTaskById, fetchBranchLawyers, REVIEW_TASK_PAGE_SIZE } from '@/lib/task-assignment'
 import { fetchBranchDelegates } from '@/lib/branch-profiles'
-import { cacheGet, cacheSet, cacheDelete, cacheInvalidatePrefix, CACHE_TTL } from '@/lib/query-cache'
+import { cachePeek, cacheSet, cacheDelete, cacheInvalidatePrefix, CACHE_TTL } from '@/lib/query-cache'
 import { refreshAdminNotifications } from '@/lib/admin-notifications'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/ui/page-header'
@@ -689,18 +689,20 @@ export default function TaskReviewPage() {
     if (append) setLoadingMore(true)
     else {
       const cacheKey = `tasks:review:v10:${branchId ?? 'all'}:${listId ?? 'all'}:${assigneeFilterId ?? 'all'}:${effectiveCaseType || 'all'}:${offset}`
-      const cached = cacheGet<{ tasks: any[]; lawyers: any[]; delegates: any[]; total: number }>(cacheKey)
-      if (cached && !append) {
+      const cachedHit = cachePeek<{ tasks: any[]; lawyers: any[]; delegates: any[]; total: number }>(cacheKey)
+      if (cachedHit) {
+        const cached = cachedHit.value
         setTasks(cached.tasks)
         setLawyers(cached.lawyers)
         setDelegates(cached.delegates ?? [])
         setTotal(cached.total)
         setPageOffset(cached.tasks.length)
         setLoading(false)
-        return
+        if (cachedHit.fresh) return
+      } else {
+        setLoading(true)
+        setTasks([])
       }
-      setLoading(true)
-      if (!append) setTasks([])
     }
 
     try {

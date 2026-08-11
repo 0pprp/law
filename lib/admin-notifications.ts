@@ -18,6 +18,7 @@ export const ADMIN_NOTIFICATIONS_REFRESH = 'admin-notifications-refresh'
 export function refreshAdminNotifications() {
   cachedCounts = null
   cachedAt = 0
+  cachedFreshUntil = 0
   cachedBranchKey = null
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(ADMIN_NOTIFICATIONS_REFRESH))
@@ -49,9 +50,21 @@ const EMPTY_COUNTS: AdminNotificationCounts = {
 
 let cachedCounts: AdminNotificationCounts | null = null
 let cachedAt = 0
+let cachedFreshUntil = 0
 let cachedBranchKey: string | null = null
 let inflight: Promise<AdminNotificationCounts> | null = null
 const CLIENT_TTL_MS = 45_000
+const STALE_MS = 5 * 60_000
+
+/** قراءة فورية من الذاكرة (للرسم الأول بدون انتظار شبكة) */
+export function peekAdminNotificationCounts(
+  branchKey: string | null = null,
+): AdminNotificationCounts | null {
+  const key = branchKey ?? '__none__'
+  if (!cachedCounts || cachedBranchKey !== key) return null
+  if (Date.now() > cachedAt + STALE_MS) return null
+  return cachedCounts
+}
 
 export async function fetchAdminNotificationCounts(
   force = false,
@@ -59,24 +72,40 @@ export async function fetchAdminNotificationCounts(
 ): Promise<AdminNotificationCounts> {
   const key = branchKey ?? '__none__'
   const now = Date.now()
+
   if (
     !force
     && cachedCounts
     && cachedBranchKey === key
-    && now - cachedAt < CLIENT_TTL_MS
+    && now < cachedFreshUntil
   ) {
     return cachedCounts
   }
-  if (inflight && cachedBranchKey === key) return inflight
+
+  // stale-while-revalidate: أعد القديميم فوراً وحدّث بالخلفية
+  const hasStale =
+    !force
+    && cachedCounts
+    && cachedBranchKey === key
+    && now < cachedAt + STALE_MS
+
+  if (inflight && cachedBranchKey === key) {
+    if (hasStale && cachedCounts) return cachedCounts
+    return inflight
+  }
 
   cachedBranchKey = key
-  inflight = (async () => {
+  const fetchPromise = (async () => {
     try {
-      const res = await fetch('/api/admin/notification-counts', { cache: 'no-store' })
+      const res = await fetch('/api/admin/notification-counts', {
+        // احترم Cache-Control الخاص بالـ API بدل no-store دائماً
+        credentials: 'same-origin',
+      })
       if (!res.ok) return cachedCounts ?? EMPTY_COUNTS
       const next = { ...EMPTY_COUNTS, ...await res.json() } as AdminNotificationCounts
       cachedCounts = next
       cachedAt = Date.now()
+      cachedFreshUntil = cachedAt + CLIENT_TTL_MS
       return next
     } catch {
       return cachedCounts ?? EMPTY_COUNTS
@@ -85,5 +114,12 @@ export async function fetchAdminNotificationCounts(
     }
   })()
 
-  return inflight
+  inflight = fetchPromise
+
+  if (hasStale && cachedCounts) {
+    void fetchPromise
+    return cachedCounts
+  }
+
+  return fetchPromise
 }

@@ -7,7 +7,8 @@ import { useBranch, useBranchId } from '@/context/branch'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
+import { Table, THead, TBody, TR, TH, TD, SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import { fmtMoney } from '@/lib/utils'
 import { debtorSearchOrFilter, DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
 import { PremiumSelect } from '@/components/ui/premium-select'
@@ -76,6 +77,22 @@ export default function AccountsPage() {
     if (filterGov && d.governorate !== filterGov) return false
     return true
   }), [debtors, filterGov])
+
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(filtered, {
+    debtor: d => d.full_name,
+    governorate: d => d.governorate,
+    remaining: d => Number(d.remaining_amount ?? 0),
+    penalty: d => Number(d.penalty_amount ?? 0),
+    expenses: d => Number(d.total_expenses ?? 0),
+    fees: d => Number(visibleTaskFeeAmount(d.lawyer_fees, d.case_type, role) ?? 0),
+    payments: d => Number(d.total_payments ?? 0),
+    required: d => Number(d.required_amount ?? 0),
+  })
 
   const totalRequired = filtered.reduce((s, d) => s + Number(d.required_amount ?? 0), 0)
   const totalPayments = filtered.reduce((s, d) => s + Number(d.total_payments ?? 0), 0)
@@ -165,19 +182,19 @@ export default function AccountsPage() {
           <Table>
             <THead>
               <tr>
-                <TH>المدين</TH>
-                <TH>المحافظة</TH>
-                <TH>المتبقي</TH>
-                <TH>الشرط الجزائي</TH>
-                <TH>الصرفيات</TH>
-                <TH>الأتعاب</TH>
-                <TH className="text-emerald-700">التسديدات</TH>
-                <TH className="bg-[#2C8780]/5 text-[#2C8780]">المطلوب</TH>
+                <SortableTH sortKey="debtor" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المدين</SortableTH>
+                <SortableTH sortKey="governorate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المحافظة</SortableTH>
+                <SortableTH sortKey="remaining" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المتبقي</SortableTH>
+                <SortableTH sortKey="penalty" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الشرط الجزائي</SortableTH>
+                <SortableTH sortKey="expenses" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الصرفيات</SortableTH>
+                <SortableTH sortKey="fees" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الأتعاب</SortableTH>
+                <SortableTH sortKey="payments" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-emerald-700">التسديدات</SortableTH>
+                <SortableTH sortKey="required" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="bg-[#2C8780]/5 text-[#2C8780]">المطلوب</SortableTH>
                 <TH className="text-center">الإجراءات</TH>
               </tr>
             </THead>
             <TBody>
-              {filtered.map((d: any) => {
+              {sortedRows.map((d: any) => {
                 const pct = Number(d.required_amount) > 0 ? Math.round((Number(d.total_payments) / Number(d.required_amount)) * 100) : 0
                 const remaining = Number(d.remaining_amount)
                 return (

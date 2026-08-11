@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { TASK_STATUS_LABELS, assigneePersonLabel } from '@/lib/types'
@@ -13,6 +13,12 @@ import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/
 import { DatePicker } from '@/components/ui/date-picker'
 import { useAdminRole } from '@/context/admin-role'
 import { canApproveCompletions, canAssignTasks, canEditDebtor } from '@/lib/permissions'
+import { isHearingPostponeAllowed } from '@/lib/hearing-postpone'
+import type { HearingPostponementRow } from '@/lib/hearing-postpone'
+import {
+  HearingPostponeButton,
+  HearingPostponementHistory,
+} from '@/components/HearingPostponeButton'
 import {
   extractHearingDateFromCompletion,
   isHearingDateFieldKey,
@@ -376,17 +382,40 @@ export default function DebtorTasksHistoryList({
   rows,
   fullArchive = false,
   debtorId,
+  debtorName,
 }: {
   rows: DebtorTaskHistoryRow[]
   fullArchive?: boolean
   debtorId: string
+  debtorName?: string | null
 }) {
   const router = useRouter()
   const role = useAdminRole()
   const allowEditHearing = canEditDebtor(role) || canAssignTasks(role) || canApproveCompletions(role)
+  const allowPostpone = isHearingPostponeAllowed(role)
   const { visibleItems, expanded, toggle, hasMore, total } = useShowMore(rows, LOG_PREVIEW_LIMIT)
   const [localHearingByTask, setLocalHearingByTask] = useState<Record<string, string>>({})
   const [pleadingHearing, setPleadingHearing] = useState<string | null>(null)
+  const [postponements, setPostponements] = useState<HearingPostponementRow[]>([])
+  const [postponementsLoading, setPostponementsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!fullArchive) return
+    let cancelled = false
+    setPostponementsLoading(true)
+    void fetch(`/api/admin/debtors/${debtorId}/postpone-hearing`)
+      .then(async res => {
+        const data = await res.json().catch(() => ({}))
+        if (cancelled) return
+        if (res.ok && Array.isArray(data.rows)) {
+          setPostponements(data.rows as HearingPostponementRow[])
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPostponementsLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [debtorId, fullArchive])
 
   if (rows.length === 0) {
     return <div className="py-10 text-center text-[#767676] text-sm">لا توجد مهام مسجّلة لهذا المدين</div>
@@ -394,6 +423,11 @@ export default function DebtorTasksHistoryList({
 
   return (
     <>
+      {fullArchive && (postponementsLoading || postponements.length > 0) && (
+        <div className="px-5 pt-4 pb-2 border-b border-[rgba(118,118,118,0.08)]">
+          <HearingPostponementHistory rows={postponements} loading={postponementsLoading} />
+        </div>
+      )}
       <div className="divide-y divide-[rgba(118,118,118,0.08)]">
         {visibleItems.map(row => {
           const fromRow = localHearingByTask[row.id] ?? row.hearingDate ?? null
@@ -440,10 +474,33 @@ export default function DebtorTasksHistoryList({
                 </div>
                 {showPleadingHearing && (
                   <div className="col-span-2 sm:col-span-3 rounded-lg bg-[#2C8780]/8 border border-[#2C8780]/20 px-3 py-2">
-                    <span className="text-[#767676] block mb-0.5">تاريخ المرافعة</span>
-                    <span className="font-mono text-[#2C8780] font-bold text-sm" dir="ltr">
-                      {hearingDate ? formatDate(hearingDate) : '—'}
-                    </span>
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <span className="text-[#767676] block mb-0.5">تاريخ المرافعة</span>
+                        <span className="font-mono text-[#2C8780] font-bold text-sm" dir="ltr">
+                          {hearingDate ? formatDate(hearingDate) : '—'}
+                        </span>
+                      </div>
+                      {allowPostpone && hearingDate && (
+                        <HearingPostponeButton
+                          debtorId={debtorId}
+                          debtorName={debtorName ?? undefined}
+                          currentDate={hearingDate}
+                          compact
+                          onSuccess={(date) => {
+                            setPleadingHearing(date)
+                            setLocalHearingByTask(prev => ({ ...prev, [row.id]: date }))
+                            void fetch(`/api/admin/debtors/${debtorId}/postpone-hearing`)
+                              .then(r => r.json())
+                              .then(data => {
+                                if (Array.isArray(data.rows)) setPostponements(data.rows)
+                              })
+                              .catch(() => null)
+                            router.refresh()
+                          }}
+                        />
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

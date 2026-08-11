@@ -38,7 +38,7 @@ export async function GET() {
     const admin = createAdminClient()
     const scopeCaseType = filterBySection(sessionCaseScope(auth.profile))
 
-    // Align pendingReview with review page: assigned + open debtors only
+    // كل العددّادات بالتوازي قدر الإمكان
     const reviewCountsPromise = fetchReviewQueueCounts(admin, branchId, null, scopeCaseType)
 
     let lawyersQ = admin
@@ -48,25 +48,6 @@ export async function GET() {
       .eq('is_active', true)
       .eq('branch_id', branchId)
     if (scopeCaseType) lawyersQ = lawyersQ.eq('case_type', scopeCaseType)
-    const { data: scopedLawyers } = await lawyersQ.limit(200)
-    const scopedLawyerIds = (scopedLawyers ?? []).map(l => l.id)
-
-    const payoutPromise = scopedLawyerIds.length
-      ? admin
-          .from('lawyer_payout_requests')
-          .select('id', { count: 'exact', head: true })
-          .eq('branch_id', branchId)
-          .eq('status', 'pending')
-          .in('lawyer_id', scopedLawyerIds)
-      : Promise.resolve({ count: 0 })
-
-    const feeReceiptPromise = scopedLawyerIds.length
-      ? admin
-          .from('task_payment_receipts')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'pending')
-          .in('lawyer_id', scopedLawyerIds)
-      : Promise.resolve({ count: 0 })
 
     let expenseQ = admin
       .from('expenses')
@@ -75,11 +56,30 @@ export async function GET() {
       .eq('status', 'pending_approval')
     if (scopeCaseType) expenseQ = expenseQ.eq('debtor.case_type', scopeCaseType)
 
-    const [reviewCounts, payoutRes, feeReceiptRes, expenseCountRes] = await Promise.all([
+    const [reviewCounts, lawyersRes, expenseCountRes] = await Promise.all([
       reviewCountsPromise,
-      payoutPromise,
-      feeReceiptPromise,
+      lawyersQ.limit(200),
       expenseQ,
+    ])
+
+    const scopedLawyerIds = (lawyersRes.data ?? []).map(l => l.id)
+
+    const [payoutRes, feeReceiptRes] = await Promise.all([
+      scopedLawyerIds.length
+        ? admin
+            .from('lawyer_payout_requests')
+            .select('id', { count: 'exact', head: true })
+            .eq('branch_id', branchId)
+            .eq('status', 'pending')
+            .in('lawyer_id', scopedLawyerIds)
+        : Promise.resolve({ count: 0 }),
+      scopedLawyerIds.length
+        ? admin
+            .from('task_payment_receipts')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'pending')
+            .in('lawyer_id', scopedLawyerIds)
+        : Promise.resolve({ count: 0 }),
     ])
 
     const pendingExpenses = expenseCountRes.count ?? 0

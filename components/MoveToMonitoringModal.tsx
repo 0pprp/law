@@ -85,7 +85,9 @@ export default function MoveToMonitoringModal({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-black text-[#231F20]">تحويل إلى الأسماء التي تحتاج مراقبة</h2>
-            <p className="mt-1 text-xs text-[#767676]">سيتم تحويل {debtorIds.length} اسم من هذا الكارد</p>
+            <p className="mt-1 text-xs text-[#767676]">
+              سيتم تحويل {debtorIds.length} اسم وحفظ المهمة المرتبطة للرجوع إليها لاحقاً
+            </p>
           </div>
           <button
             type="button"

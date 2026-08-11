@@ -14,7 +14,7 @@ import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/
 import { StatCard } from '@/components/ui/stat-card'
 import { stageAccent, stageIconBg } from '@/lib/stage-config'
 import { scheduleBranchMaintenance } from '@/lib/branch-maintenance'
-import { cacheGet, cacheSet, CACHE_TTL } from '@/lib/query-cache'
+import { cachePeek, cacheSet, CACHE_TTL } from '@/lib/query-cache'
 import PaymentOpsCards from '@/components/PaymentOpsCards'
 import {
   fetchDashboardData,
@@ -231,9 +231,10 @@ export default function DashboardPage() {
 
     // v11: يشمل caseType صراحةً لمنع خلط أرقام المدني/الجزائي
     const cacheKey = `dashboard:v11:${branchId ?? 'all'}:${listId ?? 'all'}:${ct ?? 'both'}`
-    const cached = cacheGet<DashboardCache>(cacheKey)
-    if (cached) {
+    const cachedHit = cachePeek<DashboardCache>(cacheKey)
+    if (cachedHit) {
       if (isStale()) return
+      const cached = cachedHit.value
       setCivilStages(cached.civilStages)
       setCriminalStages(cached.criminalStages)
       setCivilAssignedStages(cached.civilAssignedStages)
@@ -246,21 +247,22 @@ export default function DashboardPage() {
       setTotalPendingReview(cached.pendingReview)
       setRecentActivity(cached.recentActivity)
       setLoading(false)
-      return
+      // fresh → لا إعادة جلب؛ stale → تحديث صامت بالخلفية
+      if (cachedHit.fresh) return
+    } else {
+      setLoading(true)
+      setCivilStages([])
+      setCriminalStages([])
+      setCivilAssignedStages([])
+      setCriminalAssignedStages([])
+      setCivilOverdueStages([])
+      setCriminalOverdueStages([])
+      setPleadingHearingBadges(EMPTY_HEARING_BADGES)
+      setTotalWaiting(0)
+      setTotalAssigned(0)
+      setTotalPendingReview(0)
+      setRecentActivity([])
     }
-
-    setLoading(true)
-    setCivilStages([])
-    setCriminalStages([])
-    setCivilAssignedStages([])
-    setCriminalAssignedStages([])
-    setCivilOverdueStages([])
-    setCriminalOverdueStages([])
-    setPleadingHearingBadges(EMPTY_HEARING_BADGES)
-    setTotalWaiting(0)
-    setTotalAssigned(0)
-    setTotalPendingReview(0)
-    setRecentActivity([])
 
     scheduleBranchMaintenance(supabase, branchId)
 

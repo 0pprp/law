@@ -15,7 +15,8 @@ import {
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
+import { Table, THead, TBody, TR, TD, SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { DateRangePicker } from '@/components/ui/date-range-picker'
 import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
@@ -87,6 +88,24 @@ export default function ActivityPage() {
     return true
   }), [logs, filterUser, filterAction, filterEntity, dateFrom, dateTo])
 
+  const {
+    rows: sortedFiltered,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(filtered, {
+    date: l => l.created_at?.split('T')[0],
+    time: l => l.created_at,
+    user: l => l.user?.full_name,
+    role: l => displayRoleLabel(l.user?.role, {
+      accountant_type: l.user?.accountant_type,
+      lawyer_type: l.user?.lawyer_type,
+    }),
+    action: l => activityActionLabel(l.action),
+    description: l => activityLogDescription(l),
+    entity: l => activityEntityLabel(l.entity_type),
+  })
+
   const uniqueActions = useMemo(() => [...new Set(logs.map(l => l.action))].sort(), [logs])
   const uniqueEntities = useMemo(() => [...new Set(logs.map(l => l.entity_type).filter(Boolean))].sort(), [logs])
   const hasFilters = filterUser || filterAction || filterEntity || dateFrom || dateTo
@@ -105,7 +124,7 @@ export default function ActivityPage() {
     toggle: toggleLogs,
     hasMore: logsHasMore,
     total: logsTotal,
-  } = useShowMore(filtered, LOG_PREVIEW_LIMIT)
+  } = useShowMore(sortedFiltered, LOG_PREVIEW_LIMIT)
 
   return (
     <div className="space-y-5">
@@ -181,13 +200,13 @@ export default function ActivityPage() {
               <Table>
                 <THead>
                   <tr>
-                    <TH>التاريخ</TH>
-                    <TH>الوقت</TH>
-                    <TH>المستخدم</TH>
-                    <TH>الدور</TH>
-                    <TH>نوع العملية</TH>
-                    <TH>الوصف</TH>
-                    <TH>الكيان</TH>
+                    <SortableTH sortKey="date" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>التاريخ</SortableTH>
+                    <SortableTH sortKey="time" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الوقت</SortableTH>
+                    <SortableTH sortKey="user" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المستخدم</SortableTH>
+                    <SortableTH sortKey="role" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الدور</SortableTH>
+                    <SortableTH sortKey="action" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>نوع العملية</SortableTH>
+                    <SortableTH sortKey="description" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الوصف</SortableTH>
+                    <SortableTH sortKey="entity" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الكيان</SortableTH>
                   </tr>
                 </THead>
                 <TBody>

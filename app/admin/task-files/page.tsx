@@ -7,7 +7,8 @@ import type { TaskType, TaskStatus } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
+import { Table, THead, TBody, TR, TH, TD, SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import { fmtDate } from '@/lib/utils'
 import { useBranch, useBranchId } from '@/context/branch'
 import { DEBTOR_SEARCH_PLACEHOLDER, resolveDebtorIdsBySearch } from '@/lib/debtor-search'
@@ -126,6 +127,23 @@ export default function TaskFilesPage() {
     return true
   }), [files, filterLawyer, filterType, filterStatus, filterMime, dateFrom, dateTo])
 
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(filtered, {
+    debtor: f => f.task?.debtor?.full_name,
+    lawyer: f => f.task?.lawyer?.full_name,
+    governorate: f => f.task?.governorate ?? f.task?.debtor?.governorate,
+    taskType: f => f.task?.task_type ? TASK_TYPE_LABELS[f.task.task_type as TaskType] : null,
+    taskStatus: f => f.task?.task_status ? TASK_STATUS_LABELS[f.task.task_status as TaskStatus] : null,
+    fileName: f => f.file_name,
+    mime: f => fileTypeLabel(f.mime_type),
+    size: f => Number(f.file_size ?? 0),
+    createdAt: f => f.created_at,
+  })
+
   async function openFile(fileId: string, filePath: string) {
     setOpeningId(fileId)
     try {
@@ -242,20 +260,20 @@ export default function TaskFilesPage() {
           <Table>
             <THead>
               <tr>
-                <TH>المدين</TH>
-                <TH>المحامي</TH>
-                <TH>المحافظة</TH>
-                <TH>نوع المهمة</TH>
-                <TH>حالة المهمة</TH>
-                <TH>اسم الملف</TH>
-                <TH>النوع</TH>
-                <TH>الحجم</TH>
-                <TH>تاريخ الرفع</TH>
+                <SortableTH sortKey="debtor" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المدين</SortableTH>
+                <SortableTH sortKey="lawyer" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المحامي</SortableTH>
+                <SortableTH sortKey="governorate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المحافظة</SortableTH>
+                <SortableTH sortKey="taskType" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>نوع المهمة</SortableTH>
+                <SortableTH sortKey="taskStatus" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>حالة المهمة</SortableTH>
+                <SortableTH sortKey="fileName" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>اسم الملف</SortableTH>
+                <SortableTH sortKey="mime" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>النوع</SortableTH>
+                <SortableTH sortKey="size" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الحجم</SortableTH>
+                <SortableTH sortKey="createdAt" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>تاريخ الرفع</SortableTH>
                 <TH className="text-center">الإجراءات</TH>
               </tr>
             </THead>
             <TBody>
-              {filtered.map((f: any) => (
+              {sortedRows.map((f: any) => (
                 <TR key={f.id}>
                   <TD className="font-semibold text-[#231F20] whitespace-nowrap">{f.task?.debtor?.full_name ?? '—'}</TD>
                   <TD className="text-[#767676] text-xs whitespace-nowrap">{f.task?.lawyer?.full_name ?? '—'}</TD>

@@ -27,6 +27,28 @@ async function countDebtorsForStatus(admin: Admin, statusId: string): Promise<nu
   return count ?? 0
 }
 
+/** عدّادات head متوازية — أسرع من جلب كل الصفوف وعدّها */
+async function countDebtorsByStatusIds(
+  admin: Admin,
+  statusIds: string[],
+  branchId: string | null,
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  if (!statusIds.length) return map
+
+  await Promise.all(statusIds.map(async id => {
+    let cq = admin
+      .from('debtors')
+      .select('id', { count: 'exact', head: true })
+      .eq('special_status_id', id)
+      .neq('case_status', 'closed')
+    if (branchId) cq = cq.eq('branch_id', branchId)
+    const { count } = await cq
+    map.set(id, count ?? 0)
+  }))
+  return map
+}
+
 /** نسخ الصفة بنفس الاسم في كل الفروع — الصفة الواحدة تُنشأ لكل فرع */
 async function siblingIdsByName(admin: Admin, name: string): Promise<string[]> {
   const { data } = await admin.from('special_statuses').select('id').eq('name', name)
@@ -56,12 +78,15 @@ export async function GET(request: NextRequest) {
   if (error) return apiServerError('special-statuses:get', error)
 
   const rows = data ?? []
-  const withCounts = await Promise.all(rows.map(async row => ({
+  const allIds = rows.map(r => r.id as string)
+  const counts = await countDebtorsByStatusIds(admin, allIds, aggregate ? null : branchId)
+
+  const withCounts = rows.map(row => ({
     ...row,
     color: normalizeSpecialStatusColor(row.color),
     ids: [row.id as string],
-    debtor_count: await countDebtorsForStatus(admin, row.id),
-  })))
+    debtor_count: counts.get(row.id as string) ?? 0,
+  }))
 
   if (!aggregate) return NextResponse.json({ statuses: withCounts })
 

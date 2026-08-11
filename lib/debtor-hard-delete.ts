@@ -205,6 +205,7 @@ export async function hardDeleteDebtorCascade(
     'debtor_payments',
     'debtor_notes',
     'debtor_attachments',
+    'hearing_postponements',
     'payment_noncompliance_requests',
     'criminal_debtor_details',
   ] as const) {

@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 
 const TEAL = '#2C8780'
@@ -65,11 +66,18 @@ export function DatePicker({
   maxDate,
 }: DatePickerProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
+  const [mounted, setMounted] = useState(false)
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null)
 
   const initial = value ? parseYmd(value) : new Date()
   const [viewYear, setViewYear] = useState(initial.getFullYear())
   const [viewMonth, setViewMonth] = useState(initial.getMonth())
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     if (open) {
@@ -79,10 +87,46 @@ export function DatePicker({
     }
   }, [open, value])
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setPanelPos(null)
+      return
+    }
+    function updatePos() {
+      const el = ref.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const panelWidth = Math.max(rect.width, 280)
+      const estimatedHeight = 360
+      const gap = 8
+      const spaceBelow = window.innerHeight - rect.bottom - gap
+      const openUp = spaceBelow < estimatedHeight && rect.top > spaceBelow
+      const top = openUp
+        ? Math.max(8, rect.top - estimatedHeight - gap)
+        : rect.bottom + gap
+      let left = rect.left
+      if (left + panelWidth > window.innerWidth - 8) {
+        left = Math.max(8, window.innerWidth - panelWidth - 8)
+      }
+      if (left < 8) left = 8
+      setPanelPos({ top, left, width: panelWidth })
+    }
+    updatePos()
+    window.addEventListener('resize', updatePos)
+    window.addEventListener('scroll', updatePos, true)
+    return () => {
+      window.removeEventListener('resize', updatePos)
+      window.removeEventListener('scroll', updatePos, true)
+    }
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     function onOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (ref.current?.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', onOutside)
     return () => document.removeEventListener('mousedown', onOutside)
@@ -178,14 +222,21 @@ export function DatePicker({
         )}
       </button>
 
-      {open && (
+      {open && mounted && panelPos && createPortal(
         <div
-          className="absolute z-[200] left-0 right-0 top-full mt-2 rounded-2xl overflow-hidden min-w-[280px]"
+          ref={panelRef}
+          className="rounded-2xl overflow-hidden min-w-[280px]"
           style={{
+            position: 'fixed',
+            top: panelPos.top,
+            left: panelPos.left,
+            width: panelPos.width,
+            zIndex: 10000,
             background: 'white',
             border: '1px solid rgba(118,118,118,0.12)',
             boxShadow: '0 20px 60px -10px rgba(35,31,32,0.18), 0 4px 16px -4px rgba(35,31,32,0.08)',
           }}
+          dir="rtl"
         >
           <div
             className="px-4 py-3"
@@ -254,7 +305,8 @@ export function DatePicker({
               })}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

@@ -238,29 +238,28 @@ async function loadBranchNames(
 }
 
 /**
- * مدينون بمهمة حالية بلا تعريف وغير مكلّفة — يُعاملون كحاجة لإسناد مهمة.
- * فلترة على الـ join بدل مسح كل المدينين ثم التصفية محلياً.
+ * مدينون بمهمة حالية بلا تعريف وغير مكلّفة — صفحة واحدة فقط (للسرعة).
  */
-async function fetchUntypedUnassignedDebtors(
+async function fetchUntypedUnassignedDebtorsPage(
   supabase: SupabaseClient,
   branchId: string | null,
-  options?: FetchAwaitingAssignmentOptions,
+  options?: FetchAwaitingAssignmentOptions & { from?: number; to?: number },
 ): Promise<{ rows: RawDebtor[]; error: string | null; noteColumnMissing: boolean }> {
   const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
   const branchListId = options?.branchListId?.trim() || null
   const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
   const mode = options?.mode === 'preparing' ? 'preparing' : 'awaiting'
-  const PAGE = 500
+  const from = Math.max(0, options?.from ?? 0)
+  const to = Math.max(from, options?.to ?? from + 49)
   const terminalFilter = `(${[...TERMINAL_TASK_STATUSES].join(',')})`
   let noteColumnMissing = false
   let duplicateColumnReady = true
   let prepColumnReady = true
 
   const colsWithNote = `${awaitingBaseCols()}, assignment_note, current_task_id`
-  const colsBase = `${awaitingBaseCols()}, current_task_id`
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const build = (cols: string, from: number, to: number): any => {
+  const build = (cols: string): any => {
     let q = supabase
       .from('debtors')
       .select(`${cols}, current_task:tasks!current_task_id!inner(id, task_definition_id, assigned_to, task_status)`)
@@ -269,7 +268,7 @@ async function fetchUntypedUnassignedDebtors(
       .is('current_task.task_definition_id', null)
       .is('current_task.assigned_to', null)
       .not('current_task.task_status', 'in', terminalFilter)
-      .order('id')
+      .order('created_at', { ascending: true })
       .range(from, to)
     if (branchId) q = q.eq('branch_id', branchId)
     q = applyAwaitingBranchListFilter(q, branchListId, caseType)
@@ -280,79 +279,56 @@ async function fetchUntypedUnassignedDebtors(
     return q
   }
 
-  async function runPage(from: number, to: number) {
-    let res = await build(colsWithNote, from, to)
-    if (res.error && isMissingPrepColumnError(res.error.message)) {
-      prepColumnReady = false
-      if (mode === 'preparing') return { data: [], error: null }
-      res = await build(colsWithNote, from, to)
-    }
-    if (res.error && isMissingDuplicateColumnError(res.error.message)) {
-      duplicateColumnReady = false
-      res = await build(colsWithNote, from, to)
-    }
-    if (res.error && isMissingDebtorCourtCol(res.error.message) && awaitingCourtColReady !== false) {
-      awaitingCourtColReady = false
-      res = await build(`${awaitingBaseCols()}, assignment_note, current_task_id`, from, to)
-    }
-    if (res.error && isMissingNoteColumnError(res.error.message)) {
-      noteColumnMissing = true
-      res = await build(`${awaitingBaseCols()}, current_task_id`, from, to)
-      if (res.error && isMissingDuplicateColumnError(res.error.message)) {
-        duplicateColumnReady = false
-        res = await build(`${awaitingBaseCols()}, current_task_id`, from, to)
-      }
-      if (res.error && isMissingPrepColumnError(res.error.message)) {
-        prepColumnReady = false
-        if (mode === 'preparing') return { data: [], error: null }
-        res = await build(`${awaitingBaseCols()}, current_task_id`, from, to)
-      }
-    } else if (!res.error && awaitingCourtColReady !== false) {
-      awaitingCourtColReady = true
-    }
-    return res
+  let res = await build(colsWithNote)
+  if (res.error && isMissingPrepColumnError(res.error.message)) {
+    prepColumnReady = false
+    if (mode === 'preparing') return { rows: [], error: null, noteColumnMissing }
+    res = await build(colsWithNote)
   }
-
-  const out: RawDebtor[] = []
-  let pageIdx = 0
-  while (pageIdx <= 100) {
-    const from = pageIdx * PAGE
-    const res = await runPage(from, from + PAGE - 1)
-    if (res.error) return { rows: [], error: res.error.message, noteColumnMissing }
-    const rows = (res.data ?? []) as unknown as RawDebtor[]
-    for (const r of rows) out.push({ ...r, needs_task_definition: true })
-    if (rows.length < PAGE) break
-    pageIdx += 1
+  if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+    duplicateColumnReady = false
+    res = await build(colsWithNote)
   }
+  if (res.error && isMissingDebtorCourtCol(res.error.message) && awaitingCourtColReady !== false) {
+    awaitingCourtColReady = false
+    res = await build(`${awaitingBaseCols()}, assignment_note, current_task_id`)
+  }
+  if (res.error && isMissingNoteColumnError(res.error.message)) {
+    noteColumnMissing = true
+    res = await build(`${awaitingBaseCols()}, current_task_id`)
+  } else if (!res.error && awaitingCourtColReady !== false) {
+    awaitingCourtColReady = true
+  }
+  if (res.error) return { rows: [], error: res.error.message, noteColumnMissing }
 
-  return { rows: out, error: null, noteColumnMissing }
+  const rows = ((res.data ?? []) as unknown as RawDebtor[]).map(r => ({ ...r, needs_task_definition: true }))
+  return { rows, error: null, noteColumnMissing }
 }
 
-/** الأقدم أولاً حتى تظهر الحالات المتأخرة في الإسناد قبل غيرها */
-export async function fetchAwaitingAssignmentDebtors(
+/** عدّ سريع (head) — بلا جلب صفوف */
+async function countUntypedAwaitingScoped(
   supabase: SupabaseClient,
   branchId: string | null,
   options?: FetchAwaitingAssignmentOptions,
-): Promise<FetchAwaitingAssignmentResult> {
-  const offset = Math.max(0, options?.offset ?? 0)
-  // حد أعلى مرتفع لزر «عرض الكل» — الصفحة الأولى تبقى صغيرة من الواجهة
-  const limit = Math.min(5000, Math.max(1, options?.limit ?? 50))
+): Promise<{ count: number; error: string | null }> {
   const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
   const branchListId = options?.branchListId?.trim() || null
   const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
   const mode = options?.mode === 'preparing' ? 'preparing' : 'awaiting'
-
+  const terminalFilter = `(${[...TERMINAL_TASK_STATUSES].join(',')})`
   let duplicateColumnReady = true
   let prepColumnReady = true
 
-  const buildNoTaskQuery = (cols: string) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const build = (): any => {
     let q = supabase
       .from('debtors')
-      .select(cols)
-      .is('current_task_id', null)
+      .select('id, current_task:tasks!current_task_id!inner(id)', { count: 'exact', head: true })
       .is('special_status_id', null)
     q = applyAwaitingCaseStatusFilter(q)
-      .order('created_at', { ascending: true })
+      .is('current_task.task_definition_id', null)
+      .is('current_task.assigned_to', null)
+      .not('current_task.task_status', 'in', terminalFilter)
     if (branchId) q = q.eq('branch_id', branchId)
     q = applyAwaitingBranchListFilter(q, branchListId, caseType)
     if (caseType) q = q.eq('case_type', caseType)
@@ -362,80 +338,153 @@ export async function fetchAwaitingAssignmentDebtors(
     return q
   }
 
+  let res = await build()
+  if (res.error && isMissingPrepColumnError(res.error.message)) {
+    prepColumnReady = false
+    if (mode === 'preparing') return { count: 0, error: null }
+    res = await build()
+  }
+  if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+    duplicateColumnReady = false
+    res = await build()
+  }
+  if (res.error) return { count: 0, error: res.error.message }
+  return { count: res.count ?? 0, error: null }
+}
+
+async function countNoTaskAwaitingScoped(
+  supabase: SupabaseClient,
+  branchId: string | null,
+  options?: FetchAwaitingAssignmentOptions,
+): Promise<{ count: number; error: string | null }> {
+  const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
+  const branchListId = options?.branchListId?.trim() || null
+  const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
+  const mode = options?.mode === 'preparing' ? 'preparing' : 'awaiting'
+  let duplicateColumnReady = true
+  let prepColumnReady = true
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const build = (): any => {
+    let q = supabase
+      .from('debtors')
+      .select('id', { count: 'exact', head: true })
+      .is('current_task_id', null)
+      .is('special_status_id', null)
+    q = applyAwaitingCaseStatusFilter(q)
+    if (branchId) q = q.eq('branch_id', branchId)
+    q = applyAwaitingBranchListFilter(q, branchListId, caseType)
+    if (caseType) q = q.eq('case_type', caseType)
+    if (search) q = q.ilike('full_name', `%${search}%`)
+    q = applyNotDuplicateFilter(q, duplicateColumnReady)
+    q = applyFilePreparationModeFilter(q, mode, prepColumnReady)
+    return q
+  }
+
+  let res = await build()
+  if (res.error && isMissingPrepColumnError(res.error.message)) {
+    prepColumnReady = false
+    if (mode === 'preparing') return { count: 0, error: null }
+    res = await build()
+  }
+  if (res.error && isMissingDuplicateColumnError(res.error.message)) {
+    duplicateColumnReady = false
+    res = await build()
+  }
+  if (res.error) return { count: 0, error: res.error.message }
+  return { count: res.count ?? 0, error: null }
+}
+
+/** عدد سريع لكارد اللوحة — بدون جلب صفوف أو ملاحظات */
+export async function countAwaitingAssignmentDebtors(
+  supabase: SupabaseClient,
+  branchId: string | null,
+  options?: FetchAwaitingAssignmentOptions,
+): Promise<{ total: number; error: string | null }> {
+  const [untyped, noTask] = await Promise.all([
+    countUntypedAwaitingScoped(supabase, branchId, options),
+    countNoTaskAwaitingScoped(supabase, branchId, options),
+  ])
+  if (untyped.error && noTask.error) {
+    return { total: 0, error: untyped.error || noTask.error }
+  }
+  // إن فشل مسار اليتيم فقط — اعتمد بلا مهمة
+  const total = (untyped.error ? 0 : untyped.count) + (noTask.error ? 0 : noTask.count)
+  return { total, error: null }
+}
+
+/** الأقدم أولاً حتى تظهر الحالات المتأخرة في الإسناد قبل غيرها */
+export async function fetchAwaitingAssignmentDebtors(
+  supabase: SupabaseClient,
+  branchId: string | null,
+  options?: FetchAwaitingAssignmentOptions,
+): Promise<FetchAwaitingAssignmentResult> {
+  const offset = Math.max(0, options?.offset ?? 0)
+  const limit = Math.min(5000, Math.max(1, options?.limit ?? 50))
+  const search = (options?.search ?? '').trim().replace(/[%_,]/g, '')
+  const branchListId = options?.branchListId?.trim() || null
+  const caseType = options?.caseType === 'civil' || options?.caseType === 'criminal' ? options.caseType : null
+  const mode = options?.mode === 'preparing' ? 'preparing' : 'awaiting'
+
+  let duplicateColumnReady = true
+  let prepColumnReady = true
   let noteColumnMissing = false
 
-  const untypedRes = await fetchUntypedUnassignedDebtors(supabase, branchId, options)
-  if (untypedRes.error) {
-    // لا تُصفَّر أسماء بلا مهمة بسبب فشل مسار المهام اليتيمة
-    console.warn('[fetchAwaitingAssignmentDebtors] untyped scan skipped:', untypedRes.error)
-  }
-  noteColumnMissing = untypedRes.noteColumnMissing
-  const untypedSorted = untypedRes.error
-    ? []
-    : [...untypedRes.rows].sort(
-      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-    )
+  const [untypedCountRes, noTaskCountRes] = await Promise.all([
+    countUntypedAwaitingScoped(supabase, branchId, options),
+    countNoTaskAwaitingScoped(supabase, branchId, options),
+  ])
 
-  let countQ = supabase
-    .from('debtors')
-    .select('id', { count: 'exact', head: true })
-    .is('current_task_id', null)
-    .is('special_status_id', null)
-  countQ = applyAwaitingCaseStatusFilter(countQ)
-  if (branchId) countQ = countQ.eq('branch_id', branchId)
-  countQ = applyAwaitingBranchListFilter(countQ, branchListId, caseType)
-  if (caseType) countQ = countQ.eq('case_type', caseType)
-  if (search) countQ = countQ.ilike('full_name', `%${search}%`)
-  countQ = applyNotDuplicateFilter(countQ, duplicateColumnReady)
-  countQ = applyFilePreparationModeFilter(countQ, mode, prepColumnReady)
-  let { count: noTaskTotal, error: countErr } = await countQ
-  if (countErr && isMissingPrepColumnError(countErr.message)) {
-    prepColumnReady = false
-    if (mode === 'preparing') {
-      return { rows: [], total: 0, noteColumnMissing, error: null }
-    }
-    countQ = supabase
-      .from('debtors')
-      .select('id', { count: 'exact', head: true })
-      .is('current_task_id', null)
-      .is('special_status_id', null)
-    countQ = applyAwaitingCaseStatusFilter(countQ)
-    if (branchId) countQ = countQ.eq('branch_id', branchId)
-    countQ = applyAwaitingBranchListFilter(countQ, branchListId, caseType)
-    if (caseType) countQ = countQ.eq('case_type', caseType)
-    if (search) countQ = countQ.ilike('full_name', `%${search}%`)
-    countQ = applyNotDuplicateFilter(countQ, duplicateColumnReady)
-    ;({ count: noTaskTotal, error: countErr } = await countQ)
+  if (untypedCountRes.error) {
+    console.warn('[fetchAwaitingAssignmentDebtors] untyped count skipped:', untypedCountRes.error)
   }
-  if (countErr && isMissingDuplicateColumnError(countErr.message)) {
-    duplicateColumnReady = false
-    countQ = supabase
-      .from('debtors')
-      .select('id', { count: 'exact', head: true })
-      .is('current_task_id', null)
-      .is('special_status_id', null)
-    countQ = applyAwaitingCaseStatusFilter(countQ)
-    if (branchId) countQ = countQ.eq('branch_id', branchId)
-    countQ = applyAwaitingBranchListFilter(countQ, branchListId, caseType)
-    if (caseType) countQ = countQ.eq('case_type', caseType)
-    if (search) countQ = countQ.ilike('full_name', `%${search}%`)
-    countQ = applyFilePreparationModeFilter(countQ, mode, prepColumnReady)
-    ;({ count: noTaskTotal, error: countErr } = await countQ)
-  }
-  if (countErr) {
-    return { rows: [], total: 0, noteColumnMissing, error: countErr.message }
+  if (noTaskCountRes.error && untypedCountRes.error) {
+    return { rows: [], total: 0, noteColumnMissing, error: noTaskCountRes.error }
   }
 
-  const total = untypedSorted.length + (noTaskTotal ?? 0)
+  const untypedTotal = untypedCountRes.error ? 0 : untypedCountRes.count
+  const noTaskTotal = noTaskCountRes.error ? 0 : noTaskCountRes.count
+  const total = untypedTotal + noTaskTotal
+
   const page: RawDebtor[] = []
 
-  // untyped أولاً (بحاجة تعيين نوع)، ثم بلا مهمة مطلوبة
-  if (offset < untypedSorted.length) {
-    page.push(...untypedSorted.slice(offset, offset + limit))
+  // untyped أولاً
+  if (offset < untypedTotal && limit > 0) {
+    const from = offset
+    const to = Math.min(offset + limit - 1, untypedTotal - 1)
+    const untypedPage = await fetchUntypedUnassignedDebtorsPage(supabase, branchId, {
+      ...options,
+      from,
+      to,
+    })
+    if (untypedPage.error) {
+      console.warn('[fetchAwaitingAssignmentDebtors] untyped page skipped:', untypedPage.error)
+    } else {
+      noteColumnMissing = untypedPage.noteColumnMissing
+      page.push(...untypedPage.rows)
+    }
   }
+
   const remaining = limit - page.length
-  if (remaining > 0) {
-    const noTaskOffset = Math.max(0, offset - untypedSorted.length)
+  if (remaining > 0 && noTaskTotal > 0) {
+    const noTaskOffset = Math.max(0, offset - untypedTotal)
+    const buildNoTaskQuery = (cols: string) => {
+      let q = supabase
+        .from('debtors')
+        .select(cols)
+        .is('current_task_id', null)
+        .is('special_status_id', null)
+      q = applyAwaitingCaseStatusFilter(q)
+        .order('created_at', { ascending: true })
+      if (branchId) q = q.eq('branch_id', branchId)
+      q = applyAwaitingBranchListFilter(q, branchListId, caseType)
+      if (caseType) q = q.eq('case_type', caseType)
+      if (search) q = q.ilike('full_name', `%${search}%`)
+      q = applyNotDuplicateFilter(q, duplicateColumnReady)
+      q = applyFilePreparationModeFilter(q, mode, prepColumnReady)
+      return q
+    }
+
     let res = await buildNoTaskQuery(`${awaitingBaseCols()}, assignment_note`)
       .range(noTaskOffset, noTaskOffset + remaining - 1)
     if (res.error && isMissingPrepColumnError(res.error.message)) {
@@ -459,14 +508,6 @@ export async function fetchAwaitingAssignmentDebtors(
     if (res.error && isMissingNoteColumnError(res.error.message)) {
       noteColumnMissing = true
       res = await buildNoTaskQuery(awaitingBaseCols()).range(noTaskOffset, noTaskOffset + remaining - 1)
-      if (res.error && isMissingDuplicateColumnError(res.error.message)) {
-        duplicateColumnReady = false
-        res = await buildNoTaskQuery(awaitingBaseCols()).range(noTaskOffset, noTaskOffset + remaining - 1)
-      }
-      if (res.error && isMissingDebtorCourtCol(res.error.message) && awaitingCourtColReady !== false) {
-        awaitingCourtColReady = false
-        res = await buildNoTaskQuery(awaitingBaseCols()).range(noTaskOffset, noTaskOffset + remaining - 1)
-      }
     } else if (!res.error && awaitingCourtColReady !== false) {
       awaitingCourtColReady = true
     }

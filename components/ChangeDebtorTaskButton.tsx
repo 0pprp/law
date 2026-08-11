@@ -59,12 +59,29 @@ export default function ChangeDebtorTaskButton({
       const caseType = debtorMeta?.case_type === 'criminal' ? 'criminal' : 'civil'
       setCaseType(caseType)
 
-      const list = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, fee_amount', { caseType })
-      setDefs(list.map(d => ({
-        id: String(d.id),
-        label: String(d.label ?? ''),
-        fee_amount: Number(d.fee_amount) || 0,
-      })))
+      let list: { id: string; label: string; fee_amount: number }[] = []
+      if (caseType === 'criminal') {
+        // يزامن من إدارة المهام الجزائية ثم يعرض كل التعريفات النشطة
+        const res = await fetch(`/api/admin/task-definitions/criminal?branchId=${encodeURIComponent(branchId)}`)
+        const json = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(typeof json.error === 'string' ? json.error : 'فشل تحميل المهام')
+        list = ((json.definitions ?? []) as { id: string; label: string; fee_amount: number }[]).map(d => ({
+          id: String(d.id),
+          label: String(d.label ?? ''),
+          fee_amount: Number(d.fee_amount) || 0,
+        }))
+        if (typeof json.warning === 'string' && json.warning) {
+          setError(json.warning)
+        }
+      } else {
+        const rows = await fetchActiveTaskDefinitions(supabase, branchId, 'id, label, fee_amount', { caseType })
+        list = rows.map(d => ({
+          id: String(d.id),
+          label: String(d.label ?? ''),
+          fee_amount: Number(d.fee_amount) || 0,
+        }))
+      }
+      setDefs(list)
 
       if (debtorMeta?.current_task_id) {
         const { data: task } = await supabase

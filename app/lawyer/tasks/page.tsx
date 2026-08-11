@@ -16,7 +16,7 @@ import LawyerTasksGrid from '@/components/LawyerTasksGrid'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { isGeneralLawyerType } from '@/lib/lawyer-type'
 import { DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
-import { cacheGet, cacheSet, CACHE_TTL } from '@/lib/query-cache'
+import { cachePeek, cacheSet, CACHE_TTL } from '@/lib/query-cache'
 
 const FILTERS: { key: TaskStatus | 'all'; label: string }[] = [
   { key: 'all', label: 'الكل' },
@@ -72,21 +72,23 @@ export default function LawyerTasksPage() {
     const uid = userId ?? lawyerId
     if (!uid) return
 
-    if (append) setLoadingMore(true)
-    else setLoading(true)
-
     const cacheKey = lawyerTasksCacheKey(uid, filter, debouncedSearch.trim(), branchFilter || '', offset)
+    let hadCache = false
     if (!append) {
-      const cached = cacheGet<{ tasks: any[]; total: number }>(cacheKey)
-      if (cached) {
-        setTasks(cached.tasks)
-        setTotal(cached.total)
-        setPageOffset(offset + cached.tasks.length)
+      const cachedHit = cachePeek<{ tasks: any[]; total: number }>(cacheKey)
+      if (cachedHit) {
+        hadCache = true
+        setTasks(cachedHit.value.tasks)
+        setTotal(cachedHit.value.total)
+        setPageOffset(offset + cachedHit.value.tasks.length)
         setLoading(false)
         setLoadingMore(false)
-        return
+        if (cachedHit.fresh) return
       }
+    } else {
+      setLoadingMore(true)
     }
+    if (!append && !hadCache) setLoading(true)
 
     const supabase = createClient()
     const page = await fetchLawyerAssignedTasksPaginated(supabase, uid, {

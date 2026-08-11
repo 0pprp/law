@@ -350,7 +350,7 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
     const [
       { data: t },
       { data: debtor },
-      { data: d },
+      defsResult,
       { data: c },
       { data: e },
     ] = await Promise.all([
@@ -359,7 +359,22 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
         .eq('debtor_id', debtorId)
         .order('created_at', { ascending: false }),
       supabase.from('debtors').select('current_task_id, case_status, case_type').eq('id', debtorId).single(),
-      (() => {
+      (async () => {
+        // مزامنة المهام الجزائية ثم الجلب
+        const { data: debtorPeek } = await supabase
+          .from('debtors')
+          .select('case_type')
+          .eq('id', debtorId)
+          .maybeSingle()
+        if (debtorPeek?.case_type === 'criminal' && branchId) {
+          try {
+            const res = await fetch(`/api/admin/task-definitions/criminal?branchId=${encodeURIComponent(branchId)}`)
+            const json = await res.json().catch(() => ({}))
+            if (res.ok && Array.isArray(json.definitions)) {
+              return { data: json.definitions as TaskDef[] }
+            }
+          } catch { /* fallback below */ }
+        }
         let q = (supabase as any).from('task_definitions').select('*').eq('is_active', true).order('sort_order')
         if (branchId) q = q.eq('branch_id', branchId)
         return q
@@ -370,8 +385,10 @@ export default function DebtorTasksPanel({ debtorId }: { debtorId: string }) {
     setTasks(t ?? [])
     setDebtorMeta(debtor ?? null)
     const caseType = debtor?.case_type === 'criminal' ? 'criminal' : 'civil'
-    setDefs(((d ?? []) as TaskDef[]).filter(def =>
-      ((def as TaskDef & { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil') === caseType,
+    const rawDefs = (defsResult?.data ?? []) as TaskDef[]
+    setDefs(rawDefs.filter(def =>
+      ((def as TaskDef & { case_type?: string }).case_type === 'criminal' ? 'criminal' : 'civil') === caseType
+      || caseType === 'criminal', // من API الجزائي كلّها جزائية
     ))
     setCourts(c ?? [])
     setExecDepts(e ?? [])

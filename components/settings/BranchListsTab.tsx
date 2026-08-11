@@ -12,6 +12,8 @@ import {
 import { useAdminRole } from '@/context/admin-role'
 import { canAddBranchReferenceData, canModifyBranchReferenceData } from '@/lib/permissions'
 import { appConfirm } from '@/lib/app-dialog'
+import { SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/20 focus:border-[#2C8780] transition-all'
 
@@ -62,6 +64,15 @@ export default function BranchListsTab() {
   const [deleteLoading, setDeleteLoading] = useState(false)
 
   const [mergeCandidate, setMergeCandidate] = useState<{ id: string; name: string } | null>(null)
+
+  const {
+    rows: sortedLists,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(lists, {
+    name: item => item.name,
+  })
 
   const load = useCallback(async () => {
     if (!branchId) {
@@ -251,12 +262,12 @@ export default function BranchListsTab() {
           <table className="w-full text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">اسم القائمة</th>
+                <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">اسم القائمة</SortableTH>
                 <th className="text-center px-4 py-2.5 text-xs font-semibold text-[#767676] w-28">إجراء</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[rgba(118,118,118,0.06)]">
-              {lists.map(item => (
+              {sortedLists.map(item => (
                 <tr key={item.id} className="hover:bg-[#F8F7F8] transition-colors">
                   <td className="px-4 py-3 font-semibold text-[#231F20]">{item.name}</td>
                   <td className="px-4 py-3">

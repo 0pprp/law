@@ -11,6 +11,8 @@ import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import BranchListBox from '@/components/BranchListBox'
 import SpecialStatusBadge from '@/components/SpecialStatusBadge'
 import MoveToMonitoringModal from '@/components/MoveToMonitoringModal'
+import { SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import {
   fetchAwaitingAssignmentBranchSummaries,
   fetchAwaitingAssignmentDebtors,
@@ -143,8 +145,22 @@ function DebtorRowsTable({
   onToggle: (id: string) => void
   onToggleAll: () => void
 }) {
-  const allSelected = rows.length > 0 && rows.every(r => selectedIds.includes(r.id))
-  const someSelected = rows.some(r => selectedIds.includes(r.id))
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(rows, {
+    name: r => r.full_name,
+    caseType: r => CASE_TYPE_LABELS[r.case_type] ?? r.case_type,
+    list: r => r.branch_list_name,
+    court: r => r.court_name,
+    execution: r => r.execution_office,
+    createdAt: r => r.created_at,
+    note: r => r.last_note,
+  })
+  const allSelected = sortedRows.length > 0 && sortedRows.every(r => selectedIds.includes(r.id))
+  const someSelected = sortedRows.some(r => selectedIds.includes(r.id))
 
   return (
     <>
@@ -155,13 +171,13 @@ function DebtorRowsTable({
               {allowSelect && (
                 <th className="px-3 py-2.5 w-14 text-center font-semibold text-[#1D6365]">تحديد</th>
               )}
-              <th className="px-4 py-2.5 font-semibold">الاسم</th>
-              <th className="px-4 py-2.5 font-semibold">نوع الدعوى</th>
-              <th className="px-4 py-2.5 font-semibold">القائمة</th>
-              <th className="px-4 py-2.5 font-semibold">🏛 المحكمة</th>
-              <th className="px-4 py-2.5 font-semibold">⚖️ دائرة التنفيذ</th>
-              <th className="px-4 py-2.5 font-semibold">تاريخ الإضافة</th>
-              <th className="px-4 py-2.5 font-semibold">الملاحظة</th>
+              <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الاسم</SortableTH>
+              <SortableTH variant="plain" sortKey="caseType" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>نوع الدعوى</SortableTH>
+              <SortableTH variant="plain" sortKey="list" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>القائمة</SortableTH>
+              <SortableTH variant="plain" sortKey="court" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>🏛 المحكمة</SortableTH>
+              <SortableTH variant="plain" sortKey="execution" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>⚖️ دائرة التنفيذ</SortableTH>
+              <SortableTH variant="plain" sortKey="createdAt" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>تاريخ الإضافة</SortableTH>
+              <SortableTH variant="plain" sortKey="note" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الملاحظة</SortableTH>
               <th className="px-4 py-2.5 font-semibold text-center">الإجراءات</th>
             </tr>
             {allowSelect && (
@@ -185,7 +201,7 @@ function DebtorRowsTable({
             )}
           </thead>
           <tbody className="divide-y divide-[rgba(118,118,118,0.06)]">
-            {rows.map(r => {
+            {sortedRows.map(r => {
               const checked = selectedIds.includes(r.id)
               return (
               <tr
@@ -267,7 +283,7 @@ function DebtorRowsTable({
       </div>
 
       <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
-        {allowSelect && rows.length > 0 && (
+        {allowSelect && sortedRows.length > 0 && (
           <div className="px-4 py-2.5 flex items-center gap-2 border-b border-[rgba(118,118,118,0.08)] bg-[#2C8780]/5">
             <input
               type="checkbox"
@@ -279,10 +295,10 @@ function DebtorRowsTable({
               aria-label="تحديد الكل"
               className="accent-[#2C8780] w-4 h-4 cursor-pointer"
             />
-            <span className="text-xs text-[#767676] font-semibold">تحديد الكل ({rows.length})</span>
+            <span className="text-xs text-[#767676] font-semibold">تحديد الكل ({sortedRows.length})</span>
           </div>
         )}
-        {rows.map(r => {
+        {sortedRows.map(r => {
           const checked = selectedIds.includes(r.id)
           return (
           <div key={r.id} className={`p-4 ${checked ? 'bg-[#2C8780]/5' : ''}`}>

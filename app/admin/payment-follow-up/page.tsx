@@ -20,6 +20,8 @@ import {
 } from '@/lib/payment-in-progress'
 import { fetchPendingNoncomplianceByDebtorIds } from '@/lib/payment-noncompliance'
 import { useCaseScope } from '@/hooks/use-case-scope'
+import { SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 
 const PAGE_SIZE = 30
 const ALL_GOVS = ''
@@ -150,6 +152,19 @@ export default function PaymentFollowUpPage() {
     await load(search)
   }
 
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(rows, {
+    name: r => r.full_name,
+    branch: r => r.branch_name,
+    remaining: r => r.remaining_amount,
+    paid: r => r.total_payments,
+    lastPayment: r => r.last_payment_date,
+  })
+
   const hasMore = rows.length < total
   const govValue = viewAllBranches ? ALL_GOVS : (branchId ?? ALL_GOVS)
 
@@ -206,16 +221,18 @@ export default function PaymentFollowUpPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-right text-xs text-[#767676] border-b border-[rgba(118,118,118,0.1)]">
-                    <th className="px-4 py-2.5 font-semibold">الاسم</th>
-                    {showBranchCol && <th className="px-4 py-2.5 font-semibold">المحافظة</th>}
-                    <th className="px-4 py-2.5 font-semibold">المتبقي</th>
-                    <th className="px-4 py-2.5 font-semibold">المسدد</th>
-                    <th className="px-4 py-2.5 font-semibold">آخر تسديد</th>
+                    <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الاسم</SortableTH>
+                    {showBranchCol && (
+                      <SortableTH variant="plain" sortKey="branch" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المحافظة</SortableTH>
+                    )}
+                    <SortableTH variant="plain" sortKey="remaining" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المتبقي</SortableTH>
+                    <SortableTH variant="plain" sortKey="paid" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المسدد</SortableTH>
+                    <SortableTH variant="plain" sortKey="lastPayment" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>آخر تسديد</SortableTH>
                     <th className="px-4 py-2.5 font-semibold text-center">الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[rgba(118,118,118,0.06)]">
-                  {rows.map(r => (
+                  {sortedRows.map(r => (
                     <tr key={r.id} className="hover:bg-[#FAFAFA]">
                       <td className="px-4 py-3">
                         <Link href={`/admin/debtors/${r.id}/account`} className="font-semibold text-[#231F20] hover:text-[#2C8780]">
@@ -270,7 +287,7 @@ export default function PaymentFollowUpPage() {
             </div>
 
             <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
-              {rows.map(r => (
+              {sortedRows.map(r => (
                 <div key={r.id} className="p-4 space-y-2">
                   <Link href={`/admin/debtors/${r.id}/account`} className="font-semibold text-[#231F20] block">
                     {r.full_name}

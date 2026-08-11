@@ -11,7 +11,8 @@ import { refreshAdminNotifications } from '@/lib/admin-notifications'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
+import { Table, THead, TBody, TR, TH, TD, SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import AdminDisbursementWalletPanel from '@/components/AdminDisbursementWalletPanel'
 import AdminStationeryWalletPanel from '@/components/AdminStationeryWalletPanel'
 import PanelErrorBoundary from '@/components/PanelErrorBoundary'
@@ -27,6 +28,7 @@ import { PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { DatePicker } from '@/components/ui/date-picker'
 import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
+import CenteredModalPortal from '@/components/ui/centered-modal-portal'
 
 const INP = 'w-full border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2.5 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
@@ -190,6 +192,21 @@ export default function ExpensesPage() {
     if (dateTo && exp.expense_date > dateTo) return false
     return true
   }), [expenses, filterLawyer, dateFrom, dateTo, statusFilter, typeFilter])
+
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(filtered, {
+    debtor: exp => exp.debtors?.full_name,
+    lawyer: exp => exp.profiles?.full_name,
+    type: exp => exp.expense_type,
+    description: exp => exp.description,
+    amount: exp => Number(exp.amount ?? 0),
+    date: exp => exp.expense_date,
+    status: exp => STATUS_BADGE[normalizeStatus(exp.status)]?.label ?? normalizeStatus(exp.status),
+  })
 
   const total = filtered.filter(e => (e.status ?? 'approved') === 'approved').reduce((s, e) => s + Number(e.amount ?? 0), 0)
 
@@ -383,33 +400,52 @@ export default function ExpensesPage() {
         ))}
       </div>
 
-      {/* Edit panel (only for approved) */}
+      {/* نافذة تعديل منبثقة — وسط الشاشة */}
       {canWrite && editingExpense && (
-        <div className="bg-white rounded-xl border-2 border-[#2C8780]/30 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4 pb-3 border-b border-[rgba(118,118,118,0.1)]">
-            <h2 className="font-bold text-[#231F20]">تعديل صرفية — <span className="text-[#2C8780]">{editingExpense.debtors?.full_name}</span></h2>
-            <button onClick={() => setEditingExpense(null)} className="text-[#767676] hover:text-[#231F20] w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[rgba(118,118,118,0.08)] text-xl leading-none">×</button>
-          </div>
-          <form onSubmit={saveEdit} className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div><label className={lbl}>المبلغ (د.ع) *</label>
-              <MoneyInput value={editForm.amount} onChange={v => setEditForm(f => ({ ...f, amount: v }))} className={INP} required /></div>
-            <div><label className={lbl}>نوع الصرف</label>
-              <input type="text" value={editForm.expense_type} onChange={e => setEditForm(f => ({ ...f, expense_type: e.target.value }))} className={INP} /></div>
-            <div><label className={lbl}>الوصف</label>
-              <input type="text" value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} className={INP} /></div>
-            <DatePicker
-              value={editForm.expense_date}
-              onChange={v => setEditForm(f => ({ ...f, expense_date: v }))}
-              fieldLabel="التاريخ"
-              headerTitle="تاريخ الصرفية"
-            />
-            {editError && <p className="col-span-4 text-red-600 text-xs">{editError}</p>}
-            <div className="col-span-4 flex gap-2 pt-1">
-              <Button type="submit" variant="primary" size="sm" loading={saving}>حفظ التعديل</Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => setEditingExpense(null)}>إلغاء</Button>
+        <CenteredModalPortal onBackdropClick={() => !saving && setEditingExpense(null)} ariaLabelledBy="edit-expense-modal-title">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl p-5 space-y-4" dir="rtl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3 pb-3 border-b border-[rgba(118,118,118,0.1)]">
+              <h2 id="edit-expense-modal-title" className="font-bold text-[#231F20] text-lg">
+                تعديل صرفية — <span className="text-[#2C8780]">{editingExpense.debtors?.full_name}</span>
+              </h2>
+              <button
+                type="button"
+                onClick={() => !saving && setEditingExpense(null)}
+                className="text-[#767676] hover:text-[#231F20] w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[rgba(118,118,118,0.08)] text-xl leading-none shrink-0"
+                aria-label="إغلاق"
+              >
+                ×
+              </button>
             </div>
-          </form>
-        </div>
+            <form onSubmit={saveEdit} className="space-y-3">
+              <div>
+                <label className={lbl}>المبلغ (د.ع) *</label>
+                <MoneyInput value={editForm.amount} onChange={v => setEditForm(f => ({ ...f, amount: v }))} className={INP} required />
+              </div>
+              <div>
+                <label className={lbl}>نوع الصرف</label>
+                <input type="text" value={editForm.expense_type} onChange={e => setEditForm(f => ({ ...f, expense_type: e.target.value }))} className={INP} />
+              </div>
+              <div>
+                <label className={lbl}>الوصف</label>
+                <input type="text" value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} className={INP} />
+              </div>
+              <DatePicker
+                value={editForm.expense_date}
+                onChange={v => setEditForm(f => ({ ...f, expense_date: v }))}
+                fieldLabel="التاريخ"
+                headerTitle="تاريخ الصرفية"
+              />
+              {editError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{editError}</p>
+              )}
+              <div className="flex gap-2 pt-1">
+                <Button type="submit" variant="primary" size="sm" loading={saving} className="flex-1">حفظ التعديل</Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setEditingExpense(null)} disabled={saving} className="flex-1">إلغاء</Button>
+              </div>
+            </form>
+          </div>
+        </CenteredModalPortal>
       )}
 
       {/* Filters */}
@@ -506,18 +542,18 @@ export default function ExpensesPage() {
           <Table>
             <THead>
               <tr>
-                <TH>المدين</TH>
-                <TH>المحامي</TH>
-                <TH>نوع الصرف</TH>
-                <TH>الوصف</TH>
-                <TH>المبلغ</TH>
-                <TH>التاريخ</TH>
-                <TH className="text-center">الحالة</TH>
+                <SortableTH sortKey="debtor" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المدين</SortableTH>
+                <SortableTH sortKey="lawyer" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المحامي</SortableTH>
+                <SortableTH sortKey="type" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>نوع الصرف</SortableTH>
+                <SortableTH sortKey="description" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الوصف</SortableTH>
+                <SortableTH sortKey="amount" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المبلغ</SortableTH>
+                <SortableTH sortKey="date" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>التاريخ</SortableTH>
+                <SortableTH sortKey="status" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-center">الحالة</SortableTH>
                 <TH className="text-center">الإجراءات</TH>
               </tr>
             </THead>
             <TBody>
-              {filtered.map((exp: any) => {
+              {sortedRows.map((exp: any) => {
                 const s = normalizeStatus(exp.status)
                 const badge = STATUS_BADGE[s] ?? STATUS_BADGE.approved
                 const isPendingReview = s === 'pending_review'

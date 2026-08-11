@@ -5,6 +5,7 @@ import { canManageTaskManagement, apiForbiddenResponse, isAdmin } from '@/lib/pe
 import { filterSelectableBranches } from '@/lib/branch-constants'
 import { criminalTaskDefColumns, stripActualFeeAmount } from '@/lib/criminal-task-def-columns'
 import { REQUIRED_FIELD_LABELS, type RequiredField } from '@/lib/types'
+import { syncCriminalDefsToTaskDefinitions } from '@/lib/sync-criminal-task-definitions'
 
 type ExpenseLine = { name: string; max_amount: number }
 
@@ -180,12 +181,24 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  await syncBranches(admin, targetBranchIds)
+
   return NextResponse.json({
     ok: true,
     createdCount: createdIds.length,
     createdIds,
     failures,
   })
+}
+
+async function syncBranches(admin: ReturnType<typeof createAdminClient>, branchIds: string[]) {
+  for (const bid of [...new Set(branchIds.filter(Boolean))]) {
+    try {
+      await syncCriminalDefsToTaskDefinitions(admin, bid)
+    } catch (e) {
+      console.warn('[task-management/criminal] sync after write failed', bid, e)
+    }
+  }
 }
 
 /** تعديل سجل واحد + استبدال الحقول والصرفيات */
@@ -209,6 +222,12 @@ export async function PATCH(request: NextRequest) {
   const isActive = body.is_active === undefined ? undefined : Boolean(body.is_active)
 
   const admin = createAdminClient()
+
+  const { data: existingDef } = await admin
+    .from('criminal_case_task_definitions')
+    .select('id, branch_id')
+    .eq('id', id)
+    .maybeSingle()
 
   const patch: Record<string, unknown> = {}
   if (label) patch.label = label
@@ -254,6 +273,10 @@ export async function PATCH(request: NextRequest) {
       )
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     }
+  }
+
+  if (existingDef?.branch_id) {
+    await syncBranches(admin, [existingDef.branch_id])
   }
 
   return NextResponse.json({ ok: true })

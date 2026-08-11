@@ -8,7 +8,8 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
+import { Table, THead, TBody, TR, TH, TD, SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
 import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL } from '@/lib/ui-labels'
@@ -278,7 +279,28 @@ export default function DebtorsPage() {
   }
 
   const hasMore = debtors.length < total
-  const visibleDebtors = showAllDebtors ? debtors : debtors.slice(0, DEBTOR_LIST_PREVIEW_LIMIT)
+  const {
+    rows: sortedDebtors,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(debtors, {
+    name: d => d.full_name,
+    caseType: d => CASE_TYPE_LABELS[normalizeCaseType(d.case_type)],
+    branch: d => d.branch_name,
+    list: d => debtorListName(d),
+    specialStatus: d => debtorSpecialStatus(d).name,
+    court: d => debtorCourtName(d),
+    execution: d => debtorExecutionOffice(d),
+    idNumber: d => d.id_number,
+    receiptNumber: d => d.receipt_number,
+    receiptType: d => RECEIPT_TYPE_LABELS[d.receipt_type as keyof typeof RECEIPT_TYPE_LABELS] ?? d.receipt_type,
+    required: d => Number(d.required_amount ?? 0),
+    remaining: d => Number(d.remaining_amount ?? 0),
+    note: d => d.last_note,
+    createdAt: d => d.created_at,
+  })
+  const visibleDebtors = showAllDebtors ? sortedDebtors : sortedDebtors.slice(0, DEBTOR_LIST_PREVIEW_LIMIT)
   const canShowAllDebtors = debtors.length > DEBTOR_LIST_PREVIEW_LIMIT
 
   const isSelectable = (d: any) =>
@@ -515,20 +537,20 @@ export default function DebtorsPage() {
                         />
                       </TH>
                     )}
-                    <TH>الاسم</TH>
-                    <TH>نوع الدعوى</TH>
-                    {viewAllBranches && <TH>الفرع</TH>}
-                    <TH>القائمة</TH>
-                    <TH>الأسماء التي تحتاج مراقبة</TH>
-                    <TH>🏛 المحكمة</TH>
-                    <TH>⚖️ دائرة التنفيذ</TH>
-                    <TH>رقم الهوية</TH>
-                    <TH>{RECEIPT_NUMBER_LABEL}</TH>
-                    <TH>{RECEIPT_TYPE_LABEL}</TH>
-                    <TH>المبلغ المطلوب</TH>
-                    <TH>المتبقي</TH>
-                    <TH>الملاحظة</TH>
-                    <TH>تاريخ الإضافة</TH>
+                    <SortableTH sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الاسم</SortableTH>
+                    <SortableTH sortKey="caseType" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>نوع الدعوى</SortableTH>
+                    {viewAllBranches && <SortableTH sortKey="branch" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الفرع</SortableTH>}
+                    <SortableTH sortKey="list" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>القائمة</SortableTH>
+                    <SortableTH sortKey="specialStatus" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الأسماء التي تحتاج مراقبة</SortableTH>
+                    <SortableTH sortKey="court" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>🏛 المحكمة</SortableTH>
+                    <SortableTH sortKey="execution" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>⚖️ دائرة التنفيذ</SortableTH>
+                    <SortableTH sortKey="idNumber" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>رقم الهوية</SortableTH>
+                    <SortableTH sortKey="receiptNumber" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{RECEIPT_NUMBER_LABEL}</SortableTH>
+                    <SortableTH sortKey="receiptType" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{RECEIPT_TYPE_LABEL}</SortableTH>
+                    <SortableTH sortKey="required" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المبلغ المطلوب</SortableTH>
+                    <SortableTH sortKey="remaining" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المتبقي</SortableTH>
+                    <SortableTH sortKey="note" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الملاحظة</SortableTH>
+                    <SortableTH sortKey="createdAt" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>تاريخ الإضافة</SortableTH>
                     <TH className="text-center">الإجراءات</TH>
                   </tr>
                 </THead>

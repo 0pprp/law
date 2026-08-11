@@ -6,7 +6,8 @@ import { useBranchId, useBranch } from '@/context/branch'
 import { PageHeader } from '@/components/ui/page-header'
 import { StatCard } from '@/components/ui/stat-card'
 import { Button } from '@/components/ui/button'
-import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
+import { Table, THead, TBody, TR, TH, TD, SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import { fmtMoney, fmtNum, fmtDate } from '@/lib/utils'
 import { achievementFee } from '@/lib/achievement-report'
 import { DebtorSearchPicker } from '@/components/ui/debtor-search-picker'
@@ -201,6 +202,56 @@ export default function ReportsPage() {
     }
   }, [snapshot])
 
+  const {
+    rows: sortedStageCounts,
+    sortKey: stageSortKey,
+    sortDirection: stageSortDirection,
+    cycleSort: cycleStageSort,
+  } = useTableSort(stageReports.stageCounts, {
+    stage: s => s.label,
+    active: s => s.active,
+    stalled: s => s.stalled,
+    pct: s => stageReports.totalActive > 0 ? Math.round((s.active / stageReports.totalActive) * 100) : 0,
+  })
+
+  const {
+    rows: sortedAchievementByType,
+    sortKey: typeSortKey,
+    sortDirection: typeSortDirection,
+    cycleSort: cycleTypeSort,
+  } = useTableSort(achievementByType, {
+    label: r => r.label,
+    count: r => r.count,
+    fees: r => r.fees,
+    pct: r => achievements.length > 0 ? Math.round((r.count / achievements.length) * 100) : 0,
+  })
+
+  const {
+    rows: sortedAchievementByLawyer,
+    sortKey: lawyerSortKey,
+    sortDirection: lawyerSortDirection,
+    cycleSort: cycleLawyerSort,
+  } = useTableSort(achievementByLawyer, {
+    name: l => l.name,
+    governorate: l => l.governorate,
+    count: l => l.count,
+    topLabel: l => l.topLabel,
+    fees: l => l.fees,
+    lastDate: l => l.lastDate,
+  })
+
+  const {
+    rows: sortedCriminalActualRows,
+    sortKey: criminalSortKey,
+    sortDirection: criminalSortDirection,
+    cycleSort: cycleCriminalSort,
+  } = useTableSort(criminalActualRows, {
+    label: r => r.label,
+    count: r => r.count,
+    actualFee: r => r.actualFee,
+    total: r => r.total,
+  })
+
   function d(k: keyof Filters, v: string) {
     if (k === 'caseType') {
       if (lockedCaseType) return
@@ -359,14 +410,14 @@ export default function ReportsPage() {
                 <Table>
                   <THead>
                     <tr>
-                      <TH>المرحلة</TH>
-                      <TH>قضايا نشطة</TH>
-                      <TH>متوقفة</TH>
-                      <TH>النسبة</TH>
+                      <SortableTH sortKey="stage" activeKey={stageSortKey} direction={stageSortDirection} onCycle={cycleStageSort}>المرحلة</SortableTH>
+                      <SortableTH sortKey="active" activeKey={stageSortKey} direction={stageSortDirection} onCycle={cycleStageSort}>قضايا نشطة</SortableTH>
+                      <SortableTH sortKey="stalled" activeKey={stageSortKey} direction={stageSortDirection} onCycle={cycleStageSort}>متوقفة</SortableTH>
+                      <SortableTH sortKey="pct" activeKey={stageSortKey} direction={stageSortDirection} onCycle={cycleStageSort}>النسبة</SortableTH>
                     </tr>
                   </THead>
                   <TBody>
-                    {stageReports.stageCounts.map(s => {
+                    {sortedStageCounts.map(s => {
                       const pct = stageReports.totalActive > 0 ? Math.round((s.active / stageReports.totalActive) * 100) : 0
                       return (
                         <TR key={s.id}>
@@ -412,14 +463,14 @@ export default function ReportsPage() {
                   <THead>
                     <tr>
                       <TH>#</TH>
-                      <TH>نوع المهمة / الإنجاز</TH>
-                      <TH>عدد الإنجازات</TH>
-                      <TH>أتعاب محسوبة</TH>
-                      <TH>النسبة</TH>
+                      <SortableTH sortKey="label" activeKey={typeSortKey} direction={typeSortDirection} onCycle={cycleTypeSort}>نوع المهمة / الإنجاز</SortableTH>
+                      <SortableTH sortKey="count" activeKey={typeSortKey} direction={typeSortDirection} onCycle={cycleTypeSort}>عدد الإنجازات</SortableTH>
+                      <SortableTH sortKey="fees" activeKey={typeSortKey} direction={typeSortDirection} onCycle={cycleTypeSort}>أتعاب محسوبة</SortableTH>
+                      <SortableTH sortKey="pct" activeKey={typeSortKey} direction={typeSortDirection} onCycle={cycleTypeSort}>النسبة</SortableTH>
                     </tr>
                   </THead>
                   <TBody>
-                    {achievementByType.map((row, i) => {
+                    {sortedAchievementByType.map((row, i) => {
                       const pct = achievements.length > 0 ? Math.round((row.count / achievements.length) * 100) : 0
                       return (
                         <TR key={row.key}>
@@ -454,16 +505,16 @@ export default function ReportsPage() {
                   <THead>
                     <tr>
                       <TH>#</TH>
-                      <TH>المحامي</TH>
-                      <TH>المحافظة</TH>
-                      <TH>عدد الإنجازات</TH>
-                      <TH>أكثر إنجاز</TH>
-                      <TH>أتعاب الإنجازات</TH>
-                      <TH>آخر إنجاز</TH>
+                      <SortableTH sortKey="name" activeKey={lawyerSortKey} direction={lawyerSortDirection} onCycle={cycleLawyerSort}>المحامي</SortableTH>
+                      <SortableTH sortKey="governorate" activeKey={lawyerSortKey} direction={lawyerSortDirection} onCycle={cycleLawyerSort}>المحافظة</SortableTH>
+                      <SortableTH sortKey="count" activeKey={lawyerSortKey} direction={lawyerSortDirection} onCycle={cycleLawyerSort}>عدد الإنجازات</SortableTH>
+                      <SortableTH sortKey="topLabel" activeKey={lawyerSortKey} direction={lawyerSortDirection} onCycle={cycleLawyerSort}>أكثر إنجاز</SortableTH>
+                      <SortableTH sortKey="fees" activeKey={lawyerSortKey} direction={lawyerSortDirection} onCycle={cycleLawyerSort}>أتعاب الإنجازات</SortableTH>
+                      <SortableTH sortKey="lastDate" activeKey={lawyerSortKey} direction={lawyerSortDirection} onCycle={cycleLawyerSort}>آخر إنجاز</SortableTH>
                     </tr>
                   </THead>
                   <TBody>
-                    {achievementByLawyer.map((l, i) => (
+                    {sortedAchievementByLawyer.map((l, i) => (
                       <TR key={l.id}>
                         <TD className="text-[#767676] font-mono text-xs w-8">{i + 1}</TD>
                         <TD className="font-semibold text-[#231F20]">{l.name}</TD>
@@ -504,14 +555,14 @@ export default function ReportsPage() {
                     <THead>
                       <tr>
                         <TH>#</TH>
-                        <TH>اسم المهمة</TH>
-                        <TH>عدد الإنجازات المعتمدة</TH>
-                        <TH>الأتعاب الفعلية</TH>
-                        <TH>الإجمالي الفعلي</TH>
+                        <SortableTH sortKey="label" activeKey={criminalSortKey} direction={criminalSortDirection} onCycle={cycleCriminalSort}>اسم المهمة</SortableTH>
+                        <SortableTH sortKey="count" activeKey={criminalSortKey} direction={criminalSortDirection} onCycle={cycleCriminalSort}>عدد الإنجازات المعتمدة</SortableTH>
+                        <SortableTH sortKey="actualFee" activeKey={criminalSortKey} direction={criminalSortDirection} onCycle={cycleCriminalSort}>الأتعاب الفعلية</SortableTH>
+                        <SortableTH sortKey="total" activeKey={criminalSortKey} direction={criminalSortDirection} onCycle={cycleCriminalSort}>الإجمالي الفعلي</SortableTH>
                       </tr>
                     </THead>
                     <TBody>
-                      {criminalActualRows.map((row, i) => (
+                      {sortedCriminalActualRows.map((row, i) => (
                         <TR key={row.label}>
                           <TD className="text-[#767676] font-mono text-xs w-8">{i + 1}</TD>
                           <TD className="font-semibold text-[#231F20]">{row.label}</TD>

@@ -11,7 +11,8 @@ import {
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
+import { Table, THead, TBody, TR, TH, TD, SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import { DebtorSearchPicker } from '@/components/ui/debtor-search-picker'
 import { FormField, formInputClass } from '@/components/ui/form-flow'
 import { fmtMoney, fmtDate, cn } from '@/lib/utils'
@@ -160,6 +161,20 @@ export default function PaymentsPage() {
     if (dateTo && p.payment_date > dateTo) return false
     return true
   }), [payments, dateFrom, dateTo])
+
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(filtered, {
+    debtor: p => p.debtors?.full_name,
+    governorate: p => p.debtors?.governorate,
+    phone: p => p.debtors?.phone,
+    amount: p => Number(p.amount ?? 0),
+    date: p => p.payment_date,
+    notes: p => p.notes,
+  })
 
   const total = filtered.reduce((s, p) => s + Number(p.amount ?? 0), 0)
 
@@ -439,17 +454,17 @@ export default function PaymentsPage() {
           <Table>
             <THead>
               <tr>
-                <TH>المدين</TH>
-                <TH>المحافظة</TH>
-                <TH>الهاتف</TH>
-                <TH>{RECEIPT_AMOUNT_LABEL}</TH>
-                <TH>التاريخ</TH>
-                <TH>ملاحظات</TH>
+                <SortableTH sortKey="debtor" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المدين</SortableTH>
+                <SortableTH sortKey="governorate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المحافظة</SortableTH>
+                <SortableTH sortKey="phone" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الهاتف</SortableTH>
+                <SortableTH sortKey="amount" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{RECEIPT_AMOUNT_LABEL}</SortableTH>
+                <SortableTH sortKey="date" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>التاريخ</SortableTH>
+                <SortableTH sortKey="notes" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>ملاحظات</SortableTH>
                 <TH className="text-center">الإجراءات</TH>
               </tr>
             </THead>
             <TBody>
-              {filtered.map((p: any) => (
+              {sortedRows.map((p: any) => (
                 <TR key={p.id}>
                   <TD className="font-semibold text-[#231F20]">{p.debtors?.full_name ?? '—'}</TD>
                   <TD className="text-[#767676] text-xs">{p.debtors?.governorate ?? '—'}</TD>

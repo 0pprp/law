@@ -11,6 +11,8 @@ import { filterSelectableBranches } from '@/lib/branch-constants'
 import { appConfirm } from '@/lib/app-dialog'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { CRIMINAL_TASK_DEF_ADMIN_COLUMNS } from '@/lib/criminal-task-def-columns'
+import { SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 
 const INP = 'w-full px-3 py-2 text-sm bg-white border border-[rgba(118,118,118,0.2)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
 
@@ -816,6 +818,20 @@ export default function CriminalTaskManagementPage() {
     [allDefs, showAll],
   )
 
+  const {
+    rows: sortedDefs,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(defs, {
+    label: def => def.label,
+    fee: def => Number(def.fee_amount),
+    actualFee: def => Number(def.actual_fee_amount ?? 0),
+    fields: def => reqFields.filter(f => f.task_definition_id === def.id).length,
+    expenses: def => defExpenses.filter(e => e.task_definition_id === def.id).length,
+    status: def => (def.is_active ? 1 : 0),
+  })
+
   const load = useCallback(async () => {
     setLoading(true)
     const supabase = createClient()
@@ -934,17 +950,17 @@ export default function CriminalTaskManagementPage() {
             <table className="w-full text-sm">
               <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.1)]">
                 <tr>
-                  <th className="text-right px-4 py-3 font-semibold text-[#767676] text-xs">المهمة</th>
-                  <th className="px-4 py-3 font-semibold text-[#767676] text-xs text-left">الأتعاب</th>
-                  <th className="px-4 py-3 font-semibold text-[#767676] text-xs text-left">الأتعاب الفعلية</th>
-                  <th className="text-right px-4 py-3 font-semibold text-[#767676] text-xs">الحقول</th>
-                  <th className="text-center px-4 py-3 font-semibold text-[#767676] text-xs">صرفيات</th>
-                  <th className="text-center px-4 py-3 font-semibold text-[#767676] text-xs">الحالة</th>
+                  <SortableTH variant="plain" sortKey="label" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-semibold text-[#767676] text-xs">المهمة</SortableTH>
+                  <SortableTH variant="plain" sortKey="fee" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-4 py-3 font-semibold text-[#767676] text-xs text-left">الأتعاب</SortableTH>
+                  <SortableTH variant="plain" sortKey="actualFee" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-4 py-3 font-semibold text-[#767676] text-xs text-left">الأتعاب الفعلية</SortableTH>
+                  <SortableTH variant="plain" sortKey="fields" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-semibold text-[#767676] text-xs">الحقول</SortableTH>
+                  <SortableTH variant="plain" sortKey="expenses" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-center px-4 py-3 font-semibold text-[#767676] text-xs">صرفيات</SortableTH>
+                  <SortableTH variant="plain" sortKey="status" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-center px-4 py-3 font-semibold text-[#767676] text-xs">الحالة</SortableTH>
                   <th className="text-center px-4 py-3 font-semibold text-[#767676] text-xs">إجراء</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[rgba(118,118,118,0.08)]">
-                {defs.map(def => {
+                {sortedDefs.map(def => {
                   const fields = reqFields.filter(f => f.task_definition_id === def.id)
                   const expCount = defExpenses.filter(e => e.task_definition_id === def.id).length
                   return (
@@ -994,7 +1010,7 @@ export default function CriminalTaskManagementPage() {
                     </tr>
                   )
                 })}
-                {!defs.length && (
+                {!sortedDefs.length && (
                   <tr>
                     <td colSpan={7} className="px-4 py-10 text-center text-sm text-[#767676]">لا مهام جزائية</td>
                   </tr>

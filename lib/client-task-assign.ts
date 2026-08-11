@@ -36,6 +36,7 @@ export function invalidateAssignmentCaches(branchId: string | null, taskView?: s
   const branchKey = branchId ?? 'all'
   cacheDelete(`dashboard:${branchKey}`)
   cacheInvalidatePrefix('dashboard:')
+  cacheInvalidatePrefix('opsCards:')
   cacheInvalidatePrefix('tasks:assign:')
   cacheInvalidatePrefix('tasks:review:')
   cacheInvalidatePrefix('lawyer-tasks:v1:')

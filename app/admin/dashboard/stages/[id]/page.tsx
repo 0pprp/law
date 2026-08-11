@@ -17,6 +17,8 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { DatePicker } from '@/components/ui/date-picker'
 import { useAdminRole } from '@/context/admin-role'
 import { canAssignTasks, canManageSpecialStatuses, canMoveToPaymentInProgress } from '@/lib/permissions'
+import { isHearingPostponeAllowed } from '@/lib/hearing-postpone'
+import { HearingPostponeButton } from '@/components/HearingPostponeButton'
 import { executeTaskAssignment, executeTaskUnassign, validateTaskAssignmentInput } from '@/lib/client-task-assign'
 import { taskLawyerId } from '@/lib/task-assignment'
 import { useCaseScope } from '@/hooks/use-case-scope'
@@ -100,10 +102,12 @@ function DebtorStageRow({
   view,
   canAssign,
   canMonitor,
+  canPostponeHearing,
   selected,
   onToggle,
   onAssignOne,
   onUnassignOne,
+  onHearingPostponed,
   assigning,
   bulkLawyerId,
   bulkDueDate,
@@ -113,10 +117,12 @@ function DebtorStageRow({
   view: StageView
   canAssign: boolean
   canMonitor: boolean
+  canPostponeHearing: boolean
   selected: Set<string>
   onToggle: (taskId: string) => void
   onAssignOne: (taskId: string) => void
   onUnassignOne: (taskId: string) => void
+  onHearingPostponed: (debtorId: string, newDate: string) => void
   assigning: boolean
   bulkLawyerId: string
   bulkDueDate: string
@@ -126,7 +132,7 @@ function DebtorStageRow({
   const canSelect =
     isWaiting
       ? (canMonitor || canAssign)
-      : (canAssign && (view === 'assigned' || view === 'overdue'))
+      : ((canAssign || canMonitor) && (view === 'assigned' || view === 'overdue'))
   const hearingStatus = showHearingDate ? getHearingDateStatus(d.firstHearingDate) : null
   const hearingDays = showHearingDate ? getDaysUntilHearing(d.firstHearingDate) : null
   const rowBackground =
@@ -234,6 +240,15 @@ function DebtorStageRow({
           )}
         </div>
       )}
+      {showHearingDate && canPostponeHearing && isWaiting && (
+        <HearingPostponeButton
+          debtorId={d.debtorId}
+          debtorName={d.debtorName}
+          currentDate={d.firstHearingDate}
+          compact
+          onSuccess={newDate => onHearingPostponed(d.debtorId, newDate)}
+        />
+      )}
       <StatusBadge status={d.taskStatus} />
       {canAssign && isWaiting && (
         <button
@@ -268,10 +283,12 @@ function BranchStageBox({
   view,
   canAssign,
   canMonitor,
+  canPostponeHearing,
   selected,
   onToggle,
   onAssignOne,
   onUnassignOne,
+  onHearingPostponed,
   assigning,
   bulkLawyerId,
   bulkDueDate,
@@ -284,10 +301,12 @@ function BranchStageBox({
   view: StageView
   canAssign: boolean
   canMonitor: boolean
+  canPostponeHearing: boolean
   selected: Set<string>
   onToggle: (taskId: string) => void
   onAssignOne: (taskId: string) => void
   onUnassignOne: (taskId: string) => void
+  onHearingPostponed: (debtorId: string, newDate: string) => void
   assigning: boolean
   bulkLawyerId: string
   bulkDueDate: string
@@ -401,10 +420,12 @@ function BranchStageBox({
                     view={view}
                     canAssign={canAssign}
                     canMonitor={canMonitor}
+                    canPostponeHearing={canPostponeHearing}
                     selected={selected}
                     onToggle={onToggle}
                     onAssignOne={onAssignOne}
                     onUnassignOne={onUnassignOne}
+                    onHearingPostponed={onHearingPostponed}
                     assigning={assigning}
                     bulkLawyerId={bulkLawyerId}
                     bulkDueDate={bulkDueDate}
@@ -440,6 +461,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const role = useAdminRole()
   const canAssign = canAssignTasks(role)
   const canMonitor = canManageSpecialStatuses(role)
+  const canPostponeHearing = isHearingPostponeAllowed(role)
   const allowPaymentInProgress = canMoveToPaymentInProgress(role)
   const { caseTypeFilter } = useCaseScope()
   const [stageLabel, setStageLabel] = useState('')
@@ -812,6 +834,13 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     setSelected(allOn ? new Set() : new Set(ids))
   }
 
+  function handleHearingPostponed(debtorId: string, newDate: string) {
+    setDebtors(prev =>
+      prev.map(d => (d.debtorId === debtorId ? { ...d, firstHearingDate: newDate } : d)),
+    )
+    setSuccessMsg('تم تأجيل تاريخ المرافعة وحفظ السجل')
+  }
+
   async function assignTasks(taskIds: string[], lawyerId: string) {
     if (!branchId) {
       setError('للتكليف اختر فرعاً محدداً من القائمة العلوية')
@@ -977,7 +1006,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
         return next
       })
       setError('')
-      setSuccessMsg(`تم تحويل ${debtorIds.length} اسم إلى «${statusName}» في تبويب الأسماء التي تحتاج مراقبة`)
+      setSuccessMsg(`تم تحويل ${debtorIds.length} اسم إلى «${statusName}» مع حفظ المهمة المرتبطة`)
       cacheInvalidatePrefix('dashboard:v')
     })
   }
@@ -1015,7 +1044,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
         />
       </div>
 
-      {canAssign && view === 'waiting' && visibleCount > 0 && (
+      {(canAssign || canMonitor) && view === 'waiting' && visibleCount > 0 && (
         <div className="bg-white rounded-xl border border-[#2C8780]/30 p-4 space-y-3">
           <p className="text-xs font-bold text-[#231F20]">
             المهمة: <span className="text-[#2C8780]">{stageLabel}</span>
@@ -1025,37 +1054,41 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
               <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} className="w-4 h-4 accent-[#2C8780]" />
               تحديد الكل ({visibleCount})
             </label>
-            <PremiumSelect
-              value={bulkLawyerId}
-              onChange={v => { setBulkLawyerId(v); setError('') }}
-              options={[
-                { value: '', label: stageIsFindAddress ? '— اختر محامياً أو مندوباً —' : '— اختر محامياً —' },
-                ...assigneeOptions.map(l => ({ value: l.id, label: l.full_name })),
-              ]}
-              placeholder={stageIsFindAddress ? '— اختر محامياً أو مندوباً —' : '— اختر محامياً —'}
-              headerTitle={stageIsFindAddress ? 'اختر المحامي أو المندوب' : 'اختر المحامي'}
-              searchPlaceholder="بحث بالاسم..."
-              searchable
-              className="flex-1"
-              disabled={!branchId}
-            />
-            <DatePicker
-              value={bulkDueDate}
-              onChange={setBulkDueDate}
-              minDate={assignmentMinDate}
-              fieldLabel="تاريخ نهاية التكليف"
-              headerTitle="تاريخ نهاية التكليف"
-              className="flex-1"
-            />
-            <button
-              type="button"
-              onClick={() => void assignTasks(Array.from(selected), bulkLawyerId)}
-              disabled={assigning || selectedCount === 0 || !bulkLawyerId || !bulkDueDate || !branchId}
-              className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
-            >
-              {assigning ? 'جارٍ التكليف...' : `تكليف المحددين${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
-            </button>
+            {canAssign && (
+              <>
+                <PremiumSelect
+                  value={bulkLawyerId}
+                  onChange={v => { setBulkLawyerId(v); setError('') }}
+                  options={[
+                    { value: '', label: stageIsFindAddress ? '— اختر محامياً أو مندوباً —' : '— اختر محامياً —' },
+                    ...assigneeOptions.map(l => ({ value: l.id, label: l.full_name })),
+                  ]}
+                  placeholder={stageIsFindAddress ? '— اختر محامياً أو مندوباً —' : '— اختر محامياً —'}
+                  headerTitle={stageIsFindAddress ? 'اختر المحامي أو المندوب' : 'اختر المحامي'}
+                  searchPlaceholder="بحث بالاسم..."
+                  searchable
+                  className="flex-1"
+                  disabled={!branchId}
+                />
+                <DatePicker
+                  value={bulkDueDate}
+                  onChange={setBulkDueDate}
+                  minDate={assignmentMinDate}
+                  fieldLabel="تاريخ نهاية التكليف"
+                  headerTitle="تاريخ نهاية التكليف"
+                  className="flex-1"
+                />
+                <button
+                  type="button"
+                  onClick={() => void assignTasks(Array.from(selected), bulkLawyerId)}
+                  disabled={assigning || selectedCount === 0 || !bulkLawyerId || !bulkDueDate || !branchId}
+                  className="shrink-0 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+                >
+                  {assigning ? 'جارٍ التكليف...' : `تكليف المحددين${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
+                </button>
+              </>
+            )}
             {canMonitor && (
               <button
                 type="button"
@@ -1088,7 +1121,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
               </button>
             )}
           </div>
-          {!branchId && viewAllBranches && (
+          {canAssign && !branchId && viewAllBranches && (
             <p className="text-[11px] text-orange-600 bg-orange-50 px-3 py-1.5 rounded-lg">
               للتكليف اختر فرعاً محدداً من القائمة العلوية
             </p>
@@ -1096,8 +1129,8 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
         </div>
       )}
 
-      {canAssign && (view === 'assigned' || view === 'overdue') && visibleCount > 0 && (
-        <div className="bg-white rounded-xl border border-orange-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+      {(canAssign || canMonitor) && (view === 'assigned' || view === 'overdue') && visibleCount > 0 && (
+        <div className="bg-white rounded-xl border border-orange-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3 flex-wrap">
           <label className="flex items-center gap-2 text-xs font-semibold text-[#231F20] cursor-pointer shrink-0">
             <input
               type="checkbox"
@@ -1107,7 +1140,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
             />
             تحديد الكل ({visibleCount})
           </label>
-          {selectedCount > 0 && (
+          {canAssign && selectedCount > 0 && (
             <button
               type="button"
               onClick={() => void unassignSelected()}
@@ -1117,6 +1150,22 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
               {assigning
                 ? 'جارٍ إلغاء التكليف...'
                 : `إلغاء التكليف (${selectedCount})`}
+            </button>
+          )}
+          {canMonitor && (
+            <button
+              type="button"
+              onClick={() => {
+                setError('')
+                setSuccessMsg('')
+                setMonitorModalOpen(true)
+              }}
+              disabled={assigning || selectedCount === 0}
+              className="shrink-0 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+              style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
+            >
+              تحويل إلى تبويب الأسماء التي تحتاج مراقبة
+              {selectedCount > 0 ? ` (${selectedCount})` : ''}
             </button>
           )}
         </div>
@@ -1147,10 +1196,12 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
               view={view}
               canAssign={canAssign}
               canMonitor={canMonitor}
+              canPostponeHearing={canPostponeHearing}
               selected={selected}
               onToggle={toggle}
               onAssignOne={id => void assignTasks([id], bulkLawyerId)}
               onUnassignOne={id => void unassignOne(id)}
+              onHearingPostponed={handleHearingPostponed}
               assigning={assigning}
               bulkLawyerId={bulkLawyerId}
               bulkDueDate={bulkDueDate}

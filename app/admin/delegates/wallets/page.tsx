@@ -10,7 +10,8 @@ import { canManageDelegates, isAdmin } from '@/lib/permissions'
 import { fetchDelegateWallet } from '@/lib/delegate-wallet'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
-import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
+import { Table, THead, TBody, TR, TD, SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import MoneyInput from '@/components/ui/money-input'
@@ -82,6 +83,18 @@ export default function DelegateWalletsPage() {
   }, [canView, load, router])
 
   const selected = rows.find(r => r.id === selectedId)
+
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(rows, {
+    name: r => r.full_name,
+    pending: r => Number(r.pending_balance ?? 0),
+    available: r => Number(r.available_balance ?? 0),
+    withdrawn: r => Number(r.total_withdrawn ?? 0),
+  })
 
   async function handleWithdraw(e: { preventDefault(): void }) {
     e.preventDefault()
@@ -207,14 +220,14 @@ export default function DelegateWalletsPage() {
           <Table>
             <THead>
               <tr>
-                <TH>المندوب</TH>
-                <TH>معلق</TH>
-                <TH>قابل للصرف</TH>
-                <TH>مصروف</TH>
+                <SortableTH sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المندوب</SortableTH>
+                <SortableTH sortKey="pending" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>معلق</SortableTH>
+                <SortableTH sortKey="available" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>قابل للصرف</SortableTH>
+                <SortableTH sortKey="withdrawn" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>مصروف</SortableTH>
               </tr>
             </THead>
             <TBody>
-              {rows.map(r => (
+              {sortedRows.map(r => (
                 <TR key={r.id}>
                   <TD>
                     <div>

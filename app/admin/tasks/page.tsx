@@ -18,13 +18,14 @@ import { fetchAssignmentLawyers, fetchBranchDelegates } from '@/lib/branch-profi
 import { isFindAddressTaskType } from '@/lib/delegate'
 import { formatErrorMessage } from '@/lib/format-error'
 import { ensureAutoAcceptAllAssignments, scheduleBranchMaintenance } from '@/lib/branch-maintenance'
-import { cacheGet, cacheSet, cacheInvalidatePrefix, CACHE_TTL } from '@/lib/query-cache'
+import { cachePeek, cacheSet, cacheInvalidatePrefix, CACHE_TTL } from '@/lib/query-cache'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
 import { useScrollRestore } from '@/hooks/use-scroll-restore'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/data-table'
+import { Table, THead, TBody, TR, TH, TD, SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 import { fmtDate } from '@/lib/utils'
 import Link from 'next/link'
 import { PremiumSelect } from '@/components/ui/premium-select'
@@ -184,8 +185,9 @@ function TasksPageInner() {
     const cacheKey = `tasks:assign:v2:${branchId ?? 'all'}:${taskView}:${filterDef}:${filterListId}:${effectiveCaseType ?? 'all'}:${lawyerFilterId}:${debouncedSearch}:${offset}:${pageLimit}`
 
     if (!append) {
-      const cached = cacheGet<TasksPageCache>(cacheKey)
-      if (cached) {
+      const cachedHit = cachePeek<TasksPageCache>(cacheKey)
+      if (cachedHit) {
+        const cached = cachedHit.value
         setTasks(cached.tasks)
         setLawyers(cached.lawyers)
         setDelegates(cached.delegates ?? [])
@@ -196,10 +198,11 @@ function TasksPageInner() {
         setOverdueTotal(cached.overdueTotal ?? 0)
         setPageOffset(cached.tasks.length)
         setLoading(false)
-        return
+        if (cachedHit.fresh) return
+      } else {
+        setLoading(true)
+        setTasks([])
       }
-      setLoading(true)
-      setTasks([])
     } else {
       setLoadingMore(true)
     }
@@ -349,12 +352,31 @@ function TasksPageInner() {
   const assignedCount = assignedTotal
   const overdueCount = overdueTotal
   const filtered = tasks
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(filtered, {
+    debtor: t => t.debtorName,
+    phone: t => t.debtorPhone,
+    caseType: t => CASE_TYPE_LABELS[t.caseType] ?? t.caseType,
+    taskType: t => t.taskLabel,
+    branch: t => t.branchName,
+    list: t => t.branchListName,
+    assignee: t => t.lawyerName,
+    createdAt: t => t.created_at,
+    assignedAt: t => t.assigned_at,
+    dueDate: t => t.due_date,
+    overdueDays: t => t.due_date ? taskOverdueDays(t.due_date) : null,
+    status: t => TASK_STATUS_LABELS[t.task_status as TaskStatus] ?? t.task_status,
+  })
   const hasMore = tasks.length < total
 
   const isWaitingView = taskView === 'waiting'
   const isOverdueView = taskView === 'overdue'
   const isAssignedBoard = taskView === 'assigned' || taskView === 'overdue'
-  const allSelected = (isWaitingView || isAssignedBoard) && filtered.length > 0 && filtered.every(t => selected.has(t.id))
+  const allSelected = (isWaitingView || isAssignedBoard) && sortedRows.length > 0 && sortedRows.every(t => selected.has(t.id))
 
   const assignmentTargetIds = useMemo(() => {
     if (selected.size > 0) return Array.from(selected)
@@ -775,24 +797,24 @@ function TasksPageInner() {
                     />
                   </TH>
                 )}
-                <TH>المدين</TH>
-                {!isOverdueView && <TH>الهاتف</TH>}
-                <TH>نوع الدعوى</TH>
-                <TH>نوع المهمة</TH>
-                {isOverdueView || viewAllBranches ? <TH>الفرع</TH> : null}
-                {isOverdueView && <TH>القائمة</TH>}
-                {(taskView === 'assigned' || isOverdueView) && <TH>المكلّف</TH>}
-                {!isOverdueView && <TH>تاريخ إنشاء المهمة</TH>}
-                {(taskView === 'assigned' || isOverdueView) && <TH>تاريخ التكليف</TH>}
-                <TH>{isOverdueView ? 'تاريخ الاستحقاق' : 'تاريخ نهاية التكليف'}</TH>
-                {isOverdueView && <TH>أيام التأخير</TH>}
-                <TH>الحالة</TH>
+                <SortableTH sortKey="debtor" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المدين</SortableTH>
+                {!isOverdueView && <SortableTH sortKey="phone" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الهاتف</SortableTH>}
+                <SortableTH sortKey="caseType" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>نوع الدعوى</SortableTH>
+                <SortableTH sortKey="taskType" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>نوع المهمة</SortableTH>
+                {isOverdueView || viewAllBranches ? <SortableTH sortKey="branch" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الفرع</SortableTH> : null}
+                {isOverdueView && <SortableTH sortKey="list" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>القائمة</SortableTH>}
+                {(taskView === 'assigned' || isOverdueView) && <SortableTH sortKey="assignee" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المكلّف</SortableTH>}
+                {!isOverdueView && <SortableTH sortKey="createdAt" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>تاريخ إنشاء المهمة</SortableTH>}
+                {(taskView === 'assigned' || isOverdueView) && <SortableTH sortKey="assignedAt" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>تاريخ التكليف</SortableTH>}
+                <SortableTH sortKey="dueDate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{isOverdueView ? 'تاريخ الاستحقاق' : 'تاريخ نهاية التكليف'}</SortableTH>
+                {isOverdueView && <SortableTH sortKey="overdueDays" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>أيام التأخير</SortableTH>}
+                <SortableTH sortKey="status" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الحالة</SortableTH>
                 {canAssign && isWaitingView && <TH>تكليف</TH>}
                 {canAssign && isAssignedBoard && <TH>إجراء</TH>}
               </TR>
             </THead>
             <TBody>
-              {filtered.map(t => (
+              {sortedRows.map(t => (
                 <TR key={t.id}>
                   {canAssign && (isWaitingView || isAssignedBoard) && (
                     <TD>

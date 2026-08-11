@@ -17,6 +17,7 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   delete_special_status: 'حذف من الأسماء التي تحتاج مراقبة',
   set_debtor_special_status: 'تعيين اسم يحتاج مراقبة لمدين',
   add_debtor_note: 'إضافة ملاحظة للمدين',
+  hearing_postponed: 'تأجيل تاريخ المرافعة',
   move_to_payment_in_progress: 'تحويل إلى جاري التسديد',
   submit_payment_noncompliance_request: 'طلب عدم التزام',
   approve_payment_noncompliance_request: 'موافقة طلب عدم التزام',

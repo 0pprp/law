@@ -14,6 +14,8 @@ import {
   type PaymentInProgressDebtor,
 } from '@/lib/payment-in-progress'
 import { useCaseScope } from '@/hooks/use-case-scope'
+import { SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 
 const PAGE_SIZE = 20
 
@@ -54,6 +56,17 @@ function BranchPaymentBox({
 
   useEffect(() => { void load() }, [load])
 
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(rows, {
+    name: r => r.full_name,
+    remaining: r => r.remaining_amount,
+    lastPayment: r => r.last_payment_date,
+  })
+
   if (!loading && total === 0 && !listId) return null
 
   return (
@@ -79,14 +92,14 @@ function BranchPaymentBox({
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-right text-xs text-[#767676] border-b border-[rgba(118,118,118,0.1)]">
-                  <th className="px-4 py-2.5 font-semibold">الاسم</th>
-                  <th className="px-4 py-2.5 font-semibold">المتبقي</th>
-                  <th className="px-4 py-2.5 font-semibold">آخر تسديد</th>
+                  <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الاسم</SortableTH>
+                  <SortableTH variant="plain" sortKey="remaining" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المتبقي</SortableTH>
+                  <SortableTH variant="plain" sortKey="lastPayment" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>آخر تسديد</SortableTH>
                   <th className="px-4 py-2.5 font-semibold text-center">الإجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[rgba(118,118,118,0.06)]">
-                {rows.map(r => (
+                {sortedRows.map(r => (
                   <tr key={r.id} className="hover:bg-[#FAFAFA]">
                     <td className="px-4 py-3 font-semibold text-[#231F20]">{r.full_name}</td>
                     <td className="px-4 py-3 tabular-nums" dir="ltr">{fmtMoney(r.remaining_amount)}</td>
@@ -105,7 +118,7 @@ function BranchPaymentBox({
             </table>
           </div>
           <div className="md:hidden divide-y divide-[rgba(118,118,118,0.08)]">
-            {rows.map(r => (
+            {sortedRows.map(r => (
               <div key={r.id} className="p-4">
                 <p className="font-semibold text-[#231F20] mb-2">{r.full_name}</p>
                 <div className="grid grid-cols-2 gap-2 text-xs mb-3">

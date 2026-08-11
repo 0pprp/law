@@ -26,10 +26,12 @@ import {
 import {
   ADMIN_NOTIFICATIONS_REFRESH,
   fetchAdminNotificationCounts,
+  peekAdminNotificationCounts,
   pendingFinanceRequests,
   totalAdminNotifications,
   type AdminNotificationCounts,
 } from '@/lib/admin-notifications'
+import { warmAdminRoute } from '@/lib/warm-admin-route'
 
 interface AdminShellProps {
   userName: string
@@ -141,17 +143,20 @@ function CountBadge({ count, active }: { count: number; active?: boolean }) {
   )
 }
 
-function NavLink({ item, pathname, badge, onClick }: {
+function NavLink({ item, pathname, badge, onClick, branchId }: {
   item: { label: string; href: string; exact?: boolean; icon: ReactNode }
   pathname: string
   badge?: number
   onClick?: () => void
+  branchId?: string | null
 }) {
   const active = isActive(item.href, pathname, item.exact)
   return (
     <Link
       href={item.href}
       onClick={onClick}
+      onMouseEnter={() => warmAdminRoute(item.href, branchId ?? null)}
+      onFocus={() => warmAdminRoute(item.href, branchId ?? null)}
       className={cn(
         'flex items-center gap-3 px-3.5 py-3 rounded-lg text-sm sm:text-base font-semibold transition-all',
         active ? 'text-white shadow-sm' : 'text-white/60 hover:text-white hover:bg-white/5'
@@ -328,14 +333,16 @@ function HeaderNotifications({
 }
 
 function useAdminNotifications(branchId: string | null) {
-  const [counts, setCounts] = useState<AdminNotificationCounts>({
-    pendingReview: 0,
-    pendingIncomplete: 0,
-    pendingPayoutRequests: 0,
-    pendingTaskFeeReceipts: 0,
-    pendingExpenses: 0,
-    pendingExpensesByType: [],
-  })
+  const [counts, setCounts] = useState<AdminNotificationCounts>(() =>
+    peekAdminNotificationCounts(branchId) ?? {
+      pendingReview: 0,
+      pendingIncomplete: 0,
+      pendingPayoutRequests: 0,
+      pendingTaskFeeReceipts: 0,
+      pendingExpenses: 0,
+      pendingExpensesByType: [],
+    },
+  )
 
   const load = useCallback(async (force = false) => {
     if (!branchId) {
@@ -357,7 +364,12 @@ function useAdminNotifications(branchId: string | null) {
     }
   }, [branchId])
 
-  useEffect(() => { void load(true) }, [load])
+  // لا نُجبر التحديث عند كل mount — نستخدم الكاش ثم نحدّث بالخلفية
+  useEffect(() => {
+    const peeked = peekAdminNotificationCounts(branchId)
+    if (peeked) setCounts(peeked)
+    void load(false)
+  }, [load, branchId])
 
   useEffect(() => {
     const onRefresh = () => { void load(true) }
@@ -470,6 +482,7 @@ function AdminShellInner({
                   pathname={pathname}
                   badge={badgeForHref(item.href, counts)}
                   onClick={() => setDrawerOpen(false)}
+                  branchId={branchId}
                 />
               ))}
             </div>
