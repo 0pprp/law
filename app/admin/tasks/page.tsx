@@ -19,6 +19,7 @@ import { isFindAddressTaskType } from '@/lib/delegate'
 import { formatErrorMessage } from '@/lib/format-error'
 import { ensureAutoAcceptAllAssignments, scheduleBranchMaintenance } from '@/lib/branch-maintenance'
 import { cachePeek, cacheSet, cacheInvalidatePrefix, CACHE_TTL } from '@/lib/query-cache'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
 import { useScrollRestore } from '@/hooks/use-scroll-restore'
 import { PageHeader } from '@/components/ui/page-header'
@@ -370,6 +371,7 @@ function TasksPageInner() {
     dueDate: t => t.due_date,
     overdueDays: t => t.due_date ? taskOverdueDays(t.due_date) : null,
     status: t => TASK_STATUS_LABELS[t.task_status as TaskStatus] ?? t.task_status,
+    note: t => t.lastNote,
   })
   const hasMore = tasks.length < total
 
@@ -482,7 +484,7 @@ function TasksPageInner() {
         setAssignedTotal(t => t + n)
       }
       cacheInvalidatePrefix('tasks:assign:')
-      cacheInvalidatePrefix('dashboard:v')
+      invalidateDashboardCounts()
     })
   }
 
@@ -536,7 +538,7 @@ function TasksPageInner() {
       setUnassignedTotal(t => t + n)
       if (taskView === 'overdue') setOverdueTotal(t => Math.max(0, t - n))
       cacheInvalidatePrefix('tasks:assign:')
-      cacheInvalidatePrefix('dashboard:v')
+      invalidateDashboardCounts()
     })
   }
 
@@ -808,6 +810,7 @@ function TasksPageInner() {
                 {(taskView === 'assigned' || isOverdueView) && <SortableTH sortKey="assignedAt" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>تاريخ التكليف</SortableTH>}
                 <SortableTH sortKey="dueDate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{isOverdueView ? 'تاريخ الاستحقاق' : 'تاريخ نهاية التكليف'}</SortableTH>
                 {isOverdueView && <SortableTH sortKey="overdueDays" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>أيام التأخير</SortableTH>}
+                {isWaitingView && <SortableTH sortKey="note" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الملاحظة</SortableTH>}
                 <SortableTH sortKey="status" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الحالة</SortableTH>
                 {canAssign && isWaitingView && <TH>تكليف</TH>}
                 {canAssign && isAssignedBoard && <TH>إجراء</TH>}
@@ -880,6 +883,13 @@ function TasksPageInner() {
                     <TD>
                       <span className="font-bold text-orange-600 tabular-nums" dir="ltr">
                         {t.due_date ? taskOverdueDays(t.due_date) : '—'}
+                      </span>
+                    </TD>
+                  )}
+                  {isWaitingView && (
+                    <TD className="max-w-[16rem]">
+                      <span className="text-xs text-[#454042] whitespace-pre-wrap break-words">
+                        {t.lastNote || '—'}
                       </span>
                     </TD>
                   )}

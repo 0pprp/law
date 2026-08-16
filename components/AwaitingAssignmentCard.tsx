@@ -22,6 +22,7 @@ import {
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 
 const PAGE_SIZE = 20
 
@@ -434,13 +435,20 @@ function BranchAwaitingBox({
       setNoteMissing(res.noteColumnMissing)
       if (append) {
         setRows(prev => {
-          const next = [...prev, ...res.rows]
+          const existing = new Set(prev.map(r => r.id))
+          const added = res.rows.filter(r => r.id && !existing.has(r.id))
+          const next = added.length ? [...prev, ...added] : prev
           const visible = new Set(next.map(r => r.id))
           setSelectedIds(prevSel => prevSel.filter(id => visible.has(id)))
           return next
         })
       } else {
-        setRows(res.rows)
+        const seen = new Set<string>()
+        setRows(res.rows.filter(r => {
+          if (!r.id || seen.has(r.id)) return false
+          seen.add(r.id)
+          return true
+        }))
         setSelectedIds([])
       }
       setTotal(res.total)
@@ -502,6 +510,7 @@ function BranchAwaitingBox({
         setTotal(prev => Math.max(0, prev - moved.size))
         setSelectedIds([])
       })
+      invalidateDashboardCounts()
       onAssigned?.()
       if (failed.length) {
         const sample = failed.slice(0, 3).map(f => `«${f.name}»: ${f.reason}`).join('\n')

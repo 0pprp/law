@@ -19,16 +19,23 @@ import {
   buildPetitionFileName,
   type DebtorPetitionFields,
 } from '@/lib/debtor-petition'
-import { generateDebtorPetitionPdf } from '@/lib/debtor-petition-pdf'
+import {
+  generateDebtorPetitionDocx,
+  PETITION_DOCX_MIME,
+} from '@/lib/debtor-petition-docx'
 
-type PetitionAction = 'pdf' | 'save'
+type PetitionAction = 'docx' | 'pdf' | 'save'
 
-function decodePdfBase64(raw: unknown): Buffer | null {
+function decodeDocxBase64(raw: unknown): Buffer | null {
   if (typeof raw !== 'string' || !raw.trim()) return null
-  const cleaned = raw.replace(/^data:application\/pdf;base64,/i, '').trim()
+  const cleaned = raw
+    .replace(/^data:application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document;base64,/i, '')
+    .replace(/^data:application\/octet-stream;base64,/i, '')
+    .trim()
   try {
     const buf = Buffer.from(cleaned, 'base64')
-    if (buf.length < 100 || buf.slice(0, 4).toString() !== '%PDF') return null
+    // ZIP/OOXML magic: PK
+    if (buf.length < 100 || buf.slice(0, 2).toString('binary') !== 'PK') return null
     return buf
   } catch {
     return null
@@ -45,6 +52,8 @@ export async function POST(request: NextRequest) {
     debtorId?: unknown
     fields?: Partial<DebtorPetitionFields>
     download?: unknown
+    docxBase64?: unknown
+    /** توافق قديم — يُتجاهل لصالح Word */
     pdfBase64?: unknown
     fileName?: unknown
   }
@@ -54,8 +63,10 @@ export async function POST(request: NextRequest) {
     return safeClientError('طلب غير صالح', 400)
   }
 
-  const action = String(body.action ?? '').trim() as PetitionAction
-  if (action !== 'pdf' && action !== 'save') {
+  const actionRaw = String(body.action ?? '').trim()
+  // pdf القديم يُعامل كتنزيل Word
+  const action = (actionRaw === 'pdf' ? 'docx' : actionRaw) as PetitionAction
+  if (action !== 'docx' && action !== 'save') {
     return safeClientError('إجراء غير مدعوم', 400)
   }
   const alsoDownload = body.download === true
@@ -85,30 +96,34 @@ export async function POST(request: NextRequest) {
     return safeClientError('صلاحية غير كافية', 403)
   }
 
-  let pdfBuffer: Buffer
+  let fileBuffer: Buffer
   let fileName: string
 
-  const clientPdf = decodePdfBase64(body.pdfBase64)
-  if (clientPdf) {
-    pdfBuffer = clientPdf
-    fileName = String(body.fileName ?? '').trim() || buildPetitionFileName(fields.defendantName)
+  const clientDocx = decodeDocxBase64(body.docxBase64)
+  if (clientDocx) {
+    fileBuffer = clientDocx
+    const requested = String(body.fileName ?? '').trim()
+    fileName = requested
+      ? (requested.toLowerCase().endsWith('.docx') ? requested : `${requested.replace(/\.pdf$/i, '')}.docx`)
+      : buildPetitionFileName(fields.defendantName)
   } else {
     try {
-      ;({ buffer: pdfBuffer, fileName } = await generateDebtorPetitionPdf(fields))
+      ;({ buffer: fileBuffer, fileName } = await generateDebtorPetitionDocx(fields))
     } catch (e) {
       const detail = e instanceof Error ? e.message : 'خطأ غير معروف'
-      const clientHint = /خط عربي|Chrome|Edge|متصفح|pdfkit|احتياطي/i.test(detail)
-        ? `فشل توليد ملف العريضة — ${detail.slice(0, 180)}`
-        : 'فشل توليد ملف العريضة'
-      return apiServerError('debtor-petition:pdf', e, clientHint)
+      return apiServerError(
+        'debtor-petition:docx',
+        e,
+        `فشل توليد ملف Word للعريضة — ${detail.slice(0, 180)}`,
+      )
     }
   }
 
-  if (action === 'pdf') {
-    return new NextResponse(new Uint8Array(pdfBuffer), {
+  if (action === 'docx') {
+    return new NextResponse(new Uint8Array(fileBuffer), {
       status: 200,
       headers: {
-        'Content-Type': 'application/pdf',
+        'Content-Type': PETITION_DOCX_MIME,
         'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
         'Cache-Control': 'no-store',
       },
@@ -124,18 +139,18 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
+  const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.docx`
   const filePath = `${debtorId}/petitions/${safeName}`
   const objectKey = r2ObjectKey('debtor-files', filePath)
 
   try {
-    await uploadToR2(pdfBuffer, objectKey, 'application/pdf')
+    await uploadToR2(fileBuffer, objectKey, PETITION_DOCX_MIME)
   } catch (uploadErr) {
     logR2UploadError('debtor-petition:save', uploadErr, {
       debtorId,
       objectKey,
       fileName,
-      fileSize: pdfBuffer.length,
+      fileSize: fileBuffer.length,
       role: auth.profile?.role,
     })
     return safeClientError(r2UploadClientMessage(uploadErr), 500)
@@ -149,8 +164,8 @@ export async function POST(request: NextRequest) {
       debtor_id: debtorId,
       file_name: displayName,
       file_path: filePath,
-      file_size: pdfBuffer.length,
-      mime_type: 'application/pdf',
+      file_size: fileBuffer.length,
+      mime_type: PETITION_DOCX_MIME,
       uploaded_by: auth.user!.id,
     })
     .select('id, file_name, file_path, file_size, mime_type, created_at')
@@ -165,7 +180,7 @@ export async function POST(request: NextRequest) {
     action: 'create_debtor_petition',
     entity_type: 'debtor',
     entity_id: debtorId,
-    description: `تم إنشاء ${PETITION_ATTACHMENT_LABEL} وحفظها في مرفقات المدين`,
+    description: `تم إنشاء ${PETITION_ATTACHMENT_LABEL} (Word) وحفظها في مرفقات المدين`,
     case_type: gate.caseType,
     metadata: {
       attachment_id: row.id,
@@ -175,15 +190,16 @@ export async function POST(request: NextRequest) {
       case_type: gate.caseType,
       defendant_name: fields.defendantName,
       downloaded: alsoDownload,
-      client_pdf: Boolean(clientPdf),
+      format: 'docx',
+      client_docx: Boolean(clientDocx),
     },
   }, auth.supabase)
 
   if (alsoDownload) {
-    return new NextResponse(new Uint8Array(pdfBuffer), {
+    return new NextResponse(new Uint8Array(fileBuffer), {
       status: 200,
       headers: {
-        'Content-Type': 'application/pdf',
+        'Content-Type': PETITION_DOCX_MIME,
         'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
         'Cache-Control': 'no-store',
         'X-Attachment-Id': row.id,

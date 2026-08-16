@@ -8,6 +8,7 @@ import {
   type PaymentScheduleType,
   type PaymentLocation,
 } from '@/lib/types'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 
 interface Props {
   open: boolean
@@ -81,6 +82,7 @@ export default function MoveToPaymentInProgressModal({
       setSaving(false)
       setPaymentType('')
       setPaymentLocation('')
+      invalidateDashboardCounts()
       onSuccess(isBulk ? { moved: json.moved ?? 0, failed: json.failed ?? 0 } : undefined)
     } catch {
       setError('فشل الاتصال')

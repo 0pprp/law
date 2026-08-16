@@ -102,9 +102,7 @@ export default async function ChiefAccountantDebtorPage({
               defendantAddress: isCriminal
                 ? (criminalDetails?.current_address ?? debtor.address ?? '')
                 : (debtor.address ?? ''),
-              amount: isCriminal
-                ? Number(criminalDetails?.amount_owed ?? debtor.remaining_amount ?? debtor.receipt_amount ?? 0)
-                : Number(debtor.remaining_amount ?? debtor.required_amount ?? 0),
+              amount: Number(debtor.receipt_amount ?? 0),
               lawyerName: lawyerNameForPetition,
             }}
           />

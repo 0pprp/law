@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useBranchId, useBranch } from '@/context/branch'
 import { isMainBranchName } from '@/lib/branch-constants'
-import { cacheDelete } from '@/lib/query-cache'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import { Button } from '@/components/ui/button'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -252,7 +252,7 @@ export default function CriminalDebtorImportModal({ open, onClose, onComplete }:
       setStep('done')
       setProgress({ phase: 'done', current: 1, total: 1, message: 'اكتمل' })
 
-      cacheDelete(`dashboard:${branchId}`)
+      invalidateDashboardCounts()
       if ((importResult.success + importResult.successWithWarning) > 0) onComplete()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'فشل الاستيراد')

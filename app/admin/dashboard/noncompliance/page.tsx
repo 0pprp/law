@@ -6,7 +6,7 @@ import { canReviewPaymentNoncomplianceRequest } from '@/lib/permissions'
 import { PageHeader } from '@/components/ui/page-header'
 import { BackButton } from '@/components/ui/back-button'
 import PaymentNoncomplianceRequestsCard from '@/components/PaymentNoncomplianceRequestsCard'
-import { cacheInvalidatePrefix } from '@/lib/query-cache'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 
 /** لوحة التحكم ← طلبات عدم الالتزام (مدير / مسؤول القانونية) */
 export default function DashboardNoncompliancePage() {
@@ -39,7 +39,7 @@ export default function DashboardNoncompliancePage() {
           viewAllBranches={viewAllBranches}
           listId={listId}
           hideHeader
-          onChanged={() => cacheInvalidatePrefix('dashboard:')}
+          onChanged={() => invalidateDashboardCounts()}
         />
       )}
     </div>

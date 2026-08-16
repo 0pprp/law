@@ -4,6 +4,7 @@ import { assignTasksViaApi, unassignTasksViaApi } from '@/lib/task-operations-ap
 import { PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { fmtDate } from '@/lib/utils'
 import { cacheDelete, cacheInvalidatePrefix } from '@/lib/query-cache'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 
 export interface AssignmentTaskRef {
   id: string
@@ -34,9 +35,7 @@ export function validateTaskAssignmentInput(
 
 export function invalidateAssignmentCaches(branchId: string | null, taskView?: string, filterDef?: string, filterListId?: string, debouncedSearch?: string) {
   const branchKey = branchId ?? 'all'
-  cacheDelete(`dashboard:${branchKey}`)
-  cacheInvalidatePrefix('dashboard:')
-  cacheInvalidatePrefix('opsCards:')
+  invalidateDashboardCounts()
   cacheInvalidatePrefix('tasks:assign:')
   cacheInvalidatePrefix('tasks:review:')
   cacheInvalidatePrefix('lawyer-tasks:v1:')

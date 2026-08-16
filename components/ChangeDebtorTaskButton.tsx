@@ -6,6 +6,7 @@ import { PremiumSelect } from '@/components/ui/premium-select'
 import { fetchActiveTaskDefinitions } from '@/lib/task-definitions'
 import { useAdminRole } from '@/context/admin-role'
 import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 
 interface Props {
   debtorId: string
@@ -125,6 +126,7 @@ export default function ChangeDebtorTaskButton({
       }
       const label = typeof json.label === 'string' ? json.label : defs.find(d => d.id === selectedId)?.label ?? ''
       setActiveLabel(label)
+      invalidateDashboardCounts()
       onChanged?.(label)
       setOpen(false)
     } catch {

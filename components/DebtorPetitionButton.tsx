@@ -8,6 +8,7 @@ import {
   buildPetitionHtml,
   buildPetitionFileName,
   DEFAULT_PLAINTIFF_NAME,
+  DEFAULT_DEFENDANT_OCCUPATION,
   emptyPetitionFields,
   normalizePetitionFields,
   PETITION_FIELD_KEYS,
@@ -17,11 +18,8 @@ import {
 } from '@/lib/debtor-petition'
 import { formatMoneyInput, parseMoneyInput } from '@/lib/money-input'
 import { appAlert } from '@/lib/app-dialog'
-import {
-  blobToBase64,
-  htmlToPetitionPdfBlob,
-  triggerBlobDownload,
-} from '@/lib/debtor-petition-client-pdf'
+import { generateDebtorPetitionDocxBlob } from '@/lib/debtor-petition-docx'
+import { blobToBase64, triggerBlobDownload } from '@/lib/debtor-petition-client-pdf'
 
 const INP =
   'w-full px-3 py-2.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
@@ -58,7 +56,7 @@ export default function DebtorPetitionButton({ debtorId, defaults }: Props) {
       courtName: (defaults.courtName ?? '').trim(),
       plaintiffName: (defaults.plaintiffName ?? DEFAULT_PLAINTIFF_NAME).trim() || DEFAULT_PLAINTIFF_NAME,
       defendantName: (defaults.defendantName ?? '').trim(),
-      defendantOccupation: (defaults.defendantOccupation ?? '').trim(),
+      defendantOccupation: (defaults.defendantOccupation ?? '').trim() || DEFAULT_DEFENDANT_OCCUPATION,
       defendantAddress: (defaults.defendantAddress ?? '').trim(),
       amountDigits,
       amountWords: amountDigits ? arabicAmountInWords(amountDigits) : '',
@@ -108,15 +106,14 @@ export default function DebtorPetitionButton({ debtorId, defaults }: Props) {
     setError('')
     try {
       const normalized = normalizePetitionFields(fields)
-      const html = buildPetitionHtml(normalized)
       const fileName = buildPetitionFileName(normalized.defendantName)
-      const pdfBlob = await htmlToPetitionPdfBlob(html)
+      const docxBlob = await generateDebtorPetitionDocxBlob(normalized)
 
-      // تنزيل فوري من نفس شكل المعاينة (عربية صحيحة)
-      triggerBlobDownload(pdfBlob, fileName)
+      // تنزيل فوري كملف Word
+      triggerBlobDownload(docxBlob, fileName)
 
-      // حفظ في المرفقات عبر رفع الـ PDF الجاهز
-      const pdfBase64 = await blobToBase64(pdfBlob)
+      // حفظ في المرفقات
+      const docxBase64 = await blobToBase64(docxBlob)
       const res = await fetch('/api/admin/debtor-petition', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -125,7 +122,7 @@ export default function DebtorPetitionButton({ debtorId, defaults }: Props) {
           download: false,
           debtorId,
           fields: normalized,
-          pdfBase64,
+          docxBase64,
           fileName,
         }),
       })
@@ -135,7 +132,7 @@ export default function DebtorPetitionButton({ debtorId, defaults }: Props) {
       }
 
       await appAlert({
-        message: 'تم تنزيل العريضة وحفظها في مرفقات المدين',
+        message: 'تم تنزيل العريضة (Word) وحفظها في مرفقات المدين',
         variant: 'success',
       })
       setOpen(false)
@@ -173,7 +170,7 @@ export default function DebtorPetitionButton({ debtorId, defaults }: Props) {
                 <p className="text-[11px] text-[#767676] mt-0.5">
                   {step === 'form'
                     ? 'عدّل الحقول ثم أنشئ المعاينة — لن تُحفظ بيانات المدين الأصلية'
-                    : 'راجع النص ثم نزّل العريضة — تُحفظ تلقائيًا في المرفقات'}
+                    : 'راجع النص ثم نزّل ملف Word — يُحفظ تلقائيًا في المرفقات'}
                 </p>
               </div>
               <button
@@ -273,7 +270,7 @@ export default function DebtorPetitionButton({ debtorId, defaults }: Props) {
                       className="text-sm font-bold text-white px-4 py-2.5 rounded-xl disabled:opacity-50"
                       style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
                     >
-                      {busy ? 'جارٍ الحفظ والتنزيل...' : 'تنزيل PDF'}
+                      {busy ? 'جارٍ الحفظ والتنزيل...' : 'تنزيل Word'}
                     </button>
                   </div>
                 </>

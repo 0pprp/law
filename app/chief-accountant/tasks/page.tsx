@@ -6,8 +6,12 @@ import { createClient } from '@/lib/supabase/client'
 import { fmtDate } from '@/lib/utils'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { CASE_TYPE_LABELS } from '@/lib/case-type'
+import { resolveDebtorCourtName } from '@/lib/awaiting-assignment'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import { PageHeader } from '@/components/ui/page-header'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { SortableTH } from '@/components/ui/data-table'
+import { useTableSort } from '@/hooks/use-table-sort'
 
 type PrepDebtor = {
   id: string
@@ -17,9 +21,92 @@ type PrepDebtor = {
   created_at: string
   phone: string | null
   branch_name?: string | null
+  court_name?: string | null
 }
 
 type AssignedBranch = { id: string; name: string }
+
+function ReturnWithoutPrepModal({
+  count,
+  saving,
+  onClose,
+  onConfirm,
+}: {
+  count: number
+  saving: boolean
+  onClose: () => void
+  onConfirm: (reason: string) => void
+}) {
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState('')
+
+  function submit() {
+    const trimmed = reason.trim()
+    if (!trimmed) {
+      setError('اكتب سبب الإرسال بدون تجهيز')
+      return
+    }
+    setError('')
+    onConfirm(trimmed)
+  }
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/40" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-bold text-[#231F20]">إرسال بدون تجهيز</h3>
+            <p className="text-xs text-[#767676] mt-1">
+              إرجاع {count} اسم إلى «أسماء تحت إسناد مهمة» مع تسجيل السبب في الملاحظة
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="text-[#767676] hover:text-[#231F20] text-lg leading-none disabled:opacity-50"
+          >
+            ×
+          </button>
+        </div>
+        <textarea
+          value={reason}
+          onChange={e => {
+            setReason(e.target.value)
+            if (error) setError('')
+          }}
+          rows={4}
+          maxLength={2000}
+          disabled={saving}
+          placeholder="اكتب سبب الإرسال بدون تجهيز..."
+          className="w-full text-sm rounded-xl border border-[rgba(118,118,118,0.2)] px-3 py-2.5 focus:outline-none focus:border-amber-500 resize-none disabled:opacity-60"
+          autoFocus
+        />
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</p>
+        )}
+        <div className="flex gap-2 justify-end pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="px-4 py-2 text-sm rounded-xl border border-[rgba(118,118,118,0.2)] disabled:opacity-50"
+          >
+            إلغاء
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={saving}
+            className="px-4 py-2 text-sm rounded-xl text-amber-950 font-bold bg-amber-100 border border-amber-200 hover:bg-amber-200/80 disabled:opacity-50"
+          >
+            {saving ? 'جارٍ...' : 'تأكيد الإرسال'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function ChiefAccountantTasksPage() {
   const [rows, setRows] = useState<PrepDebtor[]>([])
@@ -29,6 +116,8 @@ export default function ChiefAccountantTasksPage() {
   const [error, setError] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [completing, setCompleting] = useState(false)
+  const [returnIds, setReturnIds] = useState<string[] | null>(null)
+  const [returning, setReturning] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -48,7 +137,7 @@ export default function ChiefAccountantTasksPage() {
         .eq('profile_id', user.id),
       supabase
         .from('debtors')
-        .select('id, full_name, branch_id, case_type, created_at, phone')
+        .select('id, full_name, branch_id, case_type, created_at, phone, court_name, branch_list:branch_lists(name, court_name)')
         .eq('assigned_chief_accountant_id', user.id)
         .eq('file_preparation_status', 'preparing')
         .order('created_at', { ascending: true }),
@@ -82,7 +171,16 @@ export default function ChiefAccountantTasksPage() {
       return
     }
 
-    const list = (data ?? []) as PrepDebtor[]
+    const list = (data ?? []) as Array<{
+      id: string
+      full_name: string
+      branch_id: string | null
+      case_type: 'civil' | 'criminal' | null
+      created_at: string
+      phone: string | null
+      court_name?: string | null
+      branch_list?: { name?: string | null; court_name?: string | null } | { name?: string | null; court_name?: string | null }[] | null
+    }>
     const nameById = new Map<string, string>()
     for (const row of linkRows ?? []) {
       const b = Array.isArray(row.branches) ? row.branches[0] : row.branches
@@ -100,8 +198,14 @@ export default function ChiefAccountantTasksPage() {
     }
 
     setRows(list.map(d => ({
-      ...d,
+      id: d.id,
+      full_name: d.full_name,
+      branch_id: d.branch_id,
+      case_type: d.case_type,
+      created_at: d.created_at,
+      phone: d.phone,
       branch_name: d.branch_id ? nameById.get(d.branch_id) ?? null : null,
+      court_name: resolveDebtorCourtName(d),
     })))
     setSelectedIds([])
     setLoading(false)
@@ -114,15 +218,29 @@ export default function ChiefAccountantTasksPage() {
     return rows.filter(r => r.branch_id === branchFilter)
   }, [rows, branchFilter])
 
+  const {
+    rows: sortedRows,
+    sortKey,
+    sortDirection,
+    cycleSort,
+  } = useTableSort(visibleRows, {
+    name: r => r.full_name,
+    caseType: r => CASE_TYPE_LABELS[(r.case_type ?? 'civil') as 'civil' | 'criminal'],
+    branch: r => r.branch_name,
+    court: r => r.court_name,
+    phone: r => r.phone,
+    createdAt: r => r.created_at,
+  })
+
   function toggleOne(id: string) {
     setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]))
   }
 
   function toggleAll() {
-    if (visibleRows.length > 0 && visibleRows.every(r => selectedIds.includes(r.id))) {
-      setSelectedIds(prev => prev.filter(id => !visibleRows.some(r => r.id === id)))
+    if (sortedRows.length > 0 && sortedRows.every(r => selectedIds.includes(r.id))) {
+      setSelectedIds(prev => prev.filter(id => !sortedRows.some(r => r.id === id)))
     } else {
-      setSelectedIds(prev => [...new Set([...prev, ...visibleRows.map(r => r.id)])])
+      setSelectedIds(prev => [...new Set([...prev, ...sortedRows.map(r => r.id)])])
     }
   }
 
@@ -153,6 +271,7 @@ export default function ChiefAccountantTasksPage() {
       const done = new Set(updated)
       setRows(prev => prev.filter(r => !done.has(r.id)))
       setSelectedIds([])
+      invalidateDashboardCounts()
       if (failed.length) {
         await appAlert({
           title: 'إتمام جزئي',
@@ -166,22 +285,70 @@ export default function ChiefAccountantTasksPage() {
     }
   }
 
-  const allSelected = visibleRows.length > 0 && visibleRows.every(r => selectedIds.includes(r.id))
-  const someSelected = visibleRows.some(r => selectedIds.includes(r.id))
+  async function returnWithoutPreparation(ids: string[], reason: string) {
+    if (!ids.length || returning) return
+    setReturning(true)
+    try {
+      const res = await fetch('/api/chief-accountant/return-without-preparation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ debtorIds: ids, reason }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const msg = typeof data?.error === 'string' ? data.error : 'فشل الإرسال بدون تجهيز'
+        await appAlert({ title: 'تعذر الإرسال', message: msg })
+        return
+      }
+      const updated: string[] = Array.isArray(data.updatedIds) ? data.updatedIds : []
+      const failed: { name?: string; reason?: string }[] = Array.isArray(data.failed) ? data.failed : []
+      const done = new Set(updated)
+      setRows(prev => prev.filter(r => !done.has(r.id)))
+      setSelectedIds([])
+      setReturnIds(null)
+      invalidateDashboardCounts()
+      if (failed.length) {
+        await appAlert({
+          title: 'إتمام جزئي',
+          message: `تم إرجاع ${updated.length}. تعذّر ${failed.length}:\n${failed.slice(0, 3).map(f => `«${f.name}»: ${f.reason}`).join('\n')}`,
+        })
+      }
+    } catch {
+      await appAlert({ title: 'خطأ', message: 'فشل الاتصال بالخادم' })
+    } finally {
+      setReturning(false)
+    }
+  }
+
+  const allSelected = sortedRows.length > 0 && sortedRows.every(r => selectedIds.includes(r.id))
+  const someSelected = sortedRows.some(r => selectedIds.includes(r.id))
 
   const branchOptions = [
     { value: '', label: 'كل المحافظات' },
     ...branches.map(b => ({ value: b.id, label: b.name })),
   ]
 
+  const busy = completing || returning
+
   return (
     <div className="space-y-5 pb-8">
+      {returnIds && (
+        <ReturnWithoutPrepModal
+          count={returnIds.length}
+          saving={returning}
+          onClose={() => {
+            if (!returning) setReturnIds(null)
+          }}
+          onConfirm={reason => void returnWithoutPreparation(returnIds, reason)}
+        />
+      )}
+
       <PageHeader
         title="تجهيز الملفات"
         subtitle="مدينون معيَّنون لك بانتظار إتمام التجهيز"
         actions={(
           <span className="inline-flex items-center justify-center min-w-[2.5rem] h-10 px-3 rounded-full bg-sky-100 text-sky-900 text-base font-black tabular-nums">
-            {loading ? '—' : visibleRows.length}
+            {loading ? '—' : sortedRows.length}
           </span>
         )}
       />
@@ -205,7 +372,7 @@ export default function ChiefAccountantTasksPage() {
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>
       )}
 
-      {!loading && visibleRows.length > 0 && (
+      {!loading && sortedRows.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3.5">
           <label className="flex items-center gap-2.5 text-sm font-semibold text-[#231F20] cursor-pointer">
             <input
@@ -217,17 +384,27 @@ export default function ChiefAccountantTasksPage() {
               onChange={toggleAll}
               className="w-5 h-5 accent-[#0369a1] cursor-pointer"
             />
-            تحديد الكل المعروض ({visibleRows.length})
+            تحديد الكل المعروض ({sortedRows.length})
           </label>
-          <button
-            type="button"
-            disabled={selectedIds.length === 0 || completing}
-            onClick={() => void completePreparation(selectedIds)}
-            className="text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed px-5 py-2.5 rounded-xl"
-            style={{ background: 'linear-gradient(135deg,#0369a1,#0c4a6e)' }}
-          >
-            {completing ? 'جارٍ...' : `تم التجهيز${selectedIds.length ? ` (${selectedIds.length})` : ''}`}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={selectedIds.length === 0 || busy}
+              onClick={() => setReturnIds([...selectedIds])}
+              className="text-sm font-bold text-amber-900 bg-amber-100 border border-amber-200 disabled:opacity-50 disabled:cursor-not-allowed px-5 py-2.5 rounded-xl hover:bg-amber-200/80"
+            >
+              إرسال بدون تجهيز{selectedIds.length ? ` (${selectedIds.length})` : ''}
+            </button>
+            <button
+              type="button"
+              disabled={selectedIds.length === 0 || busy}
+              onClick={() => void completePreparation(selectedIds)}
+              className="text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed px-5 py-2.5 rounded-xl"
+              style={{ background: 'linear-gradient(135deg,#0369a1,#0c4a6e)' }}
+            >
+              {completing ? 'جارٍ...' : `تم التجهيز${selectedIds.length ? ` (${selectedIds.length})` : ''}`}
+            </button>
+          </div>
         </div>
       )}
 
@@ -254,16 +431,17 @@ export default function ChiefAccountantTasksPage() {
               <thead>
                 <tr className="text-right text-xs text-[#767676] border-b border-[rgba(118,118,118,0.1)] bg-[#FAFAFA]">
                   <th className="px-4 py-3.5 w-14 text-center font-semibold">تحديد</th>
-                  <th className="px-4 py-3.5 font-semibold">الاسم</th>
-                  <th className="px-4 py-3.5 font-semibold">النوع</th>
-                  <th className="px-4 py-3.5 font-semibold">المحافظة</th>
-                  <th className="px-4 py-3.5 font-semibold">الهاتف</th>
-                  <th className="px-4 py-3.5 font-semibold">تاريخ الإضافة</th>
+                  <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-4 py-3.5">الاسم</SortableTH>
+                  <SortableTH variant="plain" sortKey="caseType" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-4 py-3.5">النوع</SortableTH>
+                  <SortableTH variant="plain" sortKey="branch" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-4 py-3.5">المحافظة</SortableTH>
+                  <SortableTH variant="plain" sortKey="court" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-4 py-3.5">🏛 المحكمة</SortableTH>
+                  <SortableTH variant="plain" sortKey="phone" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-4 py-3.5">الهاتف</SortableTH>
+                  <SortableTH variant="plain" sortKey="createdAt" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-4 py-3.5">تاريخ الإضافة</SortableTH>
                   <th className="px-4 py-3.5 font-semibold text-center">الإجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[rgba(118,118,118,0.06)]">
-                {visibleRows.map(r => {
+                {sortedRows.map(r => {
                   const checked = selectedIds.includes(r.id)
                   return (
                     <tr key={r.id} className={checked ? 'bg-sky-50/50' : 'hover:bg-[#FAFAFA]'}>
@@ -288,10 +466,11 @@ export default function ChiefAccountantTasksPage() {
                         {CASE_TYPE_LABELS[(r.case_type ?? 'civil') as 'civil' | 'criminal']}
                       </td>
                       <td className="px-4 py-3.5 text-[#767676]">{r.branch_name || '—'}</td>
+                      <td className="px-4 py-3.5 text-[#767676] break-words">{r.court_name?.trim() || '—'}</td>
                       <td className="px-4 py-3.5 text-[#767676] font-mono" dir="ltr">{r.phone || '—'}</td>
                       <td className="px-4 py-3.5 text-[#767676]" dir="ltr">{fmtDate(r.created_at)}</td>
                       <td className="px-4 py-3.5">
-                        <div className="flex items-center justify-center gap-2">
+                        <div className="flex items-center justify-center gap-2 flex-wrap">
                           <Link
                             href={`/chief-accountant/debtors/${r.id}`}
                             className="text-xs font-bold text-[#0369a1] border border-sky-200 px-3 py-2 rounded-lg hover:bg-sky-50"
@@ -300,7 +479,15 @@ export default function ChiefAccountantTasksPage() {
                           </Link>
                           <button
                             type="button"
-                            disabled={completing}
+                            disabled={busy}
+                            onClick={() => setReturnIds([r.id])}
+                            className="text-xs font-bold text-amber-900 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-100 disabled:opacity-50"
+                          >
+                            إرسال بدون تجهيز
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
                             onClick={() => void completePreparation([r.id])}
                             className="text-xs font-bold text-white px-3 py-2 rounded-lg disabled:opacity-50"
                             style={{ background: 'linear-gradient(135deg,#0369a1,#0c4a6e)' }}
@@ -317,7 +504,7 @@ export default function ChiefAccountantTasksPage() {
           </div>
 
           <ul className="md:hidden space-y-3">
-            {visibleRows.map(r => {
+            {sortedRows.map(r => {
               const checked = selectedIds.includes(r.id)
               return (
                 <li
@@ -342,26 +529,37 @@ export default function ChiefAccountantTasksPage() {
                       <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 text-xs text-[#767676]">
                         <span>{CASE_TYPE_LABELS[(r.case_type ?? 'civil') as 'civil' | 'criminal']}</span>
                         {r.branch_name && <span>🏢 {r.branch_name}</span>}
+                        <span>🏛 {r.court_name?.trim() || '—'}</span>
                         {r.phone && <span dir="ltr">{r.phone}</span>}
                         <span dir="ltr">📅 {fmtDate(r.created_at)}</span>
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-2 mt-3 mr-8">
-                    <Link
-                      href={`/chief-accountant/debtors/${r.id}`}
-                      className="flex-1 text-center text-sm font-bold text-[#0369a1] border border-sky-200 px-3 py-2.5 rounded-xl hover:bg-sky-50"
-                    >
-                      البروفايل
-                    </Link>
+                  <div className="flex flex-col gap-2 mt-3 mr-8">
+                    <div className="flex gap-2">
+                      <Link
+                        href={`/chief-accountant/debtors/${r.id}`}
+                        className="flex-1 text-center text-sm font-bold text-[#0369a1] border border-sky-200 px-3 py-2.5 rounded-xl hover:bg-sky-50"
+                      >
+                        البروفايل
+                      </Link>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void completePreparation([r.id])}
+                        className="flex-1 text-sm font-bold text-white px-3 py-2.5 rounded-xl disabled:opacity-50"
+                        style={{ background: 'linear-gradient(135deg,#0369a1,#0c4a6e)' }}
+                      >
+                        تم التجهيز
+                      </button>
+                    </div>
                     <button
                       type="button"
-                      disabled={completing}
-                      onClick={() => void completePreparation([r.id])}
-                      className="flex-1 text-sm font-bold text-white px-3 py-2.5 rounded-xl disabled:opacity-50"
-                      style={{ background: 'linear-gradient(135deg,#0369a1,#0c4a6e)' }}
+                      disabled={busy}
+                      onClick={() => setReturnIds([r.id])}
+                      className="w-full text-sm font-bold text-amber-900 bg-amber-50 border border-amber-200 px-3 py-2.5 rounded-xl hover:bg-amber-100 disabled:opacity-50"
                     >
-                      تم التجهيز
+                      إرسال بدون تجهيز
                     </button>
                   </div>
                 </li>

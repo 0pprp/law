@@ -518,9 +518,18 @@ export async function fetchAwaitingAssignmentDebtors(
     page.push(...raw.map(r => ({ ...r, needs_task_definition: false })))
   }
 
-  const branchNames = await loadBranchNames(supabase, page)
+  // إزالة تكرار المعرّف (تداخل مساري اليتيم/بلا مهمة أو تكرار من PostgREST)
+  const seen = new Set<string>()
+  const uniquePage: RawDebtor[] = []
+  for (const row of page) {
+    if (!row?.id || seen.has(row.id)) continue
+    seen.add(row.id)
+    uniquePage.push(row)
+  }
+
+  const branchNames = await loadBranchNames(supabase, uniquePage)
   return {
-    rows: await mapRowsWithLastNotes(supabase, page, branchNames),
+    rows: await mapRowsWithLastNotes(supabase, uniquePage, branchNames),
     total,
     noteColumnMissing,
     error: null,

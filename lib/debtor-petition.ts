@@ -12,6 +12,7 @@ export interface DebtorPetitionFields {
 }
 
 export const DEFAULT_PLAINTIFF_NAME = 'المدير المفوض لشركة قلعة الضمان'
+export const DEFAULT_DEFENDANT_OCCUPATION = 'كاسب'
 
 export const PETITION_FIELD_KEYS = [
   'courtName',
@@ -40,7 +41,7 @@ export function emptyPetitionFields(): DebtorPetitionFields {
     courtName: '',
     plaintiffName: DEFAULT_PLAINTIFF_NAME,
     defendantName: '',
-    defendantOccupation: '',
+    defendantOccupation: DEFAULT_DEFENDANT_OCCUPATION,
     defendantAddress: '',
     amountDigits: '',
     amountWords: '',
@@ -256,5 +257,5 @@ export function buildPetitionFileName(defendantName: string, date = new Date()):
   const m = String(date.getMonth() + 1).padStart(2, '0')
   const d = String(date.getDate()).padStart(2, '0')
   const name = String(defendantName ?? '').trim() || 'مدين'
-  return `${PETITION_ATTACHMENT_LABEL} - ${name} - ${y}-${m}-${d}.pdf`.slice(0, 200)
+  return `${PETITION_ATTACHMENT_LABEL} - ${name} - ${y}-${m}-${d}.docx`.slice(0, 200)
 }

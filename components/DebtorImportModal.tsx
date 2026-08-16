@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useBranchId, useBranch } from '@/context/branch'
 import { isMainBranchName } from '@/lib/branch-constants'
-import { cacheDelete } from '@/lib/query-cache'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import { appConfirm } from '@/lib/app-dialog'
 import { Button } from '@/components/ui/button'
 import {
@@ -218,8 +218,7 @@ export default function DebtorImportModal({ open, onClose, onComplete }: Props) 
       }
 
       if (branchId) {
-        cacheDelete(`tasks:assign:${branchId}`)
-        cacheDelete(`dashboard:${branchId}`)
+        invalidateDashboardCounts()
       }
 
       setResult(fullResult)

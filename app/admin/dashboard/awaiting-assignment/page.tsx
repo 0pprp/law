@@ -7,7 +7,7 @@ import { canAssignTasks, isAdmin, isLegalManager } from '@/lib/permissions'
 import { PageHeader } from '@/components/ui/page-header'
 import { BackButton } from '@/components/ui/back-button'
 import AwaitingAssignmentCard from '@/components/AwaitingAssignmentCard'
-import { cacheInvalidatePrefix } from '@/lib/query-cache'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 
 /** الأسماء التي تحت إسناد مهمة / تجهيز الملفات */
 export default function DashboardAwaitingAssignmentPage() {
@@ -21,7 +21,7 @@ export default function DashboardAwaitingAssignmentPage() {
   const mode = isPrepMode ? 'preparing' as const : 'awaiting' as const
 
   function refreshDashboardCache() {
-    cacheInvalidatePrefix('dashboard:v')
+    invalidateDashboardCounts()
   }
 
   if (!isAdmin(role) && !isLegalManager(role) && !canAssignTasks(role)) {

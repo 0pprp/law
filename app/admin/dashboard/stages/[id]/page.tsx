@@ -25,11 +25,12 @@ import { useCaseScope } from '@/hooks/use-case-scope'
 import { isTaskOverdue, localTodayYmd, OVERDUE_TERMINAL_STATUSES, taskOverdueDays } from '@/lib/local-date'
 import MoveToPaymentInProgressModal from '@/components/MoveToPaymentInProgressModal'
 import SpecialStatusBadge from '@/components/SpecialStatusBadge'
-import { cacheInvalidatePrefix } from '@/lib/query-cache'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import { preserveScrollDuring } from '@/lib/preserve-scroll'
 import { useScrollRestore } from '@/hooks/use-scroll-restore'
 import { appConfirm } from '@/lib/app-dialog'
 import { resolveDebtorCourtName, resolveExecutionOffice } from '@/lib/awaiting-assignment'
+import { fetchLastNotePreviewsByDebtorIds } from '@/lib/debtor-last-notes'
 import { resolveSpecialStatus } from '@/lib/special-statuses'
 import { fetchBranchCourtNames } from '@/lib/branch-lists'
 import MoveToMonitoringModal from '@/components/MoveToMonitoringModal'
@@ -60,6 +61,8 @@ interface StageDebtor {
   specialStatusName: string | null
   specialStatusColor: string | null
   firstHearingDate: string | null
+  /** آخر ملاحظة: «الكاتب: النص...» */
+  lastNote: string
 }
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
@@ -205,8 +208,21 @@ function DebtorStageRow({
               {assigneePersonLabel(d.lawyerRole)}: {d.lawyerName}
             </span>
           )}
+          {isWaiting && d.lastNote && d.lastNote !== '—' && (
+            <span className="text-[11px] text-[#454042] sm:hidden basis-full">
+              الملاحظة: {d.lastNote}
+            </span>
+          )}
         </div>
       </div>
+      {isWaiting && (
+        <div className="min-w-[9rem] max-w-[14rem] shrink-0 hidden sm:block">
+          <p className="text-[10px] font-bold text-[#767676]">الملاحظة</p>
+          <p className="text-xs text-[#454042] whitespace-pre-wrap break-words line-clamp-3" title={d.lastNote}>
+            {d.lastNote || '—'}
+          </p>
+        </div>
+      )}
       {d.remaining > 0 && (
         <span className="text-xs font-bold text-[#2C8780] tabular-nums shrink-0" dir="ltr">
           {fmtMoney(d.remaining)}
@@ -669,7 +685,19 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
         specialStatusName: ss.name,
         specialStatusColor: ss.color,
         firstHearingDate: d.first_hearing_date ? String(d.first_hearing_date).slice(0, 10) : null,
+        lastNote: '—',
       })
+    }
+
+    if (mapped.length) {
+      const notePreviews = await fetchLastNotePreviewsByDebtorIds(
+        supabase,
+        mapped.map(r => r.debtorId),
+      )
+      if (isStale()) return
+      for (const row of mapped) {
+        row.lastNote = notePreviews.get(row.debtorId) ?? '—'
+      }
     }
 
     // إن نقص first_hearing_date: استخرجه من إنجاز «إقامة دعوى» (أو أي إنجاز فيه تاريخ جلسة) واحفظه
@@ -879,7 +907,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       })
       setAssigning(false)
       setSuccessMsg(`تم تكليف ${taskIds.length} مهمة بنجاح`)
-      cacheInvalidatePrefix('dashboard:v')
+      invalidateDashboardCounts()
     })
   }
 
@@ -907,7 +935,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     preserveScrollDuring(() => {
       setDebtors(prev => prev.filter(d => d.taskId !== taskId))
       setSuccessMsg('تم إلغاء التكليف — عادت المهمة لغير المكلفة')
-      cacheInvalidatePrefix('dashboard:v')
+      invalidateDashboardCounts()
     })
   }
 
@@ -956,7 +984,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     preserveScrollDuring(() => {
       setDebtors(prev => prev.filter(d => !taskIds.includes(d.taskId)))
       setSelected(new Set())
-      cacheInvalidatePrefix('dashboard:v')
+      invalidateDashboardCounts()
       setSuccessMsg(`تم إلغاء تكليف ${taskIds.length} مهمة — عادت لغير المكلفة`)
     })
   }
@@ -976,7 +1004,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     setMoveModalOpen(false)
     const movedTaskIds = new Set(selected)
     setSelected(new Set())
-    cacheInvalidatePrefix('dashboard:v')
+    invalidateDashboardCounts()
     if (summary) {
       const parts = [`تم تحويل ${summary.moved} مدين إلى جاري التسديد`]
       if (summary.failed > 0) parts.push(`تعذّر تحويل ${summary.failed}`)
@@ -1007,7 +1035,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       })
       setError('')
       setSuccessMsg(`تم تحويل ${debtorIds.length} اسم إلى «${statusName}» مع حفظ المهمة المرتبطة`)
-      cacheInvalidatePrefix('dashboard:v')
+      invalidateDashboardCounts()
     })
   }
 

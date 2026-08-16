@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 
 interface StatusOption {
   id: string
@@ -68,6 +69,7 @@ export default function MoveToMonitoringModal({
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json.error ?? 'فشل تحويل الأسماء')
       const statusName = statuses.find(status => status.id === statusId)?.name ?? 'الصفة المحددة'
+      invalidateDashboardCounts()
       onSuccess(debtorIds, statusName)
       onClose()
     } catch (err) {

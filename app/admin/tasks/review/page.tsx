@@ -13,6 +13,7 @@ import TaskExpensesReviewCard from '@/components/TaskExpensesReviewCard'
 import { fetchPendingReviewTasksPaginated, fetchPendingReviewTaskById, fetchBranchLawyers, REVIEW_TASK_PAGE_SIZE } from '@/lib/task-assignment'
 import { fetchBranchDelegates } from '@/lib/branch-profiles'
 import { cachePeek, cacheSet, cacheDelete, cacheInvalidatePrefix, CACHE_TTL } from '@/lib/query-cache'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import { refreshAdminNotifications } from '@/lib/admin-notifications'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/ui/page-header'
@@ -1127,8 +1128,7 @@ export default function TaskReviewPage() {
           onDone={() => {
             setReviewing(null)
             cacheInvalidatePrefix('tasks:review:')
-            if (branchId) cacheDelete(`dashboard:${branchId}`)
-            else cacheInvalidatePrefix('dashboard:')
+            invalidateDashboardCounts()
             setPageOffset(0)
             load(false, 0)
             loadAwaitingNext()
@@ -1145,8 +1145,7 @@ export default function TaskReviewPage() {
           onDone={() => {
             setResumeNextTask(null)
             cacheInvalidatePrefix('tasks:review:')
-            if (branchId) cacheDelete(`dashboard:${branchId}`)
-            else cacheInvalidatePrefix('dashboard:')
+            invalidateDashboardCounts()
             loadAwaitingNext()
             load(false, 0)
             refreshAdminNotifications()

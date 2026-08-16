@@ -22,6 +22,7 @@ import {
 } from '@/components/CriminalDebtorFields'
 import { BackButton } from '@/components/ui/back-button'
 import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 
 type Props = {
   readOnly?: boolean
@@ -136,6 +137,7 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
 
       setSuccess('تم إنشاء المدين الجزائي بنجاح')
       setUploadProgress('')
+      invalidateDashboardCounts()
       router.push(`/admin/debtors/${createdId}/account`)
     } catch {
       setError('فشل إنشاء المدين')

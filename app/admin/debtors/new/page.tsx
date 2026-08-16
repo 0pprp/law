@@ -23,6 +23,7 @@ import MoneyInput from '@/components/ui/money-input'
 import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
 import { canAddDebtor } from '@/lib/permissions'
 import { useAdminRole } from '@/context/admin-role'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import BranchListSelect from '@/components/BranchListSelect'
 import { useBranchLists } from '@/hooks/use-branch-lists'
 import {
@@ -256,6 +257,7 @@ export default function NewDebtorPage() {
         }
       }
 
+      invalidateDashboardCounts()
       router.push('/admin/debtors')
     } catch {
       setError('فشل إنشاء المدين')

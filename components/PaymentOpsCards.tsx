@@ -15,7 +15,13 @@ import { countPaymentInProgress } from '@/lib/payment-in-progress'
 import { countAwaitingAssignmentDebtors } from '@/lib/awaiting-assignment'
 import { countFilePreparationDebtors } from '@/lib/file-preparation'
 import { useCaseScope } from '@/hooks/use-case-scope'
-import { cachePeek, cacheSet, CACHE_TTL } from '@/lib/query-cache'
+import {
+  DASHBOARD_COUNTS_CHANGED,
+  opsCountsKey,
+  peekOpsCardCounts,
+  writeOpsCardCounts,
+  type OpsCardCounts,
+} from '@/lib/dashboard-counts-cache'
 
 function MoneyIcon() {
   return (
@@ -131,45 +137,45 @@ export default function PaymentOpsCards({
   const showAwaiting = showAwaitingSection && (isAdmin(role) || isAnyLegalManager(role) || canAssignTasks(role))
   const showPayment = showPaymentSection && canViewPaymentInProgressCard(role)
   const showNoncompliance = showPaymentSection && canReviewPaymentNoncomplianceRequest(role)
-  const [awaitingCount, setAwaitingCount] = useState<number | null>(null)
-  const [prepCount, setPrepCount] = useState<number | null>(null)
-  const [paymentCount, setPaymentCount] = useState<number | null>(null)
-  const [pendingCount, setPendingCount] = useState<number | null>(null)
+  const cacheKey = opsCountsKey(branchId, listId, caseTypeFilter, section)
+  const initial = peekOpsCardCounts(cacheKey)
+  const [awaitingCount, setAwaitingCount] = useState<number | null>(initial?.awaiting ?? null)
+  const [prepCount, setPrepCount] = useState<number | null>(initial?.prep ?? null)
+  const [paymentCount, setPaymentCount] = useState<number | null>(initial?.payment ?? null)
+  const [pendingCount, setPendingCount] = useState<number | null>(initial?.pending ?? null)
+
+  const applyCounts = useCallback((next: OpsCardCounts) => {
+    setAwaitingCount(next.awaiting)
+    setPrepCount(next.prep)
+    setPaymentCount(next.payment)
+    setPendingCount(next.pending)
+    writeOpsCardCounts(cacheKey, next)
+  }, [cacheKey])
 
   const load = useCallback(async () => {
     if (!branchId && !viewAllBranches) {
-      setAwaitingCount(0)
-      setPrepCount(0)
-      setPaymentCount(0)
-      setPendingCount(0)
+      applyCounts({ awaiting: 0, prep: 0, payment: 0, pending: 0 })
       return
     }
 
-    const cacheKey = `opsCards:v1:${branchId ?? 'all'}:${listId ?? 'all'}:${caseTypeFilter ?? 'both'}:${section}`
-    const cached = cachePeek<{
-      awaiting: number | null
-      prep: number | null
-      payment: number | null
-      pending: number | null
-    }>(cacheKey)
+    // اعرض المخزّن فوراً إن وُجد (بعد تنقّل) ثم اجلب الطازج
+    const cached = peekOpsCardCounts(cacheKey)
     if (cached) {
-      setAwaitingCount(cached.value.awaiting)
-      setPrepCount(cached.value.prep)
-      setPaymentCount(cached.value.payment)
-      setPendingCount(cached.value.pending)
-      if (cached.fresh) return
+      setAwaitingCount(cached.awaiting)
+      setPrepCount(cached.prep)
+      setPaymentCount(cached.payment)
+      setPendingCount(cached.pending)
     }
 
     const supabase = createClient()
     const scope = viewAllBranches ? null : branchId
-    // القائمة تخص المدني فقط — الجزائي بلا branch_list_id
     const listScope =
       viewAllBranches || caseTypeFilter === 'criminal' ? null : listId
 
-    let nextAwaiting: number | null = cached?.value.awaiting ?? null
-    let nextPrep: number | null = cached?.value.prep ?? null
-    let nextPayment: number | null = cached?.value.payment ?? null
-    let nextPending: number | null = cached?.value.pending ?? null
+    let nextAwaiting: number | null = showAwaiting ? (cached?.awaiting ?? null) : null
+    let nextPrep: number | null = showAwaiting ? (cached?.prep ?? null) : null
+    let nextPayment: number | null = showPayment ? (cached?.payment ?? null) : null
+    let nextPending: number | null = showNoncompliance ? (cached?.pending ?? null) : null
 
     const tasks: Promise<void>[] = []
 
@@ -268,19 +274,31 @@ export default function PaymentOpsCards({
     }
 
     await Promise.all(tasks)
-    cacheSet(
-      cacheKey,
-      {
-        awaiting: nextAwaiting,
-        prep: nextPrep,
-        payment: nextPayment,
-        pending: nextPending,
-      },
-      CACHE_TTL.opsCards,
-    )
-  }, [branchId, viewAllBranches, listId, caseTypeFilter, showAwaiting, showPayment, showNoncompliance, section])
+    writeOpsCardCounts(cacheKey, {
+      awaiting: nextAwaiting,
+      prep: nextPrep,
+      payment: nextPayment,
+      pending: nextPending,
+    })
+  }, [
+    branchId,
+    viewAllBranches,
+    listId,
+    caseTypeFilter,
+    showAwaiting,
+    showPayment,
+    showNoncompliance,
+    cacheKey,
+    applyCounts,
+  ])
 
   useEffect(() => { void load() }, [load])
+
+  useEffect(() => {
+    const onRefresh = () => { void load() }
+    window.addEventListener(DASHBOARD_COUNTS_CHANGED, onRefresh)
+    return () => window.removeEventListener(DASHBOARD_COUNTS_CHANGED, onRefresh)
+  }, [load])
 
   if (!showAwaiting && !showPayment && !showNoncompliance) return null
   if (!branchId && !viewAllBranches) return null

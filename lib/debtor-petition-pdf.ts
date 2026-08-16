@@ -198,7 +198,7 @@ export async function generateDebtorPetitionPdf(
   fields: DebtorPetitionFields,
 ): Promise<{ buffer: Buffer; fileName: string }> {
   const f = normalizePetitionFields(fields)
-  const fileName = buildPetitionFileName(f.defendantName)
+  const fileName = buildPetitionFileName(f.defendantName).replace(/\.docx$/i, '.pdf')
   const html = buildPetitionHtml(f)
 
   let lastError: unknown = null

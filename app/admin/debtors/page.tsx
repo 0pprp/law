@@ -19,6 +19,7 @@ import { useAdminRole } from '@/context/admin-role'
 import { canAddDebtor, canAddDebtorExpenses, canAssignTasks, canDelete, canEditDebtor, canImportDebtors, canImportCriminalDebtors, canMoveToPaymentInProgress, isAnyLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
 import { resolveCaseScope, filterBySection } from '@/lib/case-scope'
 import { appConfirm, appAlert } from '@/lib/app-dialog'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import DebtorAddExpenseButton from '@/components/DebtorAddExpenseButton'
@@ -271,6 +272,7 @@ export default function DebtorsPage() {
         return
       }
       setDeletingId(null)
+      invalidateDashboardCounts()
       fetchDebtors(search, filterListId, filterCaseType, filterSpecialStatus)
     } catch {
       setError('فشل الحذف')

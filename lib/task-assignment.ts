@@ -13,6 +13,7 @@ import { debtorSearchOrFilter } from '@/lib/debtor-search'
 import { isIncompleteCompletionRequest } from '@/lib/incomplete-completion'
 import { cacheInvalidatePrefix } from '@/lib/query-cache'
 import { resolveDebtorCourtName } from '@/lib/awaiting-assignment'
+import { fetchLastNotePreviewsByDebtorIds } from '@/lib/debtor-last-notes'
 
 const LAWYER_TASK_LIST_COLS =
   'id, task_type, task_definition_id, task_status, due_date, court_name, governorate, created_at, debtor_id, assignment_expires_at, admin_notes, assigned_to, reward_amount, branch_id'
@@ -64,6 +65,8 @@ export interface CurrentBranchTaskRow {
   debtorPhone: string | null
   debtorReceiptNumber: string | null
   taskLabel: string
+  /** آخر ملاحظة بروفايل: «الكاتب: النص...» */
+  lastNote: string
 }
 
 /** DB may use assigned_to and/or lawyer_id — treat either as the assigned lawyer. */
@@ -701,9 +704,24 @@ function debtorRowsToTaskRows(debtors: any[], branchId: string | null): CurrentB
       debtorPhone: d.phone ?? null,
       debtorReceiptNumber: d.receipt_number ?? null,
       taskLabel: defLabel ?? task.task_type ?? '—',
+      lastNote: '—',
     })
   }
   return rows
+}
+
+async function attachLastNotesToTaskRows(
+  supabase: SupabaseClient,
+  rows: CurrentBranchTaskRow[],
+): Promise<void> {
+  if (!rows.length) return
+  const previews = await fetchLastNotePreviewsByDebtorIds(
+    supabase,
+    rows.map(r => r.debtor_id),
+  )
+  for (const row of rows) {
+    row.lastNote = previews.get(row.debtor_id) ?? '—'
+  }
 }
 
 async function attachLawyerNames(
@@ -1060,6 +1078,7 @@ export async function fetchCurrentBranchTaskRowsPaginated(
   await Promise.all([
     attachLawyerNames(supabase, rows),
     attachBranchNames(supabase, rows),
+    attachLastNotesToTaskRows(supabase, rows),
   ])
 
   return {

@@ -14,7 +14,13 @@ import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/
 import { StatCard } from '@/components/ui/stat-card'
 import { stageAccent, stageIconBg } from '@/lib/stage-config'
 import { scheduleBranchMaintenance } from '@/lib/branch-maintenance'
-import { cachePeek, cacheSet, CACHE_TTL } from '@/lib/query-cache'
+import {
+  DASHBOARD_COUNTS_CHANGED,
+  dashboardCountsKey,
+  peekDashboardStageCounts,
+  writeDashboardStageCounts,
+  type DashboardStageSnapshot,
+} from '@/lib/dashboard-counts-cache'
 import PaymentOpsCards from '@/components/PaymentOpsCards'
 import {
   fetchDashboardData,
@@ -23,20 +29,6 @@ import {
   type UnassignedStageCount,
   type PleadingHearingBadgeCounts,
 } from '@/lib/task-assignment'
-
-interface DashboardCache {
-  civilStages: UnassignedStageCount[]
-  criminalStages: UnassignedStageCount[]
-  civilAssignedStages: UnassignedStageCount[]
-  criminalAssignedStages: UnassignedStageCount[]
-  civilOverdueStages: UnassignedStageCount[]
-  criminalOverdueStages: UnassignedStageCount[]
-  pleadingHearingBadges: PleadingHearingBadgeCounts
-  unassigned: number
-  assigned: number
-  pendingReview: number
-  recentActivity: { action: string; created_at: string }[]
-}
 
 const EMPTY_HEARING_BADGES: PleadingHearingBadgeCounts = { yellow: 0, red: 0, gray: 0 }
 
@@ -208,6 +200,20 @@ export default function DashboardPage() {
   const [recentActivity, setRecentActivity] = useState<{ action: string; created_at: string }[]>([])
   const loadGenRef = useRef(0)
 
+  const applyDashboardSnapshot = useCallback((snap: DashboardStageSnapshot) => {
+    setCivilStages(snap.civilStages as UnassignedStageCount[])
+    setCriminalStages(snap.criminalStages as UnassignedStageCount[])
+    setCivilAssignedStages(snap.civilAssignedStages as UnassignedStageCount[])
+    setCriminalAssignedStages(snap.criminalAssignedStages as UnassignedStageCount[])
+    setCivilOverdueStages(snap.civilOverdueStages as UnassignedStageCount[])
+    setCriminalOverdueStages(snap.criminalOverdueStages as UnassignedStageCount[])
+    setPleadingHearingBadges(snap.pleadingHearingBadges ?? EMPTY_HEARING_BADGES)
+    setTotalWaiting(snap.unassigned)
+    setTotalAssigned(snap.assigned)
+    setTotalPendingReview(snap.pendingReview)
+    setRecentActivity(snap.recentActivity)
+  }, [])
+
   const loadData = useCallback(async () => {
     const supabase = createClient()
     const gen = ++loadGenRef.current
@@ -229,39 +235,13 @@ export default function DashboardPage() {
       return
     }
 
-    // v11: يشمل caseType صراحةً لمنع خلط أرقام المدني/الجزائي
-    const cacheKey = `dashboard:v11:${branchId ?? 'all'}:${listId ?? 'all'}:${ct ?? 'both'}`
-    const cachedHit = cachePeek<DashboardCache>(cacheKey)
-    if (cachedHit) {
-      if (isStale()) return
-      const cached = cachedHit.value
-      setCivilStages(cached.civilStages)
-      setCriminalStages(cached.criminalStages)
-      setCivilAssignedStages(cached.civilAssignedStages)
-      setCriminalAssignedStages(cached.criminalAssignedStages)
-      setCivilOverdueStages(cached.civilOverdueStages)
-      setCriminalOverdueStages(cached.criminalOverdueStages)
-      setPleadingHearingBadges(cached.pleadingHearingBadges ?? EMPTY_HEARING_BADGES)
-      setTotalWaiting(cached.unassigned)
-      setTotalAssigned(cached.assigned)
-      setTotalPendingReview(cached.pendingReview)
-      setRecentActivity(cached.recentActivity)
+    const cacheKey = dashboardCountsKey(branchId, listId, ct)
+    const cached = peekDashboardStageCounts(cacheKey)
+    if (cached) {
+      applyDashboardSnapshot(cached)
       setLoading(false)
-      // fresh → لا إعادة جلب؛ stale → تحديث صامت بالخلفية
-      if (cachedHit.fresh) return
     } else {
       setLoading(true)
-      setCivilStages([])
-      setCriminalStages([])
-      setCivilAssignedStages([])
-      setCriminalAssignedStages([])
-      setCivilOverdueStages([])
-      setCriminalOverdueStages([])
-      setPleadingHearingBadges(EMPTY_HEARING_BADGES)
-      setTotalWaiting(0)
-      setTotalAssigned(0)
-      setTotalPendingReview(0)
-      setRecentActivity([])
     }
 
     scheduleBranchMaintenance(supabase, branchId)
@@ -281,7 +261,6 @@ export default function DashboardPage() {
             branchListId: branchListForCivil,
           })
         : Promise.resolve(EMPTY_DASH)
-      // الجزائي لا يستخدم قائمة الفرع — caseType صريح دائماً
       const fetchCriminal = showCriminalStages
         ? fetchDashboardData(supabase, branchId, { caseType: 'criminal', branchListId: null })
         : Promise.resolve(EMPTY_DASH)
@@ -307,7 +286,7 @@ export default function DashboardPage() {
 
       if (isStale()) return
 
-      const next: DashboardCache = {
+      const next: DashboardStageSnapshot = {
         civilStages: showCivilStages ? civilData.stages : [],
         criminalStages: showCriminalStages ? criminalData.stages : [],
         civilAssignedStages: showCivilStages ? civilData.assignedStages : [],
@@ -320,26 +299,21 @@ export default function DashboardPage() {
         pendingReview,
         recentActivity: activityRes.data ?? [],
       }
-      cacheSet(cacheKey, next, CACHE_TTL.dashboard)
-
-      setCivilStages(next.civilStages)
-      setCriminalStages(next.criminalStages)
-      setCivilAssignedStages(next.civilAssignedStages)
-      setCriminalAssignedStages(next.criminalAssignedStages)
-      setCivilOverdueStages(next.civilOverdueStages)
-      setCriminalOverdueStages(next.criminalOverdueStages)
-      setPleadingHearingBadges(next.pleadingHearingBadges)
-      setTotalWaiting(next.unassigned)
-      setTotalAssigned(next.assigned)
-      setTotalPendingReview(next.pendingReview)
-      setRecentActivity(next.recentActivity)
+      writeDashboardStageCounts(cacheKey, next)
+      applyDashboardSnapshot(next)
     } catch (e: unknown) {
       console.error('[admin/dashboard] load error:', e)
     }
     if (!isStale()) setLoading(false)
-  }, [branchId, viewAllBranches, listId, ct, showCivilStages, showCriminalStages, role])
+  }, [branchId, viewAllBranches, listId, ct, showCivilStages, showCriminalStages, role, applyDashboardSnapshot])
 
   useEffect(() => { loadData() }, [loadData])
+
+  useEffect(() => {
+    const onRefresh = () => { void loadData() }
+    window.addEventListener(DASHBOARD_COUNTS_CHANGED, onRefresh)
+    return () => window.removeEventListener(DASHBOARD_COUNTS_CHANGED, onRefresh)
+  }, [loadData])
 
   useEffect(() => {
     if (!legalManagerView) return
