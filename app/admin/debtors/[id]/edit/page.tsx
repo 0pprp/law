@@ -9,7 +9,7 @@ import { fmtDate } from '@/lib/utils'
 import { parseMoneyInput } from '@/lib/money-input'
 import { FormFlow, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { cn } from '@/lib/utils'
-import { useAdminRole } from '@/context/admin-role'
+import { useAdminRoleState } from '@/context/admin-role'
 import { canAssignTasks, canEditDebtor } from '@/lib/permissions'
 import { assertDebtorSection, resolveCaseScope, sectionForbiddenMessage } from '@/lib/case-scope'
 import PermissionDenied from '@/components/PermissionDenied'
@@ -49,7 +49,7 @@ export default function EditDebtorPage() {
   const router = useRouter()
   const params = useParams()
   const id = params.id as string
-  const role = useAdminRole()
+  const { role, canAccessCivil, canAccessCriminal } = useAdminRoleState()
   const submitLock = useRef(false)
 
   const [loading, setLoading] = useState(true)
@@ -90,7 +90,10 @@ export default function EditDebtorPage() {
       const files = payload.attachments
       const details = payload.criminal_details
       if (data) {
-        if (!assertDebtorSection(resolveCaseScope(role), data.case_type)) {
+        if (!assertDebtorSection(resolveCaseScope(role, {
+          canAccessCivil,
+          canAccessCriminal,
+        }), data.case_type)) {
           setSectionDenied(true)
           setLoading(false)
           return

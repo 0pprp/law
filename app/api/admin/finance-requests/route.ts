@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { canAccessFinance, apiForbiddenResponse } from '@/lib/permissions'
+import { canAccessFinance, isAnyLegalManager, apiForbiddenResponse } from '@/lib/permissions'
 import { getBranchContext } from '@/lib/branch-context'
 import { fetchLegalManagerWalletBalance } from '@/lib/legal-manager-wallet'
 import { resolveCaseScope, filterBySection } from '@/lib/case-scope'
+import { fetchStaffProfile } from '@/lib/staff-profile'
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,17 +13,16 @@ export async function GET(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'غير مصرح' }, { status: 401 })
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
+    const profile = await fetchStaffProfile(supabase, user.id)
 
     if (!profile || !canAccessFinance(profile.role)) {
       return apiForbiddenResponse()
     }
 
-    const scope = resolveCaseScope(profile.role)
+    const scope = resolveCaseScope(profile.role, {
+      canAccessCivil: profile.can_access_civil,
+      canAccessCriminal: profile.can_access_criminal,
+    })
     const lockedCaseType = filterBySection(scope)
     const caseTypeParam = request.nextUrl.searchParams.get('caseType')?.trim() || ''
     const effectiveCaseType =
@@ -65,18 +65,23 @@ export async function GET(request: NextRequest) {
       ...lmList.map(l => [l.id, l.full_name]),
     ])
 
+    /** مسؤول القانونية لا يرى أرصدة محفظته — للإدارة والمحاسب فقط */
+    const hideLmBalances = isAnyLegalManager(profile.role)
     const legalManagerBalances: Record<string, number> = {}
-    await Promise.all(
-      lmList.map(async lm => {
-        legalManagerBalances[lm.id] = await fetchLegalManagerWalletBalance(admin, lm.id)
-      }),
-    )
+    if (!hideLmBalances) {
+      await Promise.all(
+        lmList.map(async lm => {
+          legalManagerBalances[lm.id] = await fetchLegalManagerWalletBalance(admin, lm.id)
+        }),
+      )
+    }
 
     if (!ids.length) {
       return NextResponse.json({ payouts: [], receipts: [], legalManagerBalances })
     }
 
     const lawyerIds = list.map(l => l.id)
+    const lmIds = new Set(lmList.map(l => l.id))
     const [{ data: payouts }, { data: receipts }] = await Promise.all([
       admin.from('lawyer_payout_requests').select('*').in('lawyer_id', ids).order('created_at', { ascending: false }).limit(200),
       lawyerIds.length
@@ -89,8 +94,15 @@ export async function GET(request: NextRequest) {
       ...lmList.map(l => [l.id, l]),
     ])
 
+    const visiblePayouts = (payouts ?? []).filter(p => {
+      if (!hideLmBalances) return true
+      if ((p.wallet_kind ?? 'fees') === 'legal_manager') return false
+      if (lmIds.has(p.lawyer_id)) return false
+      return true
+    })
+
     return NextResponse.json({
-      payouts: (payouts ?? []).map(p => ({
+      payouts: visiblePayouts.map(p => ({
         ...p,
         lawyer: {
           full_name: nameMap[p.lawyer_id] ?? '—',

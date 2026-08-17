@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { fmtDate } from '@/lib/utils'
 import { useBranchId, useBranch } from '@/context/branch'
-import { useAdminRole } from '@/context/admin-role'
+import { useAdminRoleState } from '@/context/admin-role'
 import { canEditLawyerProfile, canDeleteUsers, isAnyLegalManager } from '@/lib/permissions'
 import { assertLawyerSection, resolveCaseScope, sectionForbiddenMessage } from '@/lib/case-scope'
 import PermissionDenied from '@/components/PermissionDenied'
@@ -53,7 +53,8 @@ export default function EditLawyerPage() {
   const params = useParams()
   const branchId = useBranchId()
   const { branchName } = useBranch()
-  const adminRole = useAdminRole()
+  const adminRoleState = useAdminRoleState()
+  const adminRole = adminRoleState.role
   const legalOfficerMode = isAnyLegalManager(adminRole)
   const [targetRole, setTargetRole] = useState<UserRole>('lawyer')
   const [targetLoaded, setTargetLoaded] = useState(false)
@@ -79,6 +80,8 @@ export default function EditLawyerPage() {
     lawyer_type: 'normal' as 'normal' | 'general',
     accountant_type: 'branch' as 'branch' | 'general',
     case_type: 'civil' as 'civil' | 'criminal',
+    can_access_civil: true,
+    can_access_criminal: false,
   })
   const [profileBranchId, setProfileBranchId] = useState<string | null>(null)
   const [chiefBranchIds, setChiefBranchIds] = useState<string[]>([])
@@ -93,7 +96,10 @@ export default function EditLawyerPage() {
       if (data) {
         if (
           data.role === 'lawyer'
-          && !assertLawyerSection(resolveCaseScope(adminRole), data.case_type)
+          && !assertLawyerSection(resolveCaseScope(adminRole, {
+            canAccessCivil: adminRoleState.canAccessCivil,
+            canAccessCriminal: adminRoleState.canAccessCriminal,
+          }), data.case_type)
         ) {
           setSectionDenied(true)
           setTargetLoaded(true)
@@ -109,6 +115,12 @@ export default function EditLawyerPage() {
           lawyer_type: data.lawyer_type === 'general' ? 'general' : 'normal',
           accountant_type: data.accountant_type === 'general' ? 'general' : 'branch',
           case_type: data.case_type === 'criminal' ? 'criminal' : 'civil',
+          can_access_civil: data.role === 'criminal_legal_manager'
+            ? data.can_access_civil === true
+            : data.can_access_civil !== false,
+          can_access_criminal: data.role === 'criminal_legal_manager'
+            ? data.can_access_criminal !== false
+            : data.can_access_criminal === true,
         })
         setTargetRole((data.role ?? 'lawyer') as UserRole)
         if (data.role === 'chief_accountant') {
@@ -130,7 +142,7 @@ export default function EditLawyerPage() {
       setLoading(false)
     }
     load()
-  }, [id, adminRole])
+  }, [id, adminRole, adminRoleState.canAccessCivil, adminRoleState.canAccessCriminal])
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
 
@@ -144,6 +156,14 @@ export default function EditLawyerPage() {
     }
     if (form.role === 'chief_accountant' && chiefBranchIds.length === 0) {
       setError('يجب اختيار فرع واحد على الأقل للمحاسب الرئيسي')
+      return
+    }
+    if (
+      (form.role === 'viewer' || form.role === 'criminal_legal_manager')
+      && !form.can_access_civil
+      && !form.can_access_criminal
+    ) {
+      setError('يجب تفعيل قسم واحد على الأقل (مدني أو جزائي)')
       return
     }
     setSaving(true); setError('')
@@ -162,6 +182,13 @@ export default function EditLawyerPage() {
     if (form.role === 'lawyer') updatePayload.lawyer_type = form.lawyer_type
     if (form.role === 'accountant') updatePayload.accountant_type = form.accountant_type
     if (!legalOfficerMode) updatePayload.role = form.role
+    if (
+      !legalOfficerMode
+      && (form.role === 'viewer' || form.role === 'criminal_legal_manager')
+    ) {
+      updatePayload.can_access_civil = form.can_access_civil
+      updatePayload.can_access_criminal = form.can_access_criminal
+    }
     if (!profileBranchId && branchId) updatePayload.branch_id = branchId
 
     if (!legalOfficerMode && targetRole === 'chief_accountant' && form.role !== 'chief_accountant') {
@@ -180,12 +207,35 @@ export default function EditLawyerPage() {
 
     const { error: dbError } = await supabase.from('profiles').update(updatePayload).eq('id', id)
     if (dbError) {
-      const missingAccountantCol = String(dbError.message ?? '').includes('accountant_type')
-      if (missingAccountantCol && 'accountant_type' in updatePayload) {
-        const { accountant_type: _a, ...rest } = updatePayload
-        const retry = await supabase.from('profiles').update(rest).eq('id', id)
+      const msg = String(dbError.message ?? '')
+      const missingAccountantCol = msg.includes('accountant_type')
+      const missingSectionCol = msg.includes('can_access_civil') || msg.includes('can_access_criminal')
+      if ((missingAccountantCol || missingSectionCol) && (
+        'accountant_type' in updatePayload
+        || 'can_access_civil' in updatePayload
+        || 'can_access_criminal' in updatePayload
+      )) {
+        const {
+          accountant_type: _a,
+          can_access_civil: _c,
+          can_access_criminal: _k,
+          ...rest
+        } = updatePayload
+        const retryPayload = missingAccountantCol && missingSectionCol
+          ? rest
+          : missingAccountantCol
+            ? (() => { const { accountant_type: __, ...r } = updatePayload; return r })()
+            : (() => {
+                const { can_access_civil: __, can_access_criminal: ___, ...r } = updatePayload
+                return r
+              })()
+        const retry = await supabase.from('profiles').update(retryPayload).eq('id', id)
         if (retry.error) {
           setError(retry.error.code === '23505' ? 'اسم المستخدم مستخدم مسبقاً — يرجى اختيار اسم آخر' : retry.error.message)
+          setSaving(false); return
+        }
+        if (missingSectionCol) {
+          setError('أعمدة صلاحيات القسم غير مفعّلة بعد — طبّق الهجرة أولاً (can_access_civil / can_access_criminal)')
           setSaving(false); return
         }
       } else {
@@ -313,6 +363,13 @@ export default function EditLawyerPage() {
                 const next = v as UserRole
                 set('role', next)
                 if (next !== 'chief_accountant') setChiefBranchIds([])
+                if (next === 'viewer') {
+                  set('can_access_civil', true)
+                  set('can_access_criminal', false)
+                } else if (next === 'criminal_legal_manager') {
+                  set('can_access_civil', false)
+                  set('can_access_criminal', true)
+                }
               }}
               options={ROLES.map(r => ({ value: r, label: USER_ROLE_LABELS[r] }))}
               fieldLabel="الدور"
@@ -328,6 +385,39 @@ export default function EditLawyerPage() {
             )}
           </div>
         </Card>
+
+        {(form.role === 'viewer' || form.role === 'criminal_legal_manager') && !legalOfficerMode && (
+          <Card>
+            <CardHeader title="صلاحيات القسم" />
+            <div className="p-5 space-y-3">
+              <p className="text-xs text-slate-500">
+                الدور يبقى «{USER_ROLE_LABELS[form.role]}» حتى تُحسب نسبة المحفظة 5%. فعّل الأقسام التي يستطيع رؤيتها.
+              </p>
+              <div className="flex flex-wrap gap-5">
+                <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={form.can_access_civil}
+                    onChange={e => set('can_access_civil', e.target.checked)}
+                    className="w-4 h-4 rounded accent-[#2C8780]"
+                    disabled={readOnly}
+                  />
+                  <span className="text-sm font-semibold text-slate-700">مدني</span>
+                </label>
+                <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={form.can_access_criminal}
+                    onChange={e => set('can_access_criminal', e.target.checked)}
+                    className="w-4 h-4 rounded accent-[#2C8780]"
+                    disabled={readOnly}
+                  />
+                  <span className="text-sm font-semibold text-slate-700">جزائي</span>
+                </label>
+              </div>
+            </div>
+          </Card>
+        )}
 
         {form.role === 'chief_accountant' && !legalOfficerMode && (
           <Card>

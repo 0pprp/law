@@ -65,7 +65,7 @@ export default function AdminRouteGuard({ children }: { children: React.ReactNod
   }
 
   if (pathname.startsWith('/admin/legal-manager-wallet') && !canViewLegalManagerWallet(role)) {
-    return <PermissionDenied message="رصيدك يظهر في لوحة التحكم فقط — لا يمكنك الوصول إلى صفحة المحفظة." />
+    return <PermissionDenied message="صفحة محفظة مسؤول القانونية للمدير والموظفين فقط." />
   }
 
   return <>{children}</>

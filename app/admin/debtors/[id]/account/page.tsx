@@ -59,7 +59,10 @@ export default async function DebtorAccountPage({ params }: { params: Promise<{ 
   const { data: debtorProbe } = await admin.from('debtors').select('id, branch_id, case_type').eq('id', id).maybeSingle()
   if (!debtorProbe) notFound()
   if (!canStaffReadBranch(profile, debtorProbe.branch_id)) notFound()
-  if (!assertDebtorSection(resolveCaseScope(profile?.role), debtorProbe.case_type)) notFound()
+  if (!assertDebtorSection(resolveCaseScope(profile?.role, {
+    canAccessCivil: profile?.can_access_civil,
+    canAccessCriminal: profile?.can_access_criminal,
+  }), debtorProbe.case_type)) notFound()
 
   const db = canStaffReadBranch(profile, debtorProbe.branch_id) ? admin : supabase
 

@@ -37,6 +37,8 @@ interface AdminShellProps {
   userName: string
   userRole: string
   accountantType?: string | null
+  canAccessCivil?: boolean | null
+  canAccessCriminal?: boolean | null
   userBranchId?: string
   initialBranchId?: string | null
   initialBranchName?: string | null
@@ -406,7 +408,12 @@ export default function AdminShell(props: AdminShellProps) {
       initialListId={props.initialListId ?? null}
       initialListName={props.initialListName ?? null}
     >
-      <AdminRoleProvider role={role} accountantType={props.accountantType}>
+      <AdminRoleProvider
+        role={role}
+        accountantType={props.accountantType}
+        canAccessCivil={props.canAccessCivil}
+        canAccessCriminal={props.canAccessCriminal}
+      >
         <AdminShellInner {...props} />
       </AdminRoleProvider>
     </BranchProvider>
@@ -417,6 +424,8 @@ function AdminShellInner({
   userName,
   userRole,
   accountantType,
+  canAccessCivil,
+  canAccessCriminal,
   userBranchId,
   initialBranchId,
   initialBranchName,
@@ -593,14 +602,18 @@ function AdminShellInner({
             <div className="shrink-0 bg-sky-50 border-b border-sky-200 px-4 py-2.5 text-center text-sm text-sky-950 font-medium">
               <span className="font-bold">مسؤول الدعاوى المدنية</span>
               {' — '}
-              يرى الدعاوى المدنية فقط. التنفيذ المسموح: تكليف المحامين، مراجعة/اعتماد/رفض الإنجازات، والتقارير.
+              {canAccessCivil !== false && canAccessCriminal
+                ? 'يرى الدعاوى المدنية والجزائية حسب صلاحيات حسابه. التنفيذ المسموح: تكليف المحامين، مراجعة/اعتماد/رفض الإنجازات، والتقارير.'
+                : 'يرى الدعاوى المدنية فقط. التنفيذ المسموح: تكليف المحامين، مراجعة/اعتماد/رفض الإنجازات، والتقارير.'}
             </div>
           )}
           {isCriminalLegalManager(userRole) && (
             <div className="shrink-0 bg-violet-50 border-b border-violet-200 px-4 py-2.5 text-center text-sm text-violet-950 font-medium">
               <span className="font-bold">مسؤول الجزائيات</span>
               {' — '}
-              يرى الدعاوى الجزائية فقط. بعض الشاشات المدنية (مثل المندوبين) غير متاحة.
+              {canAccessCivil && canAccessCriminal !== false
+                ? 'يرى الدعاوى الجزائية والمدنية حسب صلاحيات حسابه.'
+                : 'يرى الدعاوى الجزائية فقط. بعض الشاشات المدنية (مثل المندوبين) غير متاحة.'}
             </div>
           )}
           {isChiefAccountant(userRole) && (

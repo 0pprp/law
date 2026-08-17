@@ -103,6 +103,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       userName={profile?.full_name ?? ''}
       userRole={role}
       accountantType={profile?.accountant_type ?? 'branch'}
+      canAccessCivil={profile?.can_access_civil}
+      canAccessCriminal={profile?.can_access_criminal}
       userBranchId={profile?.branch_id ?? undefined}
       initialBranchId={initialBranchId}
       initialBranchName={initialBranchName}

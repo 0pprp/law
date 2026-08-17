@@ -147,6 +147,9 @@ export interface Profile {
   accountant_type?: AccountantType | null
   /** قسم المحامي (مدني/جزائي) — يُعيَّن عند الإنشاء ولا يُغيَّر من الواجهة العادية */
   case_type?: 'civil' | 'criminal' | null
+  /** صلاحيات قسم مسؤول القانونية */
+  can_access_civil?: boolean | null
+  can_access_criminal?: boolean | null
   branch_id?: string | null
   branch_list_id?: string | null
   avatar_url: string | null

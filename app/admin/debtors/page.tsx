@@ -16,8 +16,8 @@ import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL } from '@/lib/ui-labels'
 import DebtorImportModal from '@/components/DebtorImportModal'
 import CriminalDebtorImportModal from '@/components/CriminalDebtorImportModal'
 import { useAdminRole } from '@/context/admin-role'
+import { useCaseScope } from '@/hooks/use-case-scope'
 import { canAddDebtor, canAddDebtorExpenses, canAssignTasks, canDelete, canEditDebtor, canImportDebtors, canImportCriminalDebtors, canMoveToPaymentInProgress, isAnyLegalManager, PERMISSION_DENIED_MSG } from '@/lib/permissions'
-import { resolveCaseScope, filterBySection } from '@/lib/case-scope'
 import { appConfirm, appAlert } from '@/lib/app-dialog'
 import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import { DEBTOR_LIST_PREVIEW_LIMIT, ShowMoreFooter } from '@/components/ui/show-more'
@@ -105,8 +105,8 @@ export default function DebtorsPage() {
   const showEditLink = allowEdit || isAnyLegalManager(role)
   const showDeleteBtn = allowDelete
   const showAddBtn = allowAdd
-  const scope = resolveCaseScope(role)
-  const lockedCaseType = filterBySection(scope)
+  const scope = useCaseScope()
+  const lockedCaseType = scope.caseTypeFilter
   const showCivilImportBtn = allowImport && lockedCaseType !== 'criminal'
   const showCriminalImportBtn = allowCriminalImport && lockedCaseType !== 'civil'
   const showImportBtn = showCivilImportBtn || showCriminalImportBtn

@@ -31,7 +31,10 @@ export async function GET(request: NextRequest) {
 
     const lawyerId = request.nextUrl.searchParams.get('lawyerId')
     const admin = createAdminClient()
-    const scope = resolveCaseScope(profile.role)
+    const scope = resolveCaseScope(profile.role, {
+      canAccessCivil: profile.can_access_civil,
+      canAccessCriminal: profile.can_access_criminal,
+    })
     const lockedCaseType = filterBySection(scope)
 
     const branchScoped = (isAccountant(profile.role) && !isGeneralAccountant(profile.role, profile.accountant_type))

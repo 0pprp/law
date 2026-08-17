@@ -32,6 +32,8 @@ export async function POST(request: NextRequest) {
     accountant_type: bodyAccountantType,
     case_type: bodyCaseType,
     chief_branch_ids: bodyChiefBranchIds,
+    can_access_civil: bodyCanAccessCivil,
+    can_access_criminal: bodyCanAccessCriminal,
   } = await request.json()
 
   const { branchId: cookieBranchId } = await getBranchContext()
@@ -153,9 +155,29 @@ export async function POST(request: NextRequest) {
       : 'branch',
     case_type: userRole === 'lawyer' ? lawyerCaseType : 'civil',
     branch_id: branchId,
+    can_access_civil: userRole === 'criminal_legal_manager' ? false : true,
+    can_access_criminal: userRole === 'criminal_legal_manager'
+      ? true
+      : userRole === 'viewer'
+        ? Boolean(bodyCanAccessCriminal)
+        : false,
+  }
+
+  // مسؤول المدنية: يسمح المدير بتفعيل الجزائي عند الإنشاء
+  if (userRole === 'viewer') {
+    profileUpdate.can_access_civil = bodyCanAccessCivil === false ? false : true
+    profileUpdate.can_access_criminal = bodyCanAccessCriminal === true
+    if (!profileUpdate.can_access_civil && !profileUpdate.can_access_criminal) {
+      profileUpdate.can_access_civil = true
+    }
   }
 
   let { error: profileError } = await admin.from('profiles').update(profileUpdate).eq('id', authData.user.id)
+
+  if (profileError && (String(profileError.message ?? '').includes('can_access_civil') || String(profileError.message ?? '').includes('can_access_criminal'))) {
+    const { can_access_civil: _a, can_access_criminal: _b, ...withoutSection } = profileUpdate
+    ;({ error: profileError } = await admin.from('profiles').update(withoutSection).eq('id', authData.user.id))
+  }
 
   if (profileError && String(profileError.message ?? '').includes('case_type')) {
     const { case_type: _c, ...withoutCase } = profileUpdate

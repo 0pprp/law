@@ -613,21 +613,11 @@ export async function creditLegalManagerBonusOnApproval(
     }
   }
 
-  // بنية قابلة لإضافة عمولة الجزائيات لاحقاً — حالياً لا حركة مالية للجزائي
-  const [{ data: debtorCase }, recipientId, lawyerProfileRes, taskFee] = await Promise.all([
-    supabase.from('debtors').select('case_type').eq('id', debtorId).maybeSingle(),
+  const [recipientId, lawyerProfileRes, taskFee] = await Promise.all([
     resolveLegalManagerRecipient(supabase, reviewerId, (task.branch_id as string | null) ?? null),
     supabase.from('profiles').select('full_name').eq('id', assignedLawyerId).maybeSingle(),
     resolveTaskFeeForLegalManager(supabase, task),
   ])
-  if (debtorCase?.case_type === 'criminal') {
-    return {
-      ok: true,
-      amount: 0,
-      skipped: true,
-      reason: 'لا عمولة لمسؤول الجزائيات على مهام المدين الجزائي (مؤجّل)',
-    }
-  }
 
   if (!recipientId) {
     console.warn(

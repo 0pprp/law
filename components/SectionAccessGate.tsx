@@ -1,7 +1,7 @@
 'use client'
 
 import { resolveCaseScope, type CaseSection } from '@/lib/case-scope'
-import { useAdminRole } from '@/context/admin-role'
+import { useAdminRoleState } from '@/context/admin-role'
 import PermissionDenied from '@/components/PermissionDenied'
 
 /**
@@ -34,8 +34,11 @@ export function SectionAccessGate({
   /** إن true اعرض رسالة بدل 403 عندما القسم غير مدعوم بعد */
   unsupported?: boolean
 }) {
-  const role = useAdminRole()
-  const scope = resolveCaseScope(role)
+  const { role, canAccessCivil, canAccessCriminal } = useAdminRoleState()
+  const scope = resolveCaseScope(role, {
+    canAccessCivil,
+    canAccessCriminal,
+  })
 
   if (required === 'both') return <>{children}</>
 

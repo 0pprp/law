@@ -44,7 +44,10 @@ export default async function LawyersPage() {
     const chiefRes = result[3] as { data: { profile_id: string }[] | null; error?: unknown }
     chiefBranchRows = chiefRes.error ? [] : (chiefRes.data ?? [])
 
-    const scope = resolveCaseScope(myProfile?.role)
+    const scope = resolveCaseScope(myProfile?.role, {
+      canAccessCivil: myProfile?.can_access_civil,
+      canAccessCriminal: myProfile?.can_access_criminal,
+    })
     const sectionFilter = filterBySection(scope)
     if (sectionFilter) {
       const lockedRole = myProfile?.role === 'viewer' || myProfile?.role === 'criminal_legal_manager'

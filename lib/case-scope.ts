@@ -21,18 +21,57 @@ export type CaseScope = {
   role: string | null
 }
 
+export type ResolveCaseScopeOpts = {
+  lawyerCaseType?: string | null
+  /** صلاحيات قسم مسؤول القانونية — من profiles.can_access_* */
+  canAccessCivil?: boolean | null
+  canAccessCriminal?: boolean | null
+}
+
+/** يحوّل أعلام الوصول إلى نطاق قسم */
+export function sectionFromAccessFlags(
+  canCivil: boolean | null | undefined,
+  canCriminal: boolean | null | undefined,
+  fallback: CaseSection = CASE_TYPE_CIVIL,
+): CaseSection {
+  const civil = canCivil === true
+  const criminal = canCriminal === true
+  if (civil && criminal) return 'both'
+  if (criminal) return CASE_TYPE_CRIMINAL
+  if (civil) return CASE_TYPE_CIVIL
+  return fallback
+}
+
+function scopeFromSection(section: CaseSection, role: string | null): CaseScope {
+  if (section === 'both') return { section: 'both', filterCaseType: null, role }
+  if (section === CASE_TYPE_CRIMINAL) {
+    return { section: CASE_TYPE_CRIMINAL, filterCaseType: CASE_TYPE_CRIMINAL, role }
+  }
+  return { section: CASE_TYPE_CIVIL, filterCaseType: CASE_TYPE_CIVIL, role }
+}
+
 /** يحل نطاق القسم من الدور (وللمحامي من case_type الخاص به) */
 export function resolveCaseScope(
   role: string | null | undefined,
-  opts?: { lawyerCaseType?: string | null },
+  opts?: ResolveCaseScopeOpts,
 ): CaseScope {
   const r = role ?? null
 
   if (r === 'viewer') {
-    return { section: CASE_TYPE_CIVIL, filterCaseType: CASE_TYPE_CIVIL, role: r }
+    const section = sectionFromAccessFlags(
+      opts?.canAccessCivil ?? true,
+      opts?.canAccessCriminal ?? false,
+      CASE_TYPE_CIVIL,
+    )
+    return scopeFromSection(section, r)
   }
   if (r === 'criminal_legal_manager') {
-    return { section: CASE_TYPE_CRIMINAL, filterCaseType: CASE_TYPE_CRIMINAL, role: r }
+    const section = sectionFromAccessFlags(
+      opts?.canAccessCivil ?? false,
+      opts?.canAccessCriminal ?? true,
+      CASE_TYPE_CRIMINAL,
+    )
+    return scopeFromSection(section, r)
   }
   if (r === 'lawyer') {
     const ct = normalizeCaseType(opts?.lawyerCaseType)

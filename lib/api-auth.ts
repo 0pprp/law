@@ -14,6 +14,8 @@ export type SessionProfile = {
   accountant_type: AccountantType
   /** قسم المحامي إن وُجد — لـ resolveCaseScope */
   case_type: 'civil' | 'criminal' | null
+  can_access_civil: boolean
+  can_access_criminal: boolean
   is_active: boolean
 }
 
@@ -46,6 +48,8 @@ export async function getSessionProfile(): Promise<{
       case_type: row.case_type === 'criminal' || row.case_type === 'civil'
         ? row.case_type
         : null,
+      can_access_civil: row.can_access_civil !== false,
+      can_access_criminal: row.can_access_criminal === true,
       is_active: true,
     },
   }
@@ -58,6 +62,8 @@ export function sessionCaseScope(profile: SessionProfile | null): CaseScope {
   }
   return resolveCaseScope(profile.role, {
     lawyerCaseType: profile.role === 'lawyer' ? profile.case_type : null,
+    canAccessCivil: profile.can_access_civil,
+    canAccessCriminal: profile.can_access_criminal,
   })
 }
 

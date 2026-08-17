@@ -87,6 +87,8 @@ export default function NewLawyerPage() {
     lawyer_type: 'normal' as 'normal' | 'general',
     accountant_type: 'branch' as 'branch' | 'general',
     case_type: (forceCriminalLawyer ? 'criminal' : 'civil') as 'civil' | 'criminal',
+    can_access_civil: true,
+    can_access_criminal: false,
   })
 
   const isLawyer = userRole === 'lawyer'
@@ -136,6 +138,10 @@ export default function NewLawyerPage() {
       setError('يجب اختيار فرع واحد على الأقل للمحاسب الرئيسي')
       return
     }
+    if ((isViewerRole || isCriminalManagerRole) && !form.can_access_civil && !form.can_access_criminal) {
+      setError('يجب تفعيل قسم واحد على الأقل (مدني أو جزائي)')
+      return
+    }
     setSaving(true); setError('')
     const res = await fetch('/api/admin/lawyers', {
       method: 'POST',
@@ -156,6 +162,8 @@ export default function NewLawyerPage() {
         branch_id: branchId,
         role: userRole,
         chief_branch_ids: isChiefAccountantRole ? chiefBranchIds : undefined,
+        can_access_civil: (isViewerRole || isCriminalManagerRole) ? form.can_access_civil : undefined,
+        can_access_criminal: (isViewerRole || isCriminalManagerRole) ? form.can_access_criminal : undefined,
       }),
     })
     const data = await res.json()
@@ -261,11 +269,47 @@ export default function NewLawyerPage() {
                   const next = v as typeof userRole
                   setUserRole(next)
                   if (next !== 'chief_accountant') setChiefBranchIds([])
+                  if (next === 'viewer') {
+                    set('can_access_civil', true)
+                    set('can_access_criminal', false)
+                  } else if (next === 'criminal_legal_manager') {
+                    set('can_access_civil', false)
+                    set('can_access_criminal', true)
+                  }
                 }}
                 options={roleOptions}
                 disabled={legalOfficerMode}
               />
             </Field>
+            {(isViewerRole || isCriminalManagerRole) && !legalOfficerMode && (
+              <Field
+                label="صلاحيات القسم"
+                hint="الدور يبقى مسؤول مدني/جزائي حتى تُحسب نسبة المحفظة — فعّل الأقسام التي يستطيع رؤيتها"
+              >
+                <div className="flex flex-wrap gap-5 pt-1">
+                  <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.can_access_civil}
+                      onChange={e => set('can_access_civil', e.target.checked)}
+                      className="w-4 h-4 rounded accent-[#2C8780]"
+                      disabled={readOnly}
+                    />
+                    <span className="text-sm font-semibold text-slate-700">مدني</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.can_access_criminal}
+                      onChange={e => set('can_access_criminal', e.target.checked)}
+                      className="w-4 h-4 rounded accent-[#2C8780]"
+                      disabled={readOnly}
+                    />
+                    <span className="text-sm font-semibold text-slate-700">جزائي</span>
+                  </label>
+                </div>
+              </Field>
+            )}
             {isChiefAccountantRole && (
               <Field
                 label="الفروع المسؤول عنها"

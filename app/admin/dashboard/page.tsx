@@ -5,10 +5,8 @@ import { createClient } from '@/lib/supabase/client'
 import { useBranch, useBranchId } from '@/context/branch'
 import Link from 'next/link'
 import { useAdminRole } from '@/context/admin-role'
-import { canAddDebtor, canReviewTasks, isAccountant, isAdmin, isLegalManager } from '@/lib/permissions'
-import { resolveCaseScope, filterBySection } from '@/lib/case-scope'
-import { fetchLegalManagerWalletBalance } from '@/lib/legal-manager-wallet'
-import { fmtMoney } from '@/lib/utils'
+import { useCaseScope } from '@/hooks/use-case-scope'
+import { canAddDebtor, canReviewTasks, isAccountant, isAdmin, isAnyLegalManager } from '@/lib/permissions'
 import { activityActionLabel } from '@/lib/activity-labels'
 import { LOG_PREVIEW_LIMIT, ShowMoreFooter, useShowMore } from '@/components/ui/show-more'
 import { StatCard } from '@/components/ui/stat-card'
@@ -167,25 +165,28 @@ export default function DashboardPage() {
   const branchId = useBranchId()
   const { viewAllBranches, listId } = useBranch()
   const role = useAdminRole()
-  const scope = resolveCaseScope(role)
-  const roleCt = filterBySection(scope)
-  /** المدير/الموظف: تبويب مدني | جزائي | الكل — نفس تجربة مسؤول المدنية عند اختيار مدني */
-  const canFocusSection = isAdmin(role) || role === 'employee'
+  const { caseTypeFilter: roleCt, section: roleSection } = useCaseScope()
+  /**
+   * فلتر الكل | مدني | جزائي:
+   * - المدير/الموظف دائماً
+   * - مسؤول القانونية عند صلاحية القسمين معاً
+   * صلاحية واحدة فقط → عرض قسمه بدون فلتر
+   */
+  const canFocusSection =
+    isAdmin(role) || role === 'employee' || (isAnyLegalManager(role) && roleSection === 'both')
   const [sectionFocus, setSectionFocus] = useState<'both' | 'civil' | 'criminal'>('both')
   const ct = canFocusSection
     ? (sectionFocus === 'both' ? null : sectionFocus)
     : roleCt
   const allowAddDebtor = canAddDebtor(role)
   const showAddDebtorLink = allowAddDebtor
-  /** محفظة الأتعاب مدنية فقط — مسؤول القانونية المدنية (ليس المدير) */
-  const legalManagerView = isLegalManager(role)
+  /** محفظة الأتعاب مخفية عن مسؤول القانونية — لا يراها في اللوحة */
   const accountantView = isAccountant(role)
   /** كارد مراجعة الإنجازات — مسؤولو الأقسام فقط؛ المدير يستخدم القائمة/الأزرار السريعة */
   const showReviewCard = !accountantView && !isAdmin(role) && canReviewTasks(role)
   const showCivilStages = ct === null || ct === 'civil'
   const showCriminalStages = ct === null || ct === 'criminal'
   const showPaymentOps = ct !== 'criminal'
-  const [lmWalletBalance, setLmWalletBalance] = useState<number | null>(null)
   const [civilStages, setCivilStages] = useState<UnassignedStageCount[]>([])
   const [criminalStages, setCriminalStages] = useState<UnassignedStageCount[]>([])
   const [civilAssignedStages, setCivilAssignedStages] = useState<UnassignedStageCount[]>([])
@@ -315,19 +316,6 @@ export default function DashboardPage() {
     return () => window.removeEventListener(DASHBOARD_COUNTS_CHANGED, onRefresh)
   }, [loadData])
 
-  useEffect(() => {
-    if (!legalManagerView) return
-    if (ct === 'criminal') {
-      setLmWalletBalance(null)
-      return
-    }
-    const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return
-      fetchLegalManagerWalletBalance(supabase, user.id).then(setLmWalletBalance)
-    })
-  }, [legalManagerView, ct])
-
   const {
     visibleItems: visibleActivity,
     expanded: activityExpanded,
@@ -418,16 +406,6 @@ export default function DashboardPage() {
         <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
           اختر فرعاً من القائمة العلوية لعرض مراحل القضايا.
         </div>
-      )}
-
-      {legalManagerView && ct !== 'criminal' && (
-        <StatCard
-          label="رصيد أتعابك"
-          value={lmWalletBalance === null ? '—' : fmtMoney(lmWalletBalance)}
-          accent="teal"
-          valueColor="text-[#2C8780]"
-          sub="لك نسبة 5% من أتعاب كل إنجاز معتمد (الدعاوى المدنية فقط)"
-        />
       )}
 
       <PaymentOpsCards
