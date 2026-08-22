@@ -136,14 +136,35 @@ export async function applyTaskTransition(
     case_type: string | null
   } | null
 
-  // منع التكرار: إن لم تعد هذه المهمة الحالية للمدين فقد نُفِّذ الإجراء اللاحق مسبقاً
+  // منع التكرار: فقط إذا انتقلت القضية فعلاً عن هذه المهمة
+  // ملاحظة: last_task_id === task.id مع بقاء current_task_id = task.id حالة بيانات فاسدة
+  // ولا تعني أن المهمة التالية أُنشئت — لا نمنع الانتقال بسببها وحدها.
   if (debtor) {
     const alreadyMoved =
-      (debtor.current_task_id != null && debtor.current_task_id !== task.id)
-      || debtor.last_task_id === task.id
-      || debtor.case_status === 'closed'
+      debtor.case_status === 'closed'
       || debtor.case_status === 'payment_in_progress'
+      || (debtor.current_task_id != null && debtor.current_task_id !== task.id)
+      || (
+        debtor.current_task_id == null
+        && debtor.last_task_id === task.id
+      )
     if (alreadyMoved) {
+      // إن كانت الأتعاب ما زالت معلّقة والمهمة التالية موجودة فعلياً — أكمل الاحتساب فقط
+      if (
+        awaitingFinalization
+        && debtor.current_task_id
+        && debtor.current_task_id !== task.id
+      ) {
+        const finalizeResult = await finalizeTaskApproval(supabase, task.id, userId, {
+          task_status: (task as any).task_status,
+          fee_status: (task as any).fee_status,
+          assigned_to: (task as any).assigned_to ?? null,
+        })
+        if (!finalizeResult.ok) {
+          return { ok: false, error: finalizeResult.error ?? 'فشل اعتماد الأتعاب بعد المهمة التالية' }
+        }
+        return { ok: true }
+      }
       return { ok: false, error: 'تم تنفيذ الإجراء اللاحق لهذه المهمة مسبقاً' }
     }
   }
