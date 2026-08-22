@@ -532,6 +532,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
 
     const supabase = createClient()
 
+    try {
     const { data: def } = await supabase
       .from('task_definitions')
       .select('id, label, task_type, case_type')
@@ -593,7 +594,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
           id, task_status, assigned_to, created_at, due_date, task_definition_id, branch_id,
           lawyer:profiles!tasks_assigned_to_fkey(full_name, role)
         )
-      `, { count: append ? undefined : 'exact' })
+      `, { count: append ? undefined : 'estimated' })
       .not('case_status', 'eq', 'closed')
       .not('current_task_id', 'is', null)
       .is('special_status_id', null)
@@ -700,53 +701,7 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
       }
     }
 
-    // إن نقص first_hearing_date: استخرجه من إنجاز «إقامة دعوى» (أو أي إنجاز فيه تاريخ جلسة) واحفظه
-    const isPleadingStage =
-      def?.task_type === 'pleading' || Boolean(def?.label?.includes('مرافع'))
-    if (isPleadingStage) {
-      const missing = mapped.filter(r => !r.firstHearingDate)
-      if (missing.length) {
-        const ids = missing.map(r => r.debtorId)
-        const { data: priorTasks } = await supabase
-          .from('tasks')
-          .select('debtor_id, task_type, completion_data, created_at')
-          .in('debtor_id', ids)
-          .not('completion_data', 'is', null)
-          .order('created_at', { ascending: false })
-        if (isStale()) return
-
-        const hearingByDebtor = new Map<string, string>()
-        // فضّل إقامة دعوى ثم أي مهمة فيها تاريخ جلسة
-        const sorted = [...(priorTasks ?? [])].sort((a, b) => {
-          const aL = a.task_type === 'file_lawsuit' ? 0 : 1
-          const bL = b.task_type === 'file_lawsuit' ? 0 : 1
-          return aL - bL
-        })
-        for (const row of sorted) {
-          const debtorId = row.debtor_id as string
-          if (hearingByDebtor.has(debtorId)) continue
-          const ymd = extractHearingDateFromCompletion(
-            (row.completion_data ?? null) as Record<string, unknown> | null,
-          )
-          if (ymd) hearingByDebtor.set(debtorId, ymd)
-        }
-
-        if (hearingByDebtor.size) {
-          for (const row of mapped) {
-            if (row.firstHearingDate) continue
-            const ymd = hearingByDebtor.get(row.debtorId)
-            if (ymd) row.firstHearingDate = ymd
-          }
-          // حفظ غير متزامن — لا يوقف العرض
-          void Promise.all(
-            [...hearingByDebtor.entries()].map(([debtorId, ymd]) =>
-              supabase.from('debtors').update({ first_hearing_date: ymd } as any).eq('id', debtorId),
-            ),
-          )
-        }
-      }
-    }
-
+    // اعرض الأسماء فوراً — لا تنتظر استخراج تواريخ المرافعة (كان يعلّق الصفحة دقائق)
     if (isStale()) return
     if (append) {
       setDebtors(prev => {
@@ -761,6 +716,55 @@ function StageDetailInner({ params }: { params: Promise<{ id: string }> }) {
     }
     setLoading(false)
     setLoadingMore(false)
+
+    // إن نقص first_hearing_date: استخرجه من إنجاز «إقامة دعوى» فقط (محدود) ثم حدّث الصفوف
+    const isPleadingStage =
+      def?.task_type === 'pleading' || Boolean(def?.label?.includes('مرافع'))
+    if (!isPleadingStage) return
+
+    const missing = mapped.filter(r => !r.firstHearingDate)
+    if (!missing.length) return
+
+    const ids = missing.map(r => r.debtorId)
+    const { data: priorTasks } = await supabase
+      .from('tasks')
+      .select('debtor_id, completion_data, created_at')
+      .in('debtor_id', ids)
+      .eq('task_type', 'file_lawsuit')
+      .not('completion_data', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(Math.min(ids.length * 2, 400))
+    if (isStale()) return
+
+    const hearingByDebtor = new Map<string, string>()
+    for (const row of priorTasks ?? []) {
+      const debtorId = row.debtor_id as string
+      if (hearingByDebtor.has(debtorId)) continue
+      const ymd = extractHearingDateFromCompletion(
+        (row.completion_data ?? null) as Record<string, unknown> | null,
+      )
+      if (ymd) hearingByDebtor.set(debtorId, ymd)
+    }
+
+    if (!hearingByDebtor.size) return
+
+    setDebtors(prev => prev.map(row => {
+      if (row.firstHearingDate) return row
+      const ymd = hearingByDebtor.get(row.debtorId)
+      return ymd ? { ...row, firstHearingDate: ymd } : row
+    }))
+    void Promise.all(
+      [...hearingByDebtor.entries()].map(([debtorId, ymd]) =>
+        supabase.from('debtors').update({ first_hearing_date: ymd } as any).eq('id', debtorId),
+      ),
+    )
+    } catch (e) {
+      if (isStale()) return
+      console.error('[stage-detail:load]', e)
+      setError(e instanceof Error ? e.message : 'فشل تحميل أسماء المرحلة')
+      setLoading(false)
+      setLoadingMore(false)
+    }
   }, [stageId, branchId, viewAllBranches, caseTypeFilter, view, debouncedSearch])
 
   useEffect(() => { void load() }, [load])
