@@ -3,6 +3,11 @@ import { extractHearingDateFromCompletion } from '@/lib/hearing-date-from-comple
 import { extractGpsFromCompletion, finalizeTaskApproval, FEE_STATUS_AWAITING_NEXT_TASK } from '@/lib/task-approval'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+/** خطأ التكرار من applyTaskTransition — يُعامل كنجاح idempotent في الواجهة */
+export function isNextActionAlreadyDoneError(error: string | null | undefined): boolean {
+  return String(error ?? '').includes('تم تنفيذ الإجراء اللاحق')
+}
+
 export async function rejectTaskCompletion(
   supabase: SupabaseClient,
   taskId: string,

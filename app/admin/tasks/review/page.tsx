@@ -7,7 +7,7 @@ import type { TaskType } from '@/lib/types'
 import { fmtDate, fmtMoney } from '@/lib/utils'
 import { logActivity } from '@/lib/activity-log'
 import { extractGpsFromCompletion } from '@/lib/task-approval'
-import { rejectTaskViaApi, taskTransitionViaApi } from '@/lib/task-operations-api'
+import { rejectTaskViaApi, taskTransitionViaApi, isNextActionAlreadyDoneError } from '@/lib/task-operations-api'
 import { isFileLawsuitTask, pickPleadingDefinition } from '@/lib/default-next-task'
 import TaskExpensesReviewCard from '@/components/TaskExpensesReviewCard'
 import { fetchPendingReviewTasksPaginated, fetchPendingReviewTaskById, fetchBranchLawyers, REVIEW_TASK_PAGE_SIZE } from '@/lib/task-assignment'
@@ -231,6 +231,13 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
     })
 
     if (!result.ok) {
+      // الإجراء نُفّذ مسبقاً (مثلاً مرافعات أُنشئت تلقائياً) — أغلق بنجاح بدل رسالة خطأ مربكة
+      if (isNextActionAlreadyDoneError(result.error)) {
+        setSaving(false)
+        onDone()
+        onClose()
+        return
+      }
       setError(result.error ?? 'فشل تحديث المرحلة')
       setSaving(false)
       return
@@ -254,6 +261,23 @@ function NextTaskModal({ task, taskDefs, onClose, onDone }: {
 
     setSaving(false); onDone(); onClose()
   }
+
+  // إذا فُتحت النافذة بعد أن انتقلت القضية فعلاً — أغلق مباشرة
+  useEffect(() => {
+    const currentId = debtor?.current_task_id ?? null
+    const lastId = debtor?.last_task_id ?? null
+    const status = debtor?.case_status ?? null
+    const already =
+      (currentId != null && currentId !== task.id)
+      || lastId === task.id
+      || status === 'closed'
+      || status === 'payment_in_progress'
+    if (already) {
+      onDone()
+      onClose()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.id])
 
   // إقامة دعوى معلّقة: أنشئ مرافعات تلقائياً عند فتح النافذة
   useEffect(() => {

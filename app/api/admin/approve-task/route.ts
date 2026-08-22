@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
           nextTaskDefId: pleading.defId,
           userId: auth.user!.id,
         })
-        autoNext = transition.ok
+        autoNext = transition.ok || (transition.error && String(transition.error).includes('تم تنفيذ الإجراء اللاحق'))
           ? { ok: true, nextLabel: pleading.label }
           : { ok: false, error: transition.error, nextLabel: pleading.label }
       }
