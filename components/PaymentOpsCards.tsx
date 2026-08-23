@@ -8,6 +8,7 @@ import {
   canAssignTasks,
   canReviewPaymentNoncomplianceRequest,
   canViewPaymentInProgressCard,
+  canViewInstantCases,
   isAdmin,
   isAnyLegalManager,
 } from '@/lib/permissions'
@@ -51,6 +52,14 @@ function FolderPrepIcon() {
   return (
     <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75A2.25 2.25 0 016 4.5h4.172a2.25 2.25 0 011.591.659l.828.828A2.25 2.25 0 0014.182 6.75H18a2.25 2.25 0 012.25 2.25v8.25A2.25 2.25 0 0118 19.5H6a2.25 2.25 0 01-2.25-2.25V6.75z" />
+    </svg>
+  )
+}
+
+function InstantCaseIcon() {
+  return (
+    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
     </svg>
   )
 }
@@ -135,6 +144,7 @@ export default function PaymentOpsCards({
   const showAwaitingSection = section === 'all' || section === 'awaiting'
   const showPaymentSection = section === 'all' || section === 'payment'
   const showAwaiting = showAwaitingSection && (isAdmin(role) || isAnyLegalManager(role) || canAssignTasks(role))
+  const showInstant = showAwaitingSection && canViewInstantCases(role) && caseTypeFilter !== 'criminal'
   const showPayment = showPaymentSection && canViewPaymentInProgressCard(role)
   const showNoncompliance = showPaymentSection && canReviewPaymentNoncomplianceRequest(role)
   const cacheKey = opsCountsKey(branchId, listId, caseTypeFilter, section)
@@ -143,18 +153,20 @@ export default function PaymentOpsCards({
   const [prepCount, setPrepCount] = useState<number | null>(initial?.prep ?? null)
   const [paymentCount, setPaymentCount] = useState<number | null>(initial?.payment ?? null)
   const [pendingCount, setPendingCount] = useState<number | null>(initial?.pending ?? null)
+  const [instantCount, setInstantCount] = useState<number | null>(initial?.instant ?? null)
 
   const applyCounts = useCallback((next: OpsCardCounts) => {
     setAwaitingCount(next.awaiting)
     setPrepCount(next.prep)
     setPaymentCount(next.payment)
     setPendingCount(next.pending)
+    setInstantCount(next.instant)
     writeOpsCardCounts(cacheKey, next)
   }, [cacheKey])
 
   const load = useCallback(async () => {
     if (!branchId && !viewAllBranches) {
-      applyCounts({ awaiting: 0, prep: 0, payment: 0, pending: 0 })
+      applyCounts({ awaiting: 0, prep: 0, payment: 0, pending: 0, instant: 0 })
       return
     }
 
@@ -165,6 +177,7 @@ export default function PaymentOpsCards({
       setPrepCount(cached.prep)
       setPaymentCount(cached.payment)
       setPendingCount(cached.pending)
+      setInstantCount(cached.instant ?? null)
     }
 
     const supabase = createClient()
@@ -176,6 +189,7 @@ export default function PaymentOpsCards({
     let nextPrep: number | null = showAwaiting ? (cached?.prep ?? null) : null
     let nextPayment: number | null = showPayment ? (cached?.payment ?? null) : null
     let nextPending: number | null = showNoncompliance ? (cached?.pending ?? null) : null
+    let nextInstant: number | null = showInstant ? (cached?.instant ?? null) : null
 
     const tasks: Promise<void>[] = []
 
@@ -222,6 +236,22 @@ export default function PaymentOpsCards({
         }
         setAwaitingCount(nextAwaiting)
         setPrepCount(nextPrep)
+      })())
+    }
+    if (showInstant) {
+      tasks.push((async () => {
+        const params = new URLSearchParams({ countOnly: '1' })
+        if (viewAllBranches) params.set('viewAll', '1')
+        else if (branchId) params.set('branchId', branchId)
+        if (listScope) params.set('listId', listScope)
+        const res = await fetch(`/api/admin/instant-cases?${params}`)
+        if (!res.ok) {
+          nextInstant = 0
+        } else {
+          const data = await res.json()
+          nextInstant = Number(data.total ?? 0) || 0
+        }
+        setInstantCount(nextInstant)
       })())
     }
     if (showPayment) {
@@ -279,6 +309,7 @@ export default function PaymentOpsCards({
       prep: nextPrep,
       payment: nextPayment,
       pending: nextPending,
+      instant: nextInstant,
     })
   }, [
     branchId,
@@ -286,6 +317,7 @@ export default function PaymentOpsCards({
     listId,
     caseTypeFilter,
     showAwaiting,
+    showInstant,
     showPayment,
     showNoncompliance,
     cacheKey,
@@ -300,12 +332,12 @@ export default function PaymentOpsCards({
     return () => window.removeEventListener(DASHBOARD_COUNTS_CHANGED, onRefresh)
   }, [load])
 
-  if (!showAwaiting && !showPayment && !showNoncompliance) return null
+  if (!showAwaiting && !showInstant && !showPayment && !showNoncompliance) return null
   if (!branchId && !viewAllBranches) return null
 
   return (
     <div className="space-y-6">
-      {showAwaiting && (
+      {(showAwaiting || showInstant) && (
         <>
           <div>
             <div className="flex items-center justify-between mb-3">
@@ -313,40 +345,57 @@ export default function PaymentOpsCards({
               <span className="hidden sm:inline text-sm text-[#454042] font-medium">مدينون بانتظار إسناد المهمة</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              <ColorCard
-                label="تحت إسناد مهمة"
-                value={awaitingCount ?? '—'}
-                sub="مدين بانتظار إسناد المهمة"
-                href={
-                  caseTypeFilter === 'civil'
-                    ? '/admin/dashboard/awaiting-assignment?ct=civil'
-                    : caseTypeFilter === 'criminal'
-                      ? '/admin/dashboard/awaiting-assignment?ct=criminal'
-                      : '/admin/dashboard/awaiting-assignment'
-                }
-                buttonLabel="عرض الأسماء"
-                gradient="linear-gradient(135deg,#7c3aed,#6d28d9)"
-                softBg="linear-gradient(135deg,rgba(124,58,237,0.08),rgba(255,255,255,0.9))"
-                border="rgba(124,58,237,0.3)"
-                icon={<PersonPlusIcon />}
-              />
-              <ColorCard
-                label="تجهيز الملفات"
-                value={prepCount ?? '—'}
-                sub="مدين قيد تجهيز الملف لدى المحاسب الرئيسي"
-                href={
-                  caseTypeFilter === 'civil'
-                    ? '/admin/dashboard/awaiting-assignment?prep=1&ct=civil'
-                    : caseTypeFilter === 'criminal'
-                      ? '/admin/dashboard/awaiting-assignment?prep=1&ct=criminal'
-                      : '/admin/dashboard/awaiting-assignment?prep=1'
-                }
-                buttonLabel="عرض الأسماء"
-                gradient="linear-gradient(135deg,#0369a1,#0c4a6e)"
-                softBg="linear-gradient(135deg,rgba(3,105,161,0.08),rgba(255,255,255,0.9))"
-                border="rgba(3,105,161,0.35)"
-                icon={<FolderPrepIcon />}
-              />
+              {showAwaiting && (
+                <ColorCard
+                  label="تحت إسناد مهمة"
+                  value={awaitingCount ?? '—'}
+                  sub="مدين بانتظار إسناد المهمة"
+                  href={
+                    caseTypeFilter === 'civil'
+                      ? '/admin/dashboard/awaiting-assignment?ct=civil'
+                      : caseTypeFilter === 'criminal'
+                        ? '/admin/dashboard/awaiting-assignment?ct=criminal'
+                        : '/admin/dashboard/awaiting-assignment'
+                  }
+                  buttonLabel="عرض الأسماء"
+                  gradient="linear-gradient(135deg,#7c3aed,#6d28d9)"
+                  softBg="linear-gradient(135deg,rgba(124,58,237,0.08),rgba(255,255,255,0.9))"
+                  border="rgba(124,58,237,0.3)"
+                  icon={<PersonPlusIcon />}
+                />
+              )}
+              {showAwaiting && (
+                <ColorCard
+                  label="تجهيز الملفات"
+                  value={prepCount ?? '—'}
+                  sub="مدين قيد تجهيز الملف لدى المحاسب الرئيسي"
+                  href={
+                    caseTypeFilter === 'civil'
+                      ? '/admin/dashboard/awaiting-assignment?prep=1&ct=civil'
+                      : caseTypeFilter === 'criminal'
+                        ? '/admin/dashboard/awaiting-assignment?prep=1&ct=criminal'
+                        : '/admin/dashboard/awaiting-assignment?prep=1'
+                  }
+                  buttonLabel="عرض الأسماء"
+                  gradient="linear-gradient(135deg,#0369a1,#0c4a6e)"
+                  softBg="linear-gradient(135deg,rgba(3,105,161,0.08),rgba(255,255,255,0.9))"
+                  border="rgba(3,105,161,0.35)"
+                  icon={<FolderPrepIcon />}
+                />
+              )}
+              {showInstant && (
+                <ColorCard
+                  label="الدعاوى الفورية"
+                  value={instantCount ?? '—'}
+                  sub="ترشيحات معلّقة أو معتمدة"
+                  href="/admin/dashboard/instant-cases"
+                  buttonLabel="عرض الترشيحات"
+                  gradient="linear-gradient(135deg,#c2410c,#9a3412)"
+                  softBg="linear-gradient(135deg,rgba(194,65,12,0.08),rgba(255,255,255,0.9))"
+                  border="rgba(194,65,12,0.35)"
+                  icon={<InstantCaseIcon />}
+                />
+              )}
             </div>
           </div>
         </>

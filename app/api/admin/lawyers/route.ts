@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
     : bodyRole === 'criminal_legal_manager' ? 'criminal_legal_manager'
     : bodyRole === 'payment_follow_up' ? 'payment_follow_up'
     : bodyRole === 'chief_accountant' ? 'chief_accountant'
+    : bodyRole === 'branch_manager' ? 'branch_manager'
     : 'lawyer'
 
   if (isLegalManager(callerRole) && userRole !== 'lawyer') {
@@ -74,6 +75,9 @@ export async function POST(request: NextRequest) {
   }
   if (userRole === 'chief_accountant' && !isAdmin(callerRole)) {
     return NextResponse.json({ error: 'إضافة محاسب رئيسي للمدير فقط' }, { status: 403 })
+  }
+  if (userRole === 'branch_manager' && !isAdmin(callerRole)) {
+    return NextResponse.json({ error: 'إضافة مدير فرع للمدير فقط' }, { status: 403 })
   }
 
   const chiefBranchIds = Array.isArray(bodyChiefBranchIds)

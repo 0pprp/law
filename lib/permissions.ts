@@ -11,6 +11,7 @@ export const STAFF_ROLES: UserRole[] = [
   'payment_follow_up',
   'criminal_legal_manager',
   'chief_accountant',
+  'branch_manager',
 ]
 
 /** مسؤول متابعة التسديد */
@@ -21,6 +22,11 @@ export function isPaymentFollowUp(role: string | null | undefined): boolean {
 /** محاسب رئيسي — مدينون معيَّنون فقط */
 export function isChiefAccountant(role: string | null | undefined): boolean {
   return role === 'chief_accountant'
+}
+
+/** مدير الفرع — موافقة ترشيحات الدعاوى الفورية لنفس الفرع فقط */
+export function isBranchManager(role: string | null | undefined): boolean {
+  return role === 'branch_manager'
 }
 
 export function isAdmin(role: string | null | undefined): boolean {
@@ -69,6 +75,23 @@ export function isLawyer(role: string | null | undefined): boolean {
 
 export function isDelegate(role: string | null | undefined): boolean {
   return role === 'delegate'
+}
+
+/**
+ * ترشيح اسم دعوى فورية: مندوب أو محاسب فرع (ليس محاسباً عاماً).
+ */
+export function canNominateInstantCase(
+  role: string | null | undefined,
+  accountantType?: string | null,
+): boolean {
+  if (isDelegate(role)) return true
+  if (isAccountant(role) && !isGeneralAccountant(role, accountantType)) return true
+  return false
+}
+
+/** عرض كارد/صفحة الدعاوى الفورية في لوحة المدير */
+export function canViewInstantCases(role: string | null | undefined): boolean {
+  return isAdmin(role) || isAnyLegalManager(role)
 }
 
 /** بوابة ميدانية (محامي أو مندوب) — ليست لوحة إدارة */
@@ -141,10 +164,19 @@ export function canViewLawyerReports(role: string | null | undefined): boolean {
 /**
  * تعديل عام للبيانات التشغيلية/المالية.
  * مسؤولو الأقسام: عرض فقط (التنفيذ عبر API التكليف/الاعتماد فقط).
+ * مدير الفرع: عرض + ملاحظات فقط (via canAddDebtorNotes).
  */
 export function canWriteData(role: string | null | undefined): boolean {
   if (isAnyLegalManager(role)) return false
+  if (isBranchManager(role)) return false
   return !!role && STAFF_ROLES.includes(role as UserRole)
+}
+
+/** إضافة ملاحظات على ملف المدين */
+export function canAddDebtorNotes(role: string | null | undefined): boolean {
+  if (isBranchManager(role)) return true
+  if (isChiefAccountant(role)) return true
+  return canWriteData(role)
 }
 
 export function canPickAnyBranch(
@@ -345,6 +377,7 @@ export function canReviewPaymentNoncomplianceRequest(role: string | null | undef
 const ACCOUNTANT_HREFS = new Set([
   '/admin/dashboard',
   '/admin/debtors',
+  '/admin/nominations',
   '/admin/payments',
   '/admin/finance',
   '/admin/expenses',
@@ -399,6 +432,9 @@ export function isNavVisibleForRole(href: string, role: string | null | undefine
     return CHIEF_ACCOUNTANT_HREFS.has(href)
   }
   if (isAccountant(role)) {
+    if (href === '/admin/nominations' || href.startsWith('/admin/nominations/')) {
+      return true
+    }
     return ACCOUNTANT_HREFS.has(href)
   }
   // إخفاء لوحة متابعة التسديد عن غير أصحاب الدور (المدير/المدنية يرون الكارد في الداشبورد)
@@ -423,6 +459,7 @@ export function isNavVisibleForRole(href: string, role: string | null | undefine
 export function isAccountantPathAllowed(pathname: string): boolean {
   if (pathname === '/admin/dashboard' || pathname.startsWith('/admin/dashboard/')) return true
   if (pathname === '/admin/debtors' || pathname === '/admin/debtors/new') return true
+  if (pathname === '/admin/nominations' || pathname.startsWith('/admin/nominations/')) return true
   if (/^\/admin\/debtors\/[^/]+\/account\/?$/.test(pathname)) return true
   if (/^\/admin\/debtors\/[^/]+\/profile\/?$/.test(pathname)) return true
   if (/^\/admin\/debtors\/[^/]+\/edit\/?$/.test(pathname)) return true

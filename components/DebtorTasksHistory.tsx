@@ -1,9 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { TASK_TYPE_LABELS } from '@/lib/types'
 import type { TaskType } from '@/lib/types'
 import { Card, CardHeader } from '@/components/ui/card'
 import DebtorTasksHistoryList, { type DebtorTaskHistoryRow } from '@/components/DebtorTasksHistoryList'
 import { extractHearingDateFromCompletion } from '@/lib/hearing-date-from-completion'
+import { fetchStaffProfile } from '@/lib/staff-profile'
+import { canStaffOrChiefReadDebtor } from '@/lib/chief-accountant-access'
 
 function lawyerLabel(assignedTo: string | null, lawyerMap: Map<string, string>): string {
   if (!assignedTo) return 'غير مكلفة بعد'
@@ -41,14 +44,30 @@ export default async function DebtorTasksHistory({
   fullArchive?: boolean
 }) {
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const profile = user ? await fetchStaffProfile(supabase, user.id) : null
+  const admin = createAdminClient()
+
+  const { data: accessDebtor } = await admin
+    .from('debtors')
+    .select('id, branch_id, assigned_chief_accountant_id')
+    .eq('id', debtorId)
+    .maybeSingle()
+
+  const canRead = accessDebtor
+    && canStaffOrChiefReadDebtor(
+      profile ? { ...profile, id: user!.id } : null,
+      accessDebtor,
+    )
+  const db = canRead ? admin : supabase
 
   const selectCols = fullArchive
     ? 'id, task_type, task_status, assigned_to, assigned_at, accepted_at, completed_at, updated_at, created_at, task_definition_id, completion_data, lawyer_notes, legal_result'
     : 'id, task_type, task_status, assigned_to, assigned_at, accepted_at, completed_at, updated_at, created_at, task_definition_id'
 
   const [{ data: debtor }, { data: tasks }] = await Promise.all([
-    supabase.from('debtors').select('current_task_id, first_hearing_date, full_name').eq('id', debtorId).single(),
-    supabase
+    db.from('debtors').select('current_task_id, first_hearing_date, full_name').eq('id', debtorId).single(),
+    db
       .from('tasks')
       .select(selectCols)
       .eq('debtor_id', debtorId)
@@ -77,13 +96,13 @@ export default async function DebtorTasksHistory({
   }>
 
   // مزامنة ناقصة: إن وُجد تاريخ جلسة في إنجاز سابق ولم يُحفظ على المدين
-  if (!debtorHearingDate && fullArchive) {
+  if (!debtorHearingDate && fullArchive && canRead) {
     const lawsuit = taskList.find(t => t.task_type === 'file_lawsuit')
       ?? taskList.find(t => extractHearingDateFromCompletion(t.completion_data ?? null))
     const fromTask = extractHearingDateFromCompletion(lawsuit?.completion_data ?? null)
     if (fromTask) {
       debtorHearingDate = fromTask
-      await supabase
+      await admin
         .from('debtors')
         .update({ first_hearing_date: fromTask } as any)
         .eq('id', debtorId)
@@ -97,16 +116,16 @@ export default async function DebtorTasksHistory({
 
   const queries: PromiseLike<{ data: unknown }>[] = [
     lawyerIds.length > 0
-      ? supabase.from('profiles').select('id, full_name, role').in('id', lawyerIds)
+      ? db.from('profiles').select('id, full_name, role').in('id', lawyerIds)
       : Promise.resolve({ data: [] }),
     defIds.length > 0
-      ? supabase.from('task_definitions').select('id, label').in('id', defIds)
+      ? db.from('task_definitions').select('id, label').in('id', defIds)
       : Promise.resolve({ data: [] }),
   ]
 
   if (fullArchive && taskIds.length > 0) {
     queries.push(
-      supabase
+      db
         .from('task_attachments')
         .select('id, task_id, file_name, file_path, description')
         .in('task_id', taskIds)

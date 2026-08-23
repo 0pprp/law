@@ -16,6 +16,7 @@ const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange
   lawyer: 'orange',
   viewer: 'gray',
   chief_accountant: 'navy',
+  branch_manager: 'orange',
 }
 
 export type LawyersTableRow = {

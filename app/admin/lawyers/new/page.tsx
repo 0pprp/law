@@ -34,6 +34,7 @@ const ALL_ROLE_OPTIONS = [
   { value: 'criminal_legal_manager', label: USER_ROLE_LABELS.criminal_legal_manager },
   { value: 'payment_follow_up', label: USER_ROLE_LABELS.payment_follow_up },
   { value: 'chief_accountant', label: USER_ROLE_LABELS.chief_accountant },
+  { value: 'branch_manager', label: USER_ROLE_LABELS.branch_manager },
 ]
 
 function Field({ label, required: req, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
@@ -78,7 +79,7 @@ export default function NewLawyerPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
-  const [userRole, setUserRole] = useState<'lawyer' | 'accountant' | 'viewer' | 'criminal_legal_manager' | 'payment_follow_up' | 'chief_accountant'>('lawyer')
+  const [userRole, setUserRole] = useState<'lawyer' | 'accountant' | 'viewer' | 'criminal_legal_manager' | 'payment_follow_up' | 'chief_accountant' | 'branch_manager'>('lawyer')
   const [chiefBranchIds, setChiefBranchIds] = useState<string[]>([])
 
   const [form, setForm] = useState({
@@ -96,6 +97,7 @@ export default function NewLawyerPage() {
   const isViewerRole = userRole === 'viewer'
   const isCriminalManagerRole = userRole === 'criminal_legal_manager'
   const isChiefAccountantRole = userRole === 'chief_accountant'
+  const isBranchManagerRole = userRole === 'branch_manager'
 
   function set(field: string, value: unknown) { setForm(prev => ({ ...prev, [field]: value })) }
 
@@ -193,6 +195,7 @@ export default function NewLawyerPage() {
         : userRole === 'viewer' ? 'create_viewer'
         : userRole === 'criminal_legal_manager' ? 'create_criminal_legal_manager'
         : userRole === 'chief_accountant' ? 'create_chief_accountant'
+        : userRole === 'branch_manager' ? 'create_branch_manager'
         : 'create_lawyer',
       entity_type: 'profile',
       entity_id: userId,
@@ -250,6 +253,11 @@ export default function NewLawyerPage() {
             {isChiefAccountantRole && !legalOfficerMode && (
               <span className="block mt-1 text-[#2C8780]">
                 المحاسب الرئيسي — اختر الفروع المسؤول عنها أدناه (الفرع أعلاه للملف الشخصي فقط).
+              </span>
+            )}
+            {isBranchManagerRole && !legalOfficerMode && (
+              <span className="block mt-1 text-[#2C8780]">
+                مدير الفرع — يوافق على ترشيحات الدعاوى الفورية ويراجع مديني هذا الفرع فقط.
               </span>
             )}
           </p>

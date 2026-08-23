@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { fmtDateTime } from '@/lib/utils'
-import { useCanWrite } from '@/hooks/use-can-write'
+import { useAdminRole } from '@/context/admin-role'
+import { canAddDebtorNotes, isBranchManager } from '@/lib/permissions'
 
 interface Note {
   id: string
@@ -19,10 +20,12 @@ export default function DebtorNotesPanel({
   profileNotes = null,
 }: {
   debtorId: string
-  /** ملاحظات حقل debtors.notes (مثل استيراد Excel القديم) */
+  /** ملاحظات حقل debtors.notes (مثل استيراد Excel السابق) */
   profileNotes?: string | null
 }) {
-  const canWrite = useCanWrite()
+  const role = useAdminRole()
+  const canWrite = canAddDebtorNotes(role)
+  const viaBranchManagerApi = isBranchManager(role)
   const [notes, setNotes] = useState<Note[]>([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
@@ -30,6 +33,13 @@ export default function DebtorNotesPanel({
   const supabase = createClient()
 
   async function load() {
+    if (viaBranchManagerApi) {
+      const res = await fetch(`/api/branch-manager/debtors/${debtorId}/notes`)
+      const data = await res.json().catch(() => ({}))
+      setNotes(res.ok ? (data.notes ?? []) : [])
+      setLoading(false)
+      return
+    }
     const { data } = await (supabase as any)
       .from('debtor_notes')
       .select('*, user:profiles!debtor_notes_user_id_fkey(full_name)')
@@ -39,22 +49,36 @@ export default function DebtorNotesPanel({
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [debtorId])
+  useEffect(() => { void load() }, [debtorId, viaBranchManagerApi])
 
   async function handleAdd() {
     if (!canWrite) return
     if (!message.trim()) return
     setSaving(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setSaving(false); return }
-    const { data: note } = await (supabase as any).from('debtor_notes').insert({
-      debtor_id: debtorId,
-      user_id: user.id,
-      message: message.trim(),
-    }).select('*, user:profiles!debtor_notes_user_id_fkey(full_name)').single()
-    if (note) setNotes(prev => [note, ...prev])
-    setMessage('')
-    setSaving(false)
+    try {
+      if (viaBranchManagerApi) {
+        const res = await fetch(`/api/branch-manager/debtors/${debtorId}/notes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: message.trim() }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (res.ok && data.note) setNotes(prev => [data.note, ...prev])
+        setMessage('')
+        return
+      }
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: note } = await (supabase as any).from('debtor_notes').insert({
+        debtor_id: debtorId,
+        user_id: user.id,
+        message: message.trim(),
+      }).select('*, user:profiles!debtor_notes_user_id_fkey(full_name)').single()
+      if (note) setNotes(prev => [note, ...prev])
+      setMessage('')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const legacy = String(profileNotes ?? '').trim()
@@ -66,12 +90,10 @@ export default function DebtorNotesPanel({
 
   return (
     <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
-      {/* Header */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-[rgba(118,118,118,0.08)]">
         <h3 className="text-sm font-bold text-[#231F20]">الملاحظات ({totalCount})</h3>
       </div>
 
-      {/* Add note */}
       {canWrite && (
       <div className="px-5 py-4 border-b border-[rgba(118,118,118,0.08)] bg-[#F3F1F2]/50">
         <div className="flex gap-2">
@@ -81,10 +103,10 @@ export default function DebtorNotesPanel({
             rows={2}
             placeholder="اكتب ملاحظة..."
             className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] resize-none"
-            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleAdd() }}
+            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void handleAdd() }}
           />
           <button
-            onClick={handleAdd}
+            onClick={() => void handleAdd()}
             disabled={saving || !message.trim()}
             className="self-end px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50 transition-opacity"
             style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
@@ -95,7 +117,6 @@ export default function DebtorNotesPanel({
       </div>
       )}
 
-      {/* Notes list */}
       {loading ? (
         <div className="flex justify-center py-8">
           <div className="w-6 h-6 border-2 border-[#2C8780]/30 border-t-[#2C8780] rounded-full animate-spin" />

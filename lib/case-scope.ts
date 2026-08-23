@@ -81,13 +81,14 @@ export function resolveCaseScope(
   if (r === 'delegate') {
     return { section: CASE_TYPE_CIVIL, filterCaseType: CASE_TYPE_CIVIL, role: r }
   }
-  // admin / accountant / employee / payment_follow_up / chief_accountant → الاثنان
+  // admin / accountant / employee / payment_follow_up / chief_accountant / branch_manager → الاثنان
   if (
     r === 'admin'
     || r === 'accountant'
     || r === 'employee'
     || r === 'payment_follow_up'
     || r === 'chief_accountant'
+    || r === 'branch_manager'
   ) {
     return { section: 'both', filterCaseType: null, role: r }
   }

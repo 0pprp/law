@@ -7,6 +7,7 @@ function homeForRole(role: UserRole | string | undefined): string {
   if (role === 'delegate') return '/delegate'
   if (role === 'payment_follow_up') return '/admin/payment-follow-up'
   if (role === 'chief_accountant') return '/chief-accountant/tasks'
+  if (role === 'branch_manager') return '/branch-manager'
   return '/admin/dashboard'
 }
 
@@ -42,6 +43,7 @@ export default async function proxy(request: NextRequest) {
   const isLawyerRoute = pathname.startsWith('/lawyer')
   const isDelegateRoute = pathname.startsWith('/delegate')
   const isChiefAccountantRoute = pathname.startsWith('/chief-accountant')
+  const isBranchManagerRoute = pathname.startsWith('/branch-manager')
 
   if (!user && !isLoginPage && !isPublicAuthApi) {
     if (isApiRoute) {
@@ -69,6 +71,7 @@ export default async function proxy(request: NextRequest) {
   if (
     user
     && (isAdminRoute || isLawyerRoute || isDelegateRoute || isChiefAccountantRoute
+      || isBranchManagerRoute
       || (isApiRoute && !isPublicAuthApi))
   ) {
     const { data: profile } = await supabase
@@ -87,6 +90,9 @@ export default async function proxy(request: NextRequest) {
 
     const role = profile?.role as UserRole
 
+    if (isBranchManagerRoute && role !== 'branch_manager') {
+      return NextResponse.redirect(new URL(homeForRole(role), request.url))
+    }
     if (isChiefAccountantRoute && role !== 'chief_accountant') {
       return NextResponse.redirect(new URL(homeForRole(role), request.url))
     }
@@ -104,6 +110,9 @@ export default async function proxy(request: NextRequest) {
     }
     if (isAdminRoute && role === 'chief_accountant') {
       return NextResponse.redirect(new URL('/chief-accountant/tasks', request.url))
+    }
+    if (isAdminRoute && role === 'branch_manager') {
+      return NextResponse.redirect(new URL('/branch-manager', request.url))
     }
     if (isAdminRoute && role === 'payment_follow_up' && pathname === '/admin/dashboard') {
       return NextResponse.redirect(new URL('/admin/payment-follow-up', request.url))

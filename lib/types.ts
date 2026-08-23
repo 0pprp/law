@@ -8,6 +8,7 @@ export type UserRole =
   | 'payment_follow_up'
   | 'criminal_legal_manager'
   | 'chief_accountant'
+  | 'branch_manager'
 
 /** حالة تجهيز الملف عند المحاسب الرئيسي */
 export type FilePreparationStatus = 'preparing' | 'ready'
@@ -413,6 +414,7 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   payment_follow_up: 'مسؤول متابعة التسديد',
   criminal_legal_manager: 'مسؤول الجزائيات',
   chief_accountant: 'محاسب رئيسي',
+  branch_manager: 'مدير الفرع',
 }
 
 export const LAWYER_TYPE_LABELS: Record<LawyerType, string> = {
