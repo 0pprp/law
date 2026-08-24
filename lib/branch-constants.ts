@@ -18,6 +18,8 @@ export const APPROVED_BRANCH_NAMES = [
   'النجف الأشرف',
   'الناصرية',
   'السماوة',
+  /** فرع تدريب مؤقت — يُحذف مع بياناته عند انتهاء التجربة */
+  'تجريبي',
 ] as const
 
 export type ApprovedBranchName = (typeof APPROVED_BRANCH_NAMES)[number]
