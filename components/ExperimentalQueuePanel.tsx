@@ -304,7 +304,7 @@ export default function ExperimentalQueuePanel({ queue }: Props) {
                       />
                     </td>
                     <td className="p-3 font-semibold text-[#231F20] whitespace-nowrap">
-                      <Link href={`/admin/debtors/${row.id}`} className="hover:text-[#2C8780] hover:underline">
+                      <Link href={`/admin/debtors/${row.id}/account`} className="hover:text-[#2C8780] hover:underline">
                         {row.full_name}
                       </Link>
                     </td>
