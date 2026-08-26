@@ -250,7 +250,7 @@ export default function BranchListsTab() {
         <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</p>
       )}
 
-      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-hidden">
+      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-x-auto">
         {loading ? (
           <div className="py-14 text-center text-sm text-[#767676]">جارٍ التحميل...</div>
         ) : lists.length === 0 ? (
@@ -259,7 +259,7 @@ export default function BranchListsTab() {
             <p className="text-xs text-[#767676] mt-1">أضف أول قائمة لهذا الفرع</p>
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-max text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
                 <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">اسم القائمة</SortableTH>

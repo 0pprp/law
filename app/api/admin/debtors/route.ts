@@ -263,7 +263,7 @@ export async function POST(request: NextRequest) {
     .insert({
       full_name: fullName,
       phone: isCriminal ? null : (String(body.phone ?? '').trim() || null),
-      governorate: null,
+      governorate: branch.name,
       address: isCriminal
         ? null
         : (String(body.address ?? '').trim() || null),

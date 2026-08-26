@@ -217,11 +217,11 @@ function CourtsTab({ branches }: { branches: Branch[] }) {
         {canAdd && <AddBtn label="إضافة محكمة" onClick={openAdd} />}
       </div>
 
-      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-hidden">
+      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-x-auto">
         {loading ? <Spinner /> : courts.length === 0 ? (
           <EmptyState icon={<svg fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z"/></svg>} title="لا توجد محاكم" subtitle="أضف أول محكمة" />
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-max text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
                 <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">المحكمة</SortableTH>
@@ -398,11 +398,11 @@ function ExecDeptsTab({ branches }: { branches: Branch[] }) {
         {canAdd && <AddBtn label="إضافة دائرة" onClick={openAdd} />}
       </div>
 
-      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-hidden">
+      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-x-auto">
         {loading ? <Spinner /> : depts.length === 0 ? (
           <EmptyState icon={<svg fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>} title="لا توجد دوائر تنفيذ" subtitle="أضف أول دائرة تنفيذ" />
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-max text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
                 <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">الدائرة</SortableTH>
@@ -741,9 +741,9 @@ function TaskDefsTab({ caseType = 'civil' }: { caseType?: 'civil' | 'criminal' }
         {!readOnly && <AddBtn label="إضافة نوع مهمة" onClick={openAdd} />}
       </div>
 
-      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-hidden">
+      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-x-auto">
         {loading ? <Spinner /> : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-max text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
                 <SortableTH variant="plain" sortKey="label" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">نوع المهمة</SortableTH>
@@ -1079,11 +1079,11 @@ function ExpenseTypesTab() {
         {!readOnly && <AddBtn label="إضافة نوع" onClick={openAdd} />}
       </div>
 
-      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-hidden">
+      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.1)] overflow-x-auto">
         {loading ? <Spinner /> : types.length === 0 ? (
           <EmptyState icon={<svg fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>} title="لا توجد أنواع صرفيات" subtitle="أضف أول نوع صرفية" />
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-max text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.08)]">
               <tr>
                 <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-2.5 text-xs font-semibold text-[#767676]">النوع</SortableTH>

@@ -1,7 +1,7 @@
 /**
  * إضافة مهمة مدنية «التبليغ» لكل الفروع التي فيها مهام مدنية:
- *   - صرفية: صرفيات تبليغ (حد أقصى 10000)
- *   - حقول إلزامية: ملاحظة، صورة التبليغ
+ *   - ملاحظة إلزامية، صورة التبليغ اختيارية
+ *   - صرفة: صرفيات تبليغ (حد أقصى 10000)
  *
  * Usage: npx tsx scripts/seed-civil-notification-task.ts
  */
@@ -43,7 +43,7 @@ const REQUIRED_FIELDS = [
     field_key: 'image',
     field_type: 'image',
     field_label: 'صورة التبليغ',
-    is_required: true,
+    is_required: false,
     sort_order: 1,
   },
 ]

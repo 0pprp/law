@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import { HTMLAttributes, ThHTMLAttributes, TdHTMLAttributes } from 'react'
+import { HTMLAttributes, ThHTMLAttributes, TdHTMLAttributes, type ReactNode } from 'react'
 import type { SortDirection } from '@/lib/table-sort'
 
 function SortIndicator({ direction }: { direction: SortDirection | null | undefined }) {
@@ -25,10 +25,26 @@ function SortIndicator({ direction }: { direction: SortDirection | null | undefi
   )
 }
 
-export function Table({ className, children, ...props }: HTMLAttributes<HTMLTableElement>) {
+type TableProps = HTMLAttributes<HTMLTableElement> & {
+  /** عرض أدنى يجبر التمرير الأفقي بدل ضغط الأعمدة */
+  minWidthClassName?: string
+}
+
+/**
+ * جدول متجاوب: تمرير أفقي عند ضيق الشاشة (بدون تثبيت أعمدة).
+ */
+export function Table({
+  className,
+  children,
+  minWidthClassName = 'min-w-max',
+  ...props
+}: TableProps) {
   return (
-    <div className="overflow-x-auto">
-      <table className={cn('w-full text-sm min-w-[640px]', className)} {...props}>
+    <div
+      className="w-full max-w-full overflow-x-auto overscroll-x-contain touch-pan-x [-webkit-overflow-scrolling:touch]"
+      style={{ scrollbarGutter: 'stable' }}
+    >
+      <table className={cn('w-full text-sm', minWidthClassName, className)} {...props}>
         {children}
       </table>
     </div>
@@ -61,7 +77,13 @@ export function TR({ className, children, ...props }: HTMLAttributes<HTMLTableRo
 
 export function TH({ className, children, ...props }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <th className={cn('text-right px-5 py-3.5 text-xs font-bold text-[#454042] bg-[rgba(118,118,118,0.05)] whitespace-nowrap', className)} {...props}>
+    <th
+      className={cn(
+        'text-right px-4 py-3.5 text-xs font-bold text-[#454042] bg-[rgba(118,118,118,0.05)] whitespace-nowrap',
+        className,
+      )}
+      {...props}
+    >
       {children}
     </th>
   )
@@ -97,7 +119,7 @@ export function SortableTH({
       aria-sort={ariaSort}
       className={cn(
         variant === 'default'
-          ? 'text-right px-5 py-3.5 text-xs font-bold text-[#454042] bg-[rgba(118,118,118,0.05)] whitespace-nowrap'
+          ? 'text-right px-4 py-3.5 text-xs font-bold text-[#454042] bg-[rgba(118,118,118,0.05)] whitespace-nowrap'
           : 'px-4 py-2.5 font-semibold whitespace-nowrap',
         'cursor-pointer select-none hover:text-[#2C8780] transition-colors',
         className,
@@ -123,7 +145,7 @@ export function SortableTH({
 
 export function TD({ className, children, ...props }: TdHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <td className={cn('px-5 py-4 text-sm text-[#231F20] font-medium', className)} {...props}>
+    <td className={cn('px-4 py-3.5 text-sm text-[#231F20] font-medium whitespace-nowrap', className)} {...props}>
       {children}
     </td>
   )
@@ -131,15 +153,15 @@ export function TD({ className, children, ...props }: TdHTMLAttributes<HTMLTable
 
 interface DataTableProps {
   columns: { key: string; label: string; className?: string }[]
-  rows: React.ReactNode[]
+  rows: ReactNode[]
   loading?: boolean
-  empty?: React.ReactNode
+  empty?: ReactNode
   className?: string
 }
 
 export function DataTable({ columns, rows, loading, empty, className }: DataTableProps) {
   return (
-    <div className={cn('bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden', className)}>
+    <div className={cn('bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm', className)}>
       <Table>
         <THead>
           <tr>

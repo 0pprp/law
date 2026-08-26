@@ -971,7 +971,7 @@ export default function CivilTaskManagementPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-max text-sm">
               <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.1)]">
                 <tr>
                   <SortableTH variant="plain" sortKey="label" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-semibold text-[#767676] text-xs">المهمة</SortableTH>

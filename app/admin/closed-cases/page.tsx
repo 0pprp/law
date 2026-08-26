@@ -219,8 +219,8 @@ export default function ClosedCasesPage() {
           لا توجد قضايا محسومة
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white rounded-xl border border-slate-100 overflow-x-auto">
+          <table className="w-full min-w-max text-sm">
             <thead className="bg-slate-50 border-b border-slate-100">
               <tr>
                 <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-medium text-slate-600">المدين</SortableTH>

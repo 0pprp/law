@@ -223,8 +223,8 @@ function DebtorTable({
     return <div className="px-4 py-8 text-center text-sm text-[#767676]">لا يوجد مدينون في هذه الصفة</div>
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <div className="w-full max-w-full overflow-x-auto">
+      <table className="w-full min-w-max text-sm">
         <thead>
           <tr className="border-b border-[rgba(118,118,118,0.1)] bg-[#FAFAFA]">
             <th className="px-3 py-2.5 w-10">

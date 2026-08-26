@@ -24,6 +24,13 @@ export const APPROVED_BRANCH_NAMES = [
 
 export type ApprovedBranchName = (typeof APPROVED_BRANCH_NAMES)[number]
 
+/** اسم فرع التدريب — كروت/ميزات تجريبية تُقيَّد به فقط */
+export const EXPERIMENTAL_BRANCH_NAME = 'تجريبي' as const
+
+export function isExperimentalBranch(name: string | null | undefined): boolean {
+  return (name ?? '').trim() === EXPERIMENTAL_BRANCH_NAME
+}
+
 export function isMainBranchName(name: string | null | undefined): boolean {
   if (!name) return false
   return name.trim() === MAIN_BRANCH_NAME

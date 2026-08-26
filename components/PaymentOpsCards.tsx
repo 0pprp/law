@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useAdminRole } from '@/context/admin-role'
+import { useBranch } from '@/context/branch'
+import { isExperimentalBranch } from '@/lib/branch-constants'
 import {
   canAssignTasks,
   canReviewPaymentNoncomplianceRequest,
@@ -60,6 +62,22 @@ function InstantCaseIcon() {
   return (
     <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+    </svg>
+  )
+}
+
+function ArchiveIcon() {
+  return (
+    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5V6a1.5 1.5 0 011.5-1.5h15A1.5 1.5 0 0121 6v1.5M3 7.5h18M3 7.5V18A1.5 1.5 0 004.5 19.5h15A1.5 1.5 0 0021 18V7.5M8.25 12h7.5" />
+    </svg>
+  )
+}
+
+function RecentIcon() {
+  return (
+    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l3.5 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   )
 }
@@ -139,6 +157,7 @@ export default function PaymentOpsCards({
   caseType,
 }: Props) {
   const role = useAdminRole()
+  const { branchName } = useBranch()
   const { caseTypeFilter: roleCaseType } = useCaseScope()
   const caseTypeFilter = caseType !== undefined ? caseType : roleCaseType
   const showAwaitingSection = section === 'all' || section === 'awaiting'
@@ -147,6 +166,11 @@ export default function PaymentOpsCards({
   const showInstant = showAwaitingSection && canViewInstantCases(role) && caseTypeFilter !== 'criminal'
   const showPayment = showPaymentSection && canViewPaymentInProgressCard(role)
   const showNoncompliance = showPaymentSection && canReviewPaymentNoncomplianceRequest(role)
+  const showExperimentalQueues =
+    showAwaitingSection
+    && !viewAllBranches
+    && isExperimentalBranch(branchName)
+    && (isAdmin(role) || isAnyLegalManager(role) || canAssignTasks(role))
   const cacheKey = opsCountsKey(branchId, listId, caseTypeFilter, section)
   const initial = peekOpsCardCounts(cacheKey)
   const [awaitingCount, setAwaitingCount] = useState<number | null>(initial?.awaiting ?? null)
@@ -154,6 +178,8 @@ export default function PaymentOpsCards({
   const [paymentCount, setPaymentCount] = useState<number | null>(initial?.payment ?? null)
   const [pendingCount, setPendingCount] = useState<number | null>(initial?.pending ?? null)
   const [instantCount, setInstantCount] = useState<number | null>(initial?.instant ?? null)
+  const [recentNamesCount, setRecentNamesCount] = useState<number | null>(initial?.recentNames ?? null)
+  const [legalArchiveCount, setLegalArchiveCount] = useState<number | null>(initial?.legalArchive ?? null)
 
   const applyCounts = useCallback((next: OpsCardCounts) => {
     setAwaitingCount(next.awaiting)
@@ -161,12 +187,22 @@ export default function PaymentOpsCards({
     setPaymentCount(next.payment)
     setPendingCount(next.pending)
     setInstantCount(next.instant)
+    setRecentNamesCount(next.recentNames ?? null)
+    setLegalArchiveCount(next.legalArchive ?? null)
     writeOpsCardCounts(cacheKey, next)
   }, [cacheKey])
 
   const load = useCallback(async () => {
     if (!branchId && !viewAllBranches) {
-      applyCounts({ awaiting: 0, prep: 0, payment: 0, pending: 0, instant: 0 })
+      applyCounts({
+        awaiting: 0,
+        prep: 0,
+        payment: 0,
+        pending: 0,
+        instant: 0,
+        recentNames: 0,
+        legalArchive: 0,
+      })
       return
     }
 
@@ -178,6 +214,8 @@ export default function PaymentOpsCards({
       setPaymentCount(cached.payment)
       setPendingCount(cached.pending)
       setInstantCount(cached.instant ?? null)
+      setRecentNamesCount(cached.recentNames ?? null)
+      setLegalArchiveCount(cached.legalArchive ?? null)
     }
 
     const supabase = createClient()
@@ -190,6 +228,8 @@ export default function PaymentOpsCards({
     let nextPayment: number | null = showPayment ? (cached?.payment ?? null) : null
     let nextPending: number | null = showNoncompliance ? (cached?.pending ?? null) : null
     let nextInstant: number | null = showInstant ? (cached?.instant ?? null) : null
+    let nextRecent: number | null = showExperimentalQueues ? (cached?.recentNames ?? null) : null
+    let nextArchive: number | null = showExperimentalQueues ? (cached?.legalArchive ?? null) : null
 
     const tasks: Promise<void>[] = []
 
@@ -303,6 +343,21 @@ export default function PaymentOpsCards({
       })())
     }
 
+    if (showExperimentalQueues) {
+      tasks.push((async () => {
+        const [recentRes, archiveRes] = await Promise.all([
+          fetch('/api/admin/experimental-queues?queue=recent&countOnly=1'),
+          fetch('/api/admin/experimental-queues?queue=archive&countOnly=1'),
+        ])
+        const recentJson = await recentRes.json().catch(() => ({}))
+        const archiveJson = await archiveRes.json().catch(() => ({}))
+        nextRecent = recentRes.ok ? Number(recentJson.total ?? 0) : 0
+        nextArchive = archiveRes.ok ? Number(archiveJson.total ?? 0) : 0
+        setRecentNamesCount(nextRecent)
+        setLegalArchiveCount(nextArchive)
+      })())
+    }
+
     await Promise.all(tasks)
     writeOpsCardCounts(cacheKey, {
       awaiting: nextAwaiting,
@@ -310,6 +365,8 @@ export default function PaymentOpsCards({
       payment: nextPayment,
       pending: nextPending,
       instant: nextInstant,
+      recentNames: nextRecent,
+      legalArchive: nextArchive,
     })
   }, [
     branchId,
@@ -320,6 +377,7 @@ export default function PaymentOpsCards({
     showInstant,
     showPayment,
     showNoncompliance,
+    showExperimentalQueues,
     cacheKey,
     applyCounts,
   ])
@@ -332,12 +390,63 @@ export default function PaymentOpsCards({
     return () => window.removeEventListener(DASHBOARD_COUNTS_CHANGED, onRefresh)
   }, [load])
 
-  if (!showAwaiting && !showInstant && !showPayment && !showNoncompliance) return null
+  if (!showAwaiting && !showInstant && !showPayment && !showNoncompliance && !showExperimentalQueues) return null
   if (!branchId && !viewAllBranches) return null
 
   return (
     <div className="space-y-6">
-      {(showAwaiting || showInstant) && (
+      {showInstant && (
+        <div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <ColorCard
+              label="الدعاوى الفورية"
+              value={instantCount ?? '—'}
+              sub="ترشيحات معلّقة أو معتمدة"
+              href="/admin/dashboard/instant-cases"
+              buttonLabel="عرض الترشيحات"
+              gradient="linear-gradient(135deg,#c2410c,#9a3412)"
+              softBg="linear-gradient(135deg,rgba(194,65,12,0.08),rgba(255,255,255,0.9))"
+              border="rgba(194,65,12,0.35)"
+              icon={<InstantCaseIcon />}
+            />
+          </div>
+        </div>
+      )}
+
+      {showExperimentalQueues && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-black text-[#231F20] text-base sm:text-lg">تجريبي — أرشيف القانونية</h2>
+            <span className="hidden sm:inline text-sm text-[#454042] font-medium">يظهر لفرع تجريبي فقط</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <ColorCard
+              label="الأسماء المضافة مؤخراً"
+              value={recentNamesCount ?? '—'}
+              sub="أسماء جديدة بانتظار الأرشفة"
+              href="/admin/dashboard/recent-names"
+              buttonLabel="عرض الأسماء"
+              gradient="linear-gradient(135deg,#0f766e,#115e59)"
+              softBg="linear-gradient(135deg,rgba(15,118,110,0.08),rgba(255,255,255,0.9))"
+              border="rgba(15,118,110,0.35)"
+              icon={<RecentIcon />}
+            />
+            <ColorCard
+              label="أرشيف القانونية"
+              value={legalArchiveCount ?? '—'}
+              sub="إسناد مهمة · ملاحظة · دعاوى فورية"
+              href="/admin/dashboard/legal-archive"
+              buttonLabel="فتح الأرشيف"
+              gradient="linear-gradient(135deg,#1d4ed8,#1e3a8a)"
+              softBg="linear-gradient(135deg,rgba(29,78,216,0.08),rgba(255,255,255,0.9))"
+              border="rgba(29,78,216,0.35)"
+              icon={<ArchiveIcon />}
+            />
+          </div>
+        </div>
+      )}
+
+      {showAwaiting && (
         <>
           <div>
             <div className="flex items-center justify-between mb-3">
@@ -345,8 +454,7 @@ export default function PaymentOpsCards({
               <span className="hidden sm:inline text-sm text-[#454042] font-medium">مدينون بانتظار إسناد المهمة</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {showAwaiting && (
-                <ColorCard
+              <ColorCard
                   label="تحت إسناد مهمة"
                   value={awaitingCount ?? '—'}
                   sub="مدين بانتظار إسناد المهمة"
@@ -363,9 +471,7 @@ export default function PaymentOpsCards({
                   border="rgba(124,58,237,0.3)"
                   icon={<PersonPlusIcon />}
                 />
-              )}
-              {showAwaiting && (
-                <ColorCard
+              <ColorCard
                   label="تجهيز الملفات"
                   value={prepCount ?? '—'}
                   sub="مدين قيد تجهيز الملف لدى المحاسب الرئيسي"
@@ -382,20 +488,6 @@ export default function PaymentOpsCards({
                   border="rgba(3,105,161,0.35)"
                   icon={<FolderPrepIcon />}
                 />
-              )}
-              {showInstant && (
-                <ColorCard
-                  label="الدعاوى الفورية"
-                  value={instantCount ?? '—'}
-                  sub="ترشيحات معلّقة أو معتمدة"
-                  href="/admin/dashboard/instant-cases"
-                  buttonLabel="عرض الترشيحات"
-                  gradient="linear-gradient(135deg,#c2410c,#9a3412)"
-                  softBg="linear-gradient(135deg,rgba(194,65,12,0.08),rgba(255,255,255,0.9))"
-                  border="rgba(194,65,12,0.35)"
-                  icon={<InstantCaseIcon />}
-                />
-              )}
             </div>
           </div>
         </>

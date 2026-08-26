@@ -479,7 +479,7 @@ export default function DebtorsPage() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-[rgba(118,118,118,0.15)] shadow-sm">
         {loading ? (
           <>
             {/* Desktop skeleton */}
@@ -496,7 +496,8 @@ export default function DebtorsPage() {
                     <TH>🏛 المحكمة</TH>
                     <TH>⚖️ دائرة التنفيذ</TH>
                     <TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
-                    <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>الملاحظة</TH><TH>تاريخ الإضافة</TH><TH className="text-center">الإجراءات</TH>
+                    <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>الملاحظة</TH><TH>تاريخ الإضافة</TH>
+                    <TH className="text-center">الإجراءات</TH>
                   </tr>
                 </THead>
                 <TBody>{[...Array(8)].map((_, i) => <SkeletonRow key={i} withCheckbox={allowPaymentInProgress} />)}</TBody>
@@ -522,7 +523,7 @@ export default function DebtorsPage() {
           />
         ) : (
           <>
-            {/* Desktop table */}
+            {/* Desktop table — تمرير أفقي + عمود إجراءات ثابت */}
             <div className="hidden md:block">
               <Table>
                 <THead>
@@ -614,14 +615,14 @@ export default function DebtorsPage() {
                           {fmtMoney(debtor.remaining_amount)}
                         </span>
                       </TD>
-                      <TD>
+                      <TD className="whitespace-normal">
                         <span className="text-xs text-[#454042] whitespace-pre-wrap break-words max-w-[14rem] inline-block">
                           {debtor.last_note || '—'}
                         </span>
                       </TD>
                       <TD><span className="text-xs" dir="ltr">{fmtDate(debtor.created_at)}</span></TD>
                       <TD>
-                        <div className="flex items-center justify-center gap-2 flex-wrap">
+                        <div className="flex items-center justify-center gap-2 flex-nowrap">
                           <Link href={`/admin/debtors/${debtor.id}/account`} className="text-xs text-[#231F20] hover:text-[#2C8780] border border-[rgba(118,118,118,0.2)] hover:border-[#2C8780]/40 px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap">كشف الحساب</Link>
                           {allowAddExpense && (
                             <DebtorAddExpenseButton

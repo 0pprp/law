@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     validRows,
     {
       branchId,
-      governorate: String(body.governorate ?? branch.name ?? ''),
+      governorate: branch.name,
       userId: auth.user!.id,
       taskDefs: body.taskDefs ?? [],
       today,

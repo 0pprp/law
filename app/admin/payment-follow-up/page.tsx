@@ -217,8 +217,8 @@ export default function PaymentFollowUpPage() {
           </div>
         ) : (
           <>
-            <div className="hidden md:block">
-              <table className="w-full text-sm">
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full min-w-max text-sm">
                 <thead>
                   <tr className="text-right text-xs text-[#767676] border-b border-[rgba(118,118,118,0.1)]">
                     <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الاسم</SortableTH>

@@ -511,7 +511,7 @@ export async function executeCriminalDebtorImport(
         .insert({
           full_name: row.full_name,
           phone: null,
-          governorate: null,
+          governorate: row.resolvedBranchName || null,
           address: null,
           id_number: null,
           export_date: today,

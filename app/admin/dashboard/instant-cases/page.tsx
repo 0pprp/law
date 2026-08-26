@@ -201,7 +201,7 @@ export default function InstantCasesPage() {
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto shadow-sm">
-              <table className="w-full text-sm" dir="rtl">
+              <table className="w-full min-w-max text-sm" dir="rtl">
                 <thead>
                   <tr className="bg-orange-50/80 text-slate-700 text-xs">
                     <th className="text-right px-4 py-3 font-bold">الاسم</th>

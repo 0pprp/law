@@ -11,6 +11,8 @@ export type OpsCardCounts = {
   payment: number | null
   pending: number | null
   instant: number | null
+  recentNames: number | null
+  legalArchive: number | null
 }
 
 export type DashboardStageSnapshot = {

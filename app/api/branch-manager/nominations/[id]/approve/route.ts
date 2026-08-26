@@ -70,7 +70,7 @@ export async function POST(_request: NextRequest, context: Ctx) {
     .insert({
       full_name: String(nom.debtor_name).trim(),
       phone: null,
-      governorate: nom.governorate ? String(nom.governorate) : branch.name,
+      governorate: branch.name,
       address: null,
       id_number: null,
       export_date: today,

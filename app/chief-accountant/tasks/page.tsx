@@ -426,8 +426,8 @@ export default function ChiefAccountantTasksPage() {
         </div>
       ) : (
         <>
-          <div className="hidden md:block bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="hidden md:block bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] shadow-sm overflow-x-auto">
+            <table className="w-full min-w-max text-sm">
               <thead>
                 <tr className="text-right text-xs text-[#767676] border-b border-[rgba(118,118,118,0.1)] bg-[#FAFAFA]">
                   <th className="px-4 py-3.5 w-14 text-center font-semibold">تحديد</th>

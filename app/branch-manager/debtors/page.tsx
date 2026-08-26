@@ -77,7 +77,7 @@ export default function BranchManagerDebtorsPage() {
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto shadow-sm">
-          <table className="w-full text-sm" dir="rtl">
+          <table className="w-full min-w-max text-sm" dir="rtl">
             <thead>
               <tr className="bg-slate-50 text-slate-600 text-xs">
                 <th className="text-right px-4 py-3 font-bold">الاسم</th>

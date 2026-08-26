@@ -19,8 +19,8 @@ export default function TaskFeesPage() {
         سيتم تفعيل تعديل الأسعار من لوحة التحكم لاحقاً.
       </div>
 
-      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.12)] shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.12)] shadow-sm overflow-x-auto">
+        <table className="w-full min-w-max text-sm">
           <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.1)]">
             <tr>
               <th className="text-right px-5 py-3 font-semibold text-[#767676] text-xs">نوع المهمة</th>

@@ -106,6 +106,13 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
   const scope = sessionCaseScope(auth.profile)
   if (!assertDebtorSection(scope, debtor.case_type)) return sectionForbiddenResponse()
 
+  const { data: debtorBranch } = await admin
+    .from('branches')
+    .select('name')
+    .eq('id', debtor.branch_id)
+    .maybeSingle()
+  const branchGovernorate = (debtorBranch?.name ?? '').trim() || null
+
   let body: Record<string, unknown>
   try {
     body = await request.json()
@@ -137,6 +144,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       notes: String(body.notes ?? '').trim() || null,
       branch_list_id: null,
       phone: null,
+      governorate: branchGovernorate,
     }
 
     // المبلغ الجزائي نص حر في criminal_details.amount_owed.
@@ -245,6 +253,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     notes: String(body.notes ?? '').trim() || null,
     branch_list_id: branchListId,
     court_name: String(body.court_name ?? '').trim() || null,
+    governorate: branchGovernorate,
   }
 
   if (Number(debtor.total_payments ?? 0) === 0) {

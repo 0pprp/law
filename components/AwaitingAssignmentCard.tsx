@@ -166,7 +166,7 @@ function DebtorRowsTable({
   return (
     <>
       <div className="hidden md:block overflow-x-auto">
-        <table className="w-full text-sm min-w-[640px]">
+        <table className="w-full min-w-max text-sm">
           <thead>
             <tr className="text-right text-xs text-[#767676] border-b border-[rgba(118,118,118,0.1)]">
               {allowSelect && (

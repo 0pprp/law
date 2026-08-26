@@ -555,7 +555,7 @@ function AdminShellInner({
         </aside>
 
         {/* Main column — scrolls independently */}
-        <div className="h-screen overflow-y-auto flex flex-col lg:mr-64 min-w-0">
+        <div className="h-screen overflow-y-auto overflow-x-hidden flex flex-col lg:mr-64 min-w-0">
           <header className="sticky top-0 z-20 bg-white border-b border-[rgba(118,118,118,0.1)] min-h-[3.75rem] sm:min-h-16 flex items-center px-4 sm:px-5 lg:px-8 gap-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] shrink-0">
             <button onClick={() => setDrawerOpen(true)} className="lg:hidden w-9 h-9 flex items-center justify-center text-[#767676] hover:text-[#231F20] hover:bg-[rgba(118,118,118,0.08)] rounded-lg transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>

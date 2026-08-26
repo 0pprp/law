@@ -345,7 +345,7 @@ export default function TaskDefinitionsPage() {
         الحقول المحددة هنا تظهر للمحامي في نافذة الإنجاز الإلزامية — لا يمكنه الإرسال بدون تعبئتها.
       </div>
 
-      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.12)] shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.12)] shadow-sm overflow-x-auto">
         {loading ? (
           <div className="flex items-center justify-center py-16 gap-3">
             <svg className="w-5 h-5 animate-spin text-[#2C8780]" fill="none" viewBox="0 0 24 24">
@@ -355,7 +355,7 @@ export default function TaskDefinitionsPage() {
             <p className="text-sm text-[#767676]">جارٍ التحميل...</p>
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-max text-sm">
             <thead className="bg-[#F3F1F2] border-b border-[rgba(118,118,118,0.1)]">
               <tr>
                 <SortableTH variant="plain" sortKey="label" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="text-right px-4 py-3 font-semibold text-[#767676] text-xs">نوع المهمة</SortableTH>
