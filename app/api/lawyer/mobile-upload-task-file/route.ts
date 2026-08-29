@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
 async function saveFile(opts: {
   admin: ReturnType<typeof createAdminClient>
   userId: string
-  role: string
+  role: string | null
   taskId: string
   fileName: string
   mime: string
