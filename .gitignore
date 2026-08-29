@@ -48,6 +48,16 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# supabase CLI temp
+/supabase/.temp/
+
+# lawyer mobile / API build output
+/apps/lawyer-mobile/.dart_tool/
+/apps/lawyer-mobile/build/
+/apps/lawyer-mobile/.idea/
+/apps/lawyer-api/bin/
+/apps/lawyer-api/obj/
+
 # local DB dumps & one-off verify scripts with potential secrets
 /backup-*/
 /backup-before-migration.mjs

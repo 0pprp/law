@@ -382,6 +382,7 @@ const ACCOUNTANT_HREFS = new Set([
   '/admin/finance',
   '/admin/expenses',
   '/admin/reports',
+  '/admin/lawyer-stats',
   '/admin/accounts',
   '/admin/activity',
   '/admin/settings',
@@ -468,6 +469,7 @@ export function isAccountantPathAllowed(pathname: string): boolean {
   if (pathname.startsWith('/admin/finance')) return true
   if (pathname.startsWith('/admin/expenses')) return true
   if (pathname.startsWith('/admin/reports')) return true
+  if (pathname.startsWith('/admin/lawyer-stats')) return true
   if (pathname.startsWith('/admin/accounts')) return true
   if (pathname.startsWith('/admin/activity')) return true
   if (pathname.startsWith('/admin/settings')) return true

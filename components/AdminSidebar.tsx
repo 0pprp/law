@@ -54,6 +54,7 @@ const navSections = [
     label: 'الإعدادات',
     items: [
       { href: '/admin/lawyers', label: 'المستخدمون', icon: 'users' },
+      { href: '/admin/lawyer-stats', label: 'المحامين', icon: 'users' },
       { href: '/admin/branches', label: 'الفروع', icon: 'branches' },
       { href: '/admin/settings/task-definitions', label: 'تعريفات المهام', icon: 'fees' },
     ],

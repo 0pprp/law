@@ -1,0 +1,6 @@
+# Lawyer mobile + API monorepo apps
+lawyer-api/bin/
+lawyer-api/obj/
+lawyer-mobile/.dart_tool/
+lawyer-mobile/build/
+lawyer-mobile/.idea/
