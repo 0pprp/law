@@ -636,6 +636,9 @@ export default function DebtorsPage() {
                               debtorName={debtor.full_name}
                               branchId={debtor.branch_id ?? branchId}
                               compact
+                              onSaved={() => {
+                                void fetchDebtors(search, filterListId, filterCaseType, filterSpecialStatus)
+                              }}
                             />
                           )}
                           {allowChangeTask && (
@@ -726,6 +729,9 @@ export default function DebtorsPage() {
                         debtorName={debtor.full_name}
                         branchId={debtor.branch_id ?? branchId}
                         compact
+                        onSaved={() => {
+                          void fetchDebtors(search, filterListId, filterCaseType, filterSpecialStatus)
+                        }}
                       />
                     )}
                     {allowChangeTask && (

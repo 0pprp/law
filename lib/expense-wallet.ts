@@ -279,5 +279,64 @@ export async function fetchTaskExpensesForReview(
   return (data ?? []) as TaskExpenseRow[]
 }
 
+/**
+ * خصم صرفية يدوية على مدين من محفظة صرفيات المحامي المختار.
+ * يُستدعى بعد إدراج سجل المصروف — reference_id = معرف الصرفية.
+ */
+export async function deductLawyerWalletForDebtorExpense(
+  supabase: SupabaseClient,
+  params: {
+    lawyerId: string
+    amount: number
+    expenseId: string
+    actorId: string
+    debtorName: string
+    note: string
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { lawyerId, amount, expenseId, actorId, debtorName, note } = params
+  const available = await fetchLawyerSavingsBalance(supabase, lawyerId)
+  if (amount > available) {
+    return {
+      ok: false,
+      error: `رصيد محفظة الصرفيات غير كافٍ — المتاح: ${Number(available).toLocaleString('en-US')} د.ع`,
+    }
+  }
+
+  const notes = [
+    `صرفية مدين: ${debtorName}`,
+    note.trim() ? note.trim() : null,
+  ].filter(Boolean).join(' — ')
+
+  const row = {
+    lawyer_id: lawyerId,
+    wallet: 'savings' as const,
+    amount: -amount,
+    notes,
+    reference_id: expenseId,
+    created_by: actorId,
+  }
+
+  let result = await insertWalletTransaction(supabase, {
+    ...row,
+    type: DEDUCTION_TX_TYPE,
+  })
+  if (!result.ok && result.typeRejected) {
+    result = await insertWalletTransaction(supabase, {
+      ...row,
+      type: 'task_expense_deduction',
+    })
+  }
+  if (!result.ok) return { ok: false, error: result.error }
+
+  const now = new Date().toISOString()
+  await supabase
+    .from('expenses')
+    .update({ wallet_deducted_at: now } as any)
+    .eq('id', expenseId)
+
+  return { ok: true }
+}
+
 /** @deprecated Use deductTaskExpensesOnApproval — kept for import compatibility */
 export const approveTaskExpensesToWallet = deductTaskExpensesOnApproval

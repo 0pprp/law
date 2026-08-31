@@ -16,7 +16,7 @@ import { fetchLawyerTaskExpenses, mergeExpenseSources } from '@/lib/fetch-lawyer
 import { resolveTaskLabel } from '@/lib/task-display-label'
 import { normalizeTaskLabelKey } from '@/lib/task-label-normalize'
 import type { PendingTaskExpense } from '@/lib/persist-task-expenses'
-import { persistTaskExpenses } from '@/lib/persist-task-expenses'
+import { persistTaskExpenses, partitionPendingExpensesByDefinition } from '@/lib/persist-task-expenses'
 import { validateTaskCompletionFields } from '@/lib/task-completion-validation'
 import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 import {
@@ -151,8 +151,8 @@ export function LawyerTaskCompletionModal({
     supabase: ReturnType<typeof createClient>,
     userId: string,
     rawCompletion: Record<string, string>,
-  ): Promise<{ ok: boolean; error?: string }> {
-    if (!hybridParentDefinitionId || !hybridSelectedLinked.length) return { ok: true }
+  ): Promise<{ ok: boolean; error?: string; children?: { definitionId: string; taskId: string }[] }> {
+    if (!hybridParentDefinitionId || !hybridSelectedLinked.length) return { ok: true, children: [] }
 
     const defIds = [
       hybridParentDefinitionId,
@@ -161,6 +161,7 @@ export function LawyerTaskCompletionModal({
     const partitioned = partitionCompletionDataByDefinition(rawCompletion, defIds)
     const nowIso = new Date().toISOString()
     const assignedTo = (task as { assigned_to?: string | null }).assigned_to ?? userId
+    const children: { definitionId: string; taskId: string }[] = []
 
     for (const link of hybridSelectedLinked) {
       const childCompletion = partitioned[link.linked_definition_id] ?? {}
@@ -168,7 +169,7 @@ export function LawyerTaskCompletionModal({
         debtor_id: task.debtor_id,
         branch_id: (task as any).branch_id ?? null,
         task_definition_id: link.linked_definition_id,
-        task_type: link.task_type ?? task.task_type ?? null,
+        task_type: link.task_type ?? null,
         assigned_to: assignedTo,
         task_status: 'pending_review',
         reward_amount: Number(link.fee_amount) || 0,
@@ -181,34 +182,37 @@ export function LawyerTaskCompletionModal({
 
       const withParent = { ...basePayload, hybrid_parent_task_id: task.id }
 
-      let { error: insErr } = await supabase.from('tasks').insert(withParent as any)
+      let { data: inserted, error: insErr } = await supabase.from('tasks').insert(withParent as any).select('id')
 
       if (insErr && isMissingHybridSchema(insErr.message)) {
-        // العمود غير موجود بعد — أعد المحاولة بدونه
-        ;({ error: insErr } = await supabase.from('tasks').insert(basePayload as any))
+        ;({ data: inserted, error: insErr } = await supabase.from('tasks').insert(basePayload as any).select('id'))
       }
 
       if (insErr) {
-        // fallback حالة submitted إن لم تُقبل pending_review
         const msg = String(insErr.message ?? '')
         if (msg.toLowerCase().includes('pending_review') || msg.toLowerCase().includes('invalid input value for enum')) {
           const retryPayload = { ...withParent, task_status: 'submitted' }
-          let { error: retryErr } = await supabase.from('tasks').insert(retryPayload as any)
+          let { data: retryRows, error: retryErr } = await supabase.from('tasks').insert(retryPayload as any).select('id')
           if (retryErr && isMissingHybridSchema(retryErr.message)) {
-            ;({ error: retryErr } = await supabase
+            ;({ data: retryRows, error: retryErr } = await supabase
               .from('tasks')
-              .insert({ ...basePayload, task_status: 'submitted' } as any))
+              .insert({ ...basePayload, task_status: 'submitted' } as any)
+              .select('id'))
           }
           if (retryErr) {
             return { ok: false, error: `فشل إنشاء المهمة المرتبطة «${link.label}»: ${retryErr.message}` }
           }
+          const retryId = retryRows?.[0]?.id ? String(retryRows[0].id) : null
+          if (retryId) children.push({ definitionId: link.linked_definition_id, taskId: retryId })
           continue
         }
         return { ok: false, error: `فشل إنشاء المهمة المرتبطة «${link.label}»: ${insErr.message}` }
       }
+      const insertedId = inserted?.[0]?.id ? String(inserted[0].id) : null
+      if (insertedId) children.push({ definitionId: link.linked_definition_id, taskId: insertedId })
     }
 
-    return { ok: true }
+    return { ok: true, children }
   }
 
   async function submit() {
@@ -290,7 +294,7 @@ export function LawyerTaskCompletionModal({
       return
     }
 
-    if (expenseStepDone) {
+    if (expenseStepDone && !isHybridSubmit) {
       const expenseResult = await persistTaskExpenses(supabase, {
         taskId: task.id,
         debtorId: task.debtor_id,
@@ -337,6 +341,38 @@ export function LawyerTaskCompletionModal({
         setError(linkedResult.error ?? 'فشل إنشاء المهام المرتبطة')
         setSaving(false)
         return
+      }
+      if (expenseStepDone) {
+        const split = partitionPendingExpensesByDefinition(
+          pendingExpenses,
+          hybridParentDefinitionId,
+          (linkedResult.children ?? []).map(c => c.definitionId),
+        )
+        const jobs = [
+          persistTaskExpenses(supabase, {
+            taskId: task.id,
+            debtorId: task.debtor_id,
+            caseId: (task as any).case_id,
+            branchId: (task as any).branch_id,
+            lawyerId: user.id,
+            rows: split.parentRows,
+          }),
+          ...(linkedResult.children ?? []).map(c => persistTaskExpenses(supabase, {
+            taskId: c.taskId,
+            debtorId: task.debtor_id,
+            caseId: (task as any).case_id,
+            branchId: (task as any).branch_id,
+            lawyerId: user.id,
+            rows: split.byLinkedId.get(c.definitionId) ?? [],
+          })),
+        ]
+        const results = await Promise.all(jobs)
+        const failed = results.find(r => !r.ok)
+        if (failed) {
+          setError(failed.error ?? 'فشل حفظ الصرفيات')
+          setSaving(false)
+          return
+        }
       }
     }
 

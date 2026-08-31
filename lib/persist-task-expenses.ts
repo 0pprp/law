@@ -11,6 +11,7 @@ export interface PendingTaskExpense {
   amount: number
   note: string
   task_definition_expense_id?: string | null
+  task_definition_id?: string | null
 }
 
 const PENDING_STATUSES = ['pending_review', 'pending_approval', 'pending']
@@ -154,7 +155,32 @@ export function pendingRowsFromDefs(
     amount: parseMoneyInput(amounts[i]?.amount ?? ''),
     note: amounts[i]?.note ?? '',
     task_definition_expense_id: def.id.startsWith('catalog:') ? null : def.id,
+    task_definition_id: def.task_definition_id || null,
   }))
+}
+
+/** توزيع بنود الصرفيات على المهمة الأساسية والمهام المرتبطة. */
+export function partitionPendingExpensesByDefinition(
+  rows: PendingTaskExpense[],
+  parentDefinitionId: string | null,
+  linkedDefinitionIds: string[],
+): { parentRows: PendingTaskExpense[]; byLinkedId: Map<string, PendingTaskExpense[]> } {
+  const linked = new Set(linkedDefinitionIds.filter(Boolean))
+  const byLinkedId = new Map<string, PendingTaskExpense[]>()
+  for (const id of linked) byLinkedId.set(id, [])
+  const parentRows: PendingTaskExpense[] = []
+
+  for (const row of rows) {
+    const owner = String(row.task_definition_id ?? '').trim()
+    if (owner && linked.has(owner)) {
+      byLinkedId.get(owner)!.push(row)
+      continue
+    }
+    parentRows.push(row)
+  }
+
+  void parentDefinitionId
+  return { parentRows, byLinkedId }
 }
 
 /** تحقق من بنود نافذة الصرفيات قبل الإرسال */

@@ -55,6 +55,48 @@ function normalizeStatus(s: string | null | undefined): string {
   return s ?? 'approved'
 }
 
+function expenseLawyerName(
+  exp: {
+    lawyer_id?: string | null
+    lawyer?: { full_name?: string | null } | null
+    profiles?: { full_name?: string | null } | null
+  },
+  lawyerRows: { id: string; full_name?: string | null }[],
+): string {
+  return (
+    exp.lawyer?.full_name
+    || lawyerRows.find(l => l.id === exp.lawyer_id)?.full_name
+    || exp.profiles?.full_name
+    || '—'
+  )
+}
+
+const EXPENSES_SELECT =
+  '*, debtors(full_name, governorate, phone, receipt_number, case_type), profiles!expenses_created_by_fkey(full_name), lawyer:profiles!expenses_lawyer_id_fkey(full_name), tasks!expenses_task_id_fkey(task_type, task_status, task_definitions(label))'
+const EXPENSES_SELECT_FALLBACK =
+  '*, debtors(full_name, governorate, phone, receipt_number, case_type), profiles!expenses_created_by_fkey(full_name), tasks!expenses_task_id_fkey(task_type, task_status)'
+
+function expenseTaskLabel(exp: {
+  tasks?: {
+    task_type?: string | null
+    task_status?: string | null
+    task_definitions?: { label?: string | null } | { label?: string | null }[] | null
+  } | null
+}): string {
+  const t = exp.tasks
+  if (!t) return ''
+  const def = Array.isArray(t.task_definitions) ? t.task_definitions[0] : t.task_definitions
+  const fromDef = String(def?.label ?? '').trim()
+  if (fromDef) return fromDef
+  if (t.task_type && t.task_type in TASK_TYPE_LABELS) return TASK_TYPE_LABELS[t.task_type as TaskType]
+  return t.task_type ?? ''
+}
+
+function isLinkedTaskApproved(exp: { tasks?: { task_status?: string | null } | null }): boolean {
+  const st = String(exp.tasks?.task_status ?? '')
+  return st === 'approved' || st === 'completed'
+}
+
 export default function ExpensesPage() {
   const branchId = useBranchId()
   const { viewAllBranches, listId } = useBranch()
@@ -97,10 +139,14 @@ export default function ExpensesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     const supabase = createClient()
-    let eq = supabase.from('expenses').select(`*, debtors(full_name, governorate, phone, receipt_number, case_type), profiles!expenses_created_by_fkey(full_name), tasks!expenses_task_id_fkey(task_type)`).order('expense_date', { ascending: false }).limit(500)
+    const applyExpenseFilters = (select: string) => {
+      let q = supabase.from('expenses').select(select).order('expense_date', { ascending: false }).limit(500)
+      if (branchId) q = (q as any).eq('branch_id', branchId)
+      return q
+    }
+    let eq = applyExpenseFilters(EXPENSES_SELECT)
     let lq = supabase.from('profiles').select('id, full_name').eq('role', 'lawyer').eq('is_active', true).order('full_name')
     if (branchId) {
-      eq = (eq as any).eq('branch_id', branchId)
       lq = (lq as any).eq('branch_id', branchId)
     }
 
@@ -172,8 +218,16 @@ export default function ExpensesPage() {
 
     if (debtorIds) eq = (eq as any).in('debtor_id', debtorIds)
 
-    const [{ data: e }, { data: l }] = await Promise.all([eq, lq])
-    setExpenses(e ?? []); setLawyers(l ?? [])
+    const [{ data: e, error: eErr }, { data: l }] = await Promise.all([eq, lq])
+    let rows = e ?? []
+    if (eErr) {
+      let fallback = applyExpenseFilters(EXPENSES_SELECT_FALLBACK)
+      if (debtorIds) fallback = (fallback as any).in('debtor_id', debtorIds)
+      const retry = await fallback
+      rows = retry.data ?? []
+    }
+    setExpenses(rows)
+    setLawyers(l ?? [])
     setLoading(false)
   }, [branchId, viewAllBranches, listId, debouncedSearch, effectiveCaseType])
 
@@ -187,7 +241,7 @@ export default function ExpensesPage() {
       } else if (s !== statusFilter) return false
     }
     if (typeFilter && (exp.expense_type ?? '') !== typeFilter) return false
-    if (filterLawyer && exp.created_by !== filterLawyer) return false
+    if (filterLawyer && (exp.lawyer_id || exp.created_by) !== filterLawyer) return false
     if (dateFrom && exp.expense_date < dateFrom) return false
     if (dateTo && exp.expense_date > dateTo) return false
     return true
@@ -200,7 +254,7 @@ export default function ExpensesPage() {
     cycleSort,
   } = useTableSort(filtered, {
     debtor: exp => exp.debtors?.full_name,
-    lawyer: exp => exp.profiles?.full_name,
+    lawyer: exp => expenseLawyerName(exp, lawyers),
     type: exp => exp.expense_type,
     description: exp => exp.description,
     amount: exp => Number(exp.amount ?? 0),
@@ -224,15 +278,13 @@ export default function ExpensesPage() {
           'المدين': exp.debtors?.full_name ?? '—',
           'الهاتف': exp.debtors?.phone ?? '—',
           'رقم الوصل': exp.debtors?.receipt_number ?? '—',
-          'المحامي': exp.profiles?.full_name ?? '—',
+          'المحامي': expenseLawyerName(exp, lawyers),
           'نوع الصرف': exp.expense_type ?? '—',
           'الوصف': exp.description ?? '—',
           'المبلغ': Number(exp.amount ?? 0),
           'التاريخ': exp.expense_date ? fmtDate(exp.expense_date) : '—',
           'الحالة': STATUS_BADGE[s]?.label ?? s,
-          'المهمة': exp.tasks?.task_type
-            ? (TASK_TYPE_LABELS[exp.tasks.task_type as TaskType] ?? exp.tasks.task_type)
-            : '—',
+          'المهمة': expenseTaskLabel(exp) || '—',
           'نوع الدعوى': exp.debtors?.case_type === 'criminal' ? 'جزائي' : 'مدني',
         }
       })
@@ -283,10 +335,44 @@ export default function ExpensesPage() {
     setDeletingId(null); load()
   }
 
-  async function approveExpense(exp: { id: string; task_id?: string | null; debtor_id?: string | null; debtors?: { full_name?: string; case_type?: string } | null; amount?: number }) {
+  async function approveExpense(exp: {
+    id: string
+    task_id?: string | null
+    debtor_id?: string | null
+    debtors?: { full_name?: string; case_type?: string } | null
+    amount?: number
+    tasks?: { task_status?: string | null } | null
+  }) {
     if (!canWrite) { await appAlert({ message: PERMISSION_DENIED_MSG, variant: 'warning' }); return }
     if (exp.task_id) {
-      await appAlert({ message: 'صرفيات المهام تُعتمد تلقائياً عند اعتماد الإنجاز من مراجعة المهام', variant: 'info' })
+      if (!isLinkedTaskApproved(exp)) {
+        await appAlert({ message: 'صرفيات المهام تُعتمد تلقائياً عند اعتماد الإنجاز من مراجعة المهام', variant: 'info' })
+        return
+      }
+      setActionId(exp.id)
+      try {
+        const res = await fetch('/api/admin/approve-task-expenses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId: exp.task_id }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || !data.ok) {
+          await appAlert({
+            message: typeof data.error === 'string' ? data.error : 'فشل اعتماد صرفيات المهمة',
+            variant: 'error',
+          })
+          setActionId(null)
+          return
+        }
+      } catch {
+        await appAlert({ message: 'فشل الاتصال', variant: 'error' })
+        setActionId(null)
+        return
+      }
+      setActionId(null)
+      load()
+      refreshAdminNotifications()
       return
     }
     const supabase = createClient()
@@ -558,13 +644,19 @@ export default function ExpensesPage() {
                 const badge = STATUS_BADGE[s] ?? STATUS_BADGE.approved
                 const isPendingReview = s === 'pending_review'
                 const linkedToTask = Boolean(exp.task_id)
+                const taskApproved = isLinkedTaskApproved(exp)
                 return (
                   <TR key={exp.id} className={editingExpense?.id === exp.id ? 'bg-[#2C8780]/5' : isPendingReview ? 'bg-yellow-50/50' : ''}>
-                    <TD className="font-semibold text-[#231F20]">{exp.debtors?.full_name ?? '—'}</TD>
-                    <TD className="text-[#767676] text-xs">{exp.profiles?.full_name ?? '—'}</TD>
+                    <TD className="font-semibold text-[#231F20]">
+                      <span className="block">{exp.debtors?.full_name ?? '—'}</span>
+                      {expenseTaskLabel(exp) ? (
+                        <span className="block text-[10px] font-bold text-[#2C8780] mt-0.5">{expenseTaskLabel(exp)}</span>
+                      ) : null}
+                    </TD>
+                    <TD className="text-[#767676] text-xs">{expenseLawyerName(exp, lawyers)}</TD>
                     <TD className="text-[#767676] text-xs">{exp.expense_type ?? '—'}</TD>
                     <TD className="text-[#767676] text-xs max-w-[120px]">
-                      <span className="line-clamp-1">{exp.description ?? '—'}</span>
+                      <span className="line-clamp-2">{exp.description ?? '—'}</span>
                       {s === 'rejected' && exp.rejection_reason && (
                         <p className="text-red-500 text-[10px] mt-0.5 line-clamp-1">سبب: {exp.rejection_reason}</p>
                       )}
@@ -577,7 +669,7 @@ export default function ExpensesPage() {
                     <TD>
                       {canWrite ? (
                       <div className="flex items-center justify-center gap-1.5">
-                        {isPendingReview && linkedToTask ? (
+                        {isPendingReview && linkedToTask && !taskApproved ? (
                           <span className="text-[10px] text-yellow-700 font-bold px-2 py-1">تعتمد مع الإنجاز</span>
                         ) : isPendingReview ? (
                           <>

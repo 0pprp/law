@@ -68,13 +68,15 @@ export interface TaskTransitionParams {
   nextTaskDefId?: string
   updateGps?: boolean
   userId: string
+  /** لا تنشئ توأم تبليغ — المهمة المرتبطة أُنشئت مع الإنجاز */
+  skipNotificationTwin?: boolean
 }
 
 export async function applyTaskTransition(
   supabase: SupabaseClient,
   params: TaskTransitionParams,
 ): Promise<{ ok: boolean; error?: string }> {
-  const { taskId, action, nextTaskDefId, updateGps, userId } = params
+  const { taskId, action, nextTaskDefId, updateGps, userId, skipNotificationTwin } = params
 
   const { data: task, error: taskErr } = await supabase
     .from('tasks')
@@ -285,7 +287,7 @@ export async function applyTaskTransition(
     return { ok: false, error: linkErr.message }
   }
 
-  if (nextDef && isPleadingDefinition(nextDef)) {
+  if (nextDef && isPleadingDefinition(nextDef) && !skipNotificationTwin) {
     await ensurePleadingNotificationTwin(
       supabase,
       {

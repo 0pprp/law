@@ -66,14 +66,13 @@ export async function listPostponeLinkedTasks(
     return []
   }
 
+  const caseType = debtor.case_type === 'criminal' ? 'criminal' : 'civil'
   let q = admin
     .from('task_definitions')
-    .select('id, label, task_type, sort_order')
+    .select('id, label, task_type, sort_order, branch_id')
     .eq('is_active', true)
+    .eq('case_type', caseType)
     .order('sort_order')
-  if (debtor.branch_id) q = q.eq('branch_id', debtor.branch_id)
-  const caseType = debtor.case_type === 'criminal' ? 'criminal' : 'civil'
-  q = q.eq('case_type', caseType)
 
   const { data, error } = await q
   if (error) {
@@ -81,8 +80,14 @@ export async function listPostponeLinkedTasks(
     return []
   }
 
+  let defs = (data ?? []) as { id: string; label?: string | null; task_type?: string | null; branch_id?: string | null }[]
+  if (debtor.branch_id) {
+    const inBranch = defs.filter(d => d.branch_id === debtor.branch_id)
+    if (inBranch.some(d => !isLawsuitDef(d))) defs = inBranch
+  }
+
   const out: PostponeLinkedTaskOption[] = []
-  for (const d of data ?? []) {
+  for (const d of defs) {
     if (isLawsuitDef(d)) continue
     const label = String(d.label ?? '').trim()
       || (d.task_type && d.task_type in TASK_TYPE_LABELS

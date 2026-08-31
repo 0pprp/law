@@ -4,7 +4,7 @@ import { requireStaffProfile, sessionCaseScope } from '@/lib/api-auth'
 import { approveTaskCompletion, finalizeTaskApproval } from '@/lib/task-approval'
 import { applyTaskTransition, isNextActionAlreadyDoneError } from '@/lib/task-operations-api'
 import { resolvePleadingDefIdForLawsuit } from '@/lib/default-next-task'
-import { persistTaskExpensesDirect, type PendingTaskExpense } from '@/lib/persist-task-expenses'
+import { persistTaskExpensesDirect, partitionPendingExpensesByDefinition, type PendingTaskExpense } from '@/lib/persist-task-expenses'
 import { unassignTasksToWaiting } from '@/lib/task-assignment'
 import { buildIncompleteCompletionData } from '@/lib/incomplete-completion'
 import {
@@ -19,6 +19,7 @@ import {
   isMissingHybridSchema,
   partitionCompletionDataByDefinition,
 } from '@/lib/hybrid-task-links'
+import { isNotificationDefinition } from '@/lib/default-next-task'
 
 const COMPLETABLE = new Set([
   'assignment_pending_acceptance',
@@ -161,19 +162,6 @@ export async function POST(request: NextRequest) {
     }
 
     const expenses = Array.isArray(body.pendingExpenses) ? body.pendingExpenses : []
-    if (expenses.length && task.debtor_id) {
-      const exp = await persistTaskExpensesDirect(admin, {
-        taskId,
-        debtorId: task.debtor_id,
-        caseId: task.case_id ?? null,
-        branchId: task.branch_id ?? null,
-        lawyerId,
-        rows: expenses,
-      })
-      if (!exp.ok) {
-        return NextResponse.json({ error: exp.error ?? 'فشل حفظ الصرفيات' }, { status: 400 })
-      }
-    }
 
     const parentCompletion = completionData
     const baseUpdate = {
@@ -200,25 +188,38 @@ export async function POST(request: NextRequest) {
 
     const hybridParentDefinitionId = body.hybridParentDefinitionId?.trim() || null
     const hybridLinks = Array.isArray(body.hybridSelectedLinked) ? body.hybridSelectedLinked : []
-    const childIds: string[] = []
+    const childByDefId = new Map<string, string>()
+    let skipNotificationTwin = false
+
     if (hybridParentDefinitionId && hybridLinks.length) {
-      const defIds = [
-        hybridParentDefinitionId,
-        ...hybridLinks.map(l => String(l.linked_definition_id ?? '')).filter(Boolean),
-      ]
+      const linkedDefIds = hybridLinks.map(l => String(l.linked_definition_id ?? '')).filter(Boolean)
+      const { data: linkedDefs } = linkedDefIds.length
+        ? await admin
+            .from('task_definitions')
+            .select('id, label, task_type, fee_amount')
+            .in('id', linkedDefIds)
+        : { data: [] as { id: string; label?: string | null; task_type?: string | null; fee_amount?: number | null }[] }
+      const defById = new Map((linkedDefs ?? []).map(d => [String(d.id), d]))
+
+      const defIds = [hybridParentDefinitionId, ...linkedDefIds]
       const partitioned = partitionCompletionDataByDefinition(rawCompletion, defIds)
       for (const link of hybridLinks) {
         const linkedId = String(link.linked_definition_id ?? '').trim()
         if (!linkedId) continue
+        const def = defById.get(linkedId)
+        const childType = def?.task_type ?? link.task_type ?? null
+        if (isNotificationDefinition({ task_type: childType, label: def?.label ?? link.label })) {
+          skipNotificationTwin = true
+        }
         const childCompletion = partitioned[linkedId] ?? {}
         const basePayload: Record<string, unknown> = {
           debtor_id: task.debtor_id,
           branch_id: task.branch_id ?? null,
           task_definition_id: linkedId,
-          task_type: link.task_type ?? task.task_type ?? null,
+          task_type: childType,
           assigned_to: lawyerId,
           task_status: 'submitted',
-          reward_amount: Number(link.fee_amount) || 0,
+          reward_amount: Number(def?.fee_amount ?? link.fee_amount) || 0,
           completion_data: childCompletion,
           completed_at: nowIso,
           created_by: reviewerId,
@@ -239,16 +240,61 @@ export async function POST(request: NextRequest) {
         }
         if (insErr) {
           return NextResponse.json(
-            { error: `فشل إنشاء المهمة المرتبطة «${link.label ?? ''}»: ${insErr.message}` },
+            { error: `فشل إنشاء المهمة المرتبطة «${link.label ?? def?.label ?? ''}»: ${insErr.message}` },
             { status: 400 },
           )
         }
         insertedId = inserted?.[0]?.id ? String(inserted[0].id) : null
-        if (insertedId) childIds.push(insertedId)
+        if (insertedId) childByDefId.set(linkedId, insertedId)
+      }
+
+      if (expenses.length && task.debtor_id) {
+        const split = partitionPendingExpensesByDefinition(
+          expenses,
+          hybridParentDefinitionId,
+          [...childByDefId.keys()],
+        )
+        const persistJobs: Promise<{ ok: boolean; error?: string }>[] = [
+          persistTaskExpensesDirect(admin, {
+            taskId,
+            debtorId: task.debtor_id,
+            caseId: task.case_id ?? null,
+            branchId: task.branch_id ?? null,
+            lawyerId,
+            rows: split.parentRows,
+          }),
+        ]
+        for (const [defId, childId] of childByDefId) {
+          persistJobs.push(persistTaskExpensesDirect(admin, {
+            taskId: childId,
+            debtorId: task.debtor_id,
+            caseId: task.case_id ?? null,
+            branchId: task.branch_id ?? null,
+            lawyerId,
+            rows: split.byLinkedId.get(defId) ?? [],
+          }))
+        }
+        const persistResults = await Promise.all(persistJobs)
+        const failed = persistResults.find(r => !r.ok)
+        if (failed) {
+          return NextResponse.json({ error: failed.error ?? 'فشل حفظ الصرفيات' }, { status: 400 })
+        }
+      }
+    } else if (expenses.length && task.debtor_id) {
+      const exp = await persistTaskExpensesDirect(admin, {
+        taskId,
+        debtorId: task.debtor_id,
+        caseId: task.case_id ?? null,
+        branchId: task.branch_id ?? null,
+        lawyerId,
+        rows: expenses,
+      })
+      if (!exp.ok) {
+        return NextResponse.json({ error: exp.error ?? 'فشل حفظ الصرفيات' }, { status: 400 })
       }
     }
 
-    for (const childId of childIds) {
+    for (const childId of childByDefId.values()) {
       const childApprove = await approveTaskCompletion(admin, childId, reviewerId)
       if (!childApprove.ok) {
         return NextResponse.json(
@@ -284,10 +330,26 @@ export async function POST(request: NextRequest) {
           action: 'next',
           nextTaskDefId: pleading.defId,
           userId: reviewerId,
+          skipNotificationTwin,
         })
         autoNext = (transition.ok || isNextActionAlreadyDoneError(transition.error))
           ? { ok: true, nextLabel: pleading.label }
           : { ok: false, error: transition.error, nextLabel: pleading.label }
+
+        if (autoNext.ok && childByDefId.size && task.debtor_id) {
+          const { data: debtorNow } = await admin
+            .from('debtors')
+            .select('current_task_id')
+            .eq('id', task.debtor_id)
+            .maybeSingle()
+          const pleadingId = debtorNow?.current_task_id ? String(debtorNow.current_task_id) : null
+          if (pleadingId && pleadingId !== taskId) {
+            await admin
+              .from('tasks')
+              .update({ hybrid_parent_task_id: pleadingId } as any)
+              .in('id', [...childByDefId.values()])
+          }
+        }
       }
     }
 

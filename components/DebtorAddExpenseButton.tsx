@@ -1,14 +1,21 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { parseMoneyInput } from '@/lib/money-input'
+import { useEffect, useMemo, useState } from 'react'
+import { parseMoneyInput, formatMoney } from '@/lib/money-input'
 import MoneyInput from '@/components/ui/money-input'
 import { DatePicker } from '@/components/ui/date-picker'
 import CenteredModalPortal from '@/components/ui/centered-modal-portal'
 import { localTodayYmd } from '@/lib/local-date'
+import { PremiumSelect } from '@/components/ui/premium-select'
 
 const INP =
   'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-[#231F20] placeholder:text-[#767676] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white'
+
+type LawyerOption = {
+  id: string
+  full_name: string
+  savings: number
+}
 
 interface ModalProps {
   open: boolean
@@ -24,10 +31,15 @@ function DebtorExpenseModal({
   onClose,
   debtorId,
   debtorName,
+  branchId,
   onSaved,
 }: ModalProps) {
   const [amount, setAmount] = useState('')
   const [expenseDate, setExpenseDate] = useState(localTodayYmd())
+  const [lawyerId, setLawyerId] = useState('')
+  const [note, setNote] = useState('')
+  const [lawyers, setLawyers] = useState<LawyerOption[]>([])
+  const [loadingLawyers, setLoadingLawyers] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
@@ -38,7 +50,39 @@ function DebtorExpenseModal({
     setSuccess(false)
     setAmount('')
     setExpenseDate(localTodayYmd())
-  }, [open])
+    setLawyerId('')
+    setNote('')
+    setLoadingLawyers(true)
+    const params = new URLSearchParams()
+    if (branchId) params.set('branchId', branchId)
+    void fetch(`/api/admin/expenses?${params}`)
+      .then(async res => {
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || !data.ok) {
+          throw new Error(typeof data.error === 'string' ? data.error : 'فشل تحميل المحامين')
+        }
+        setLawyers(Array.isArray(data.lawyers) ? data.lawyers : [])
+      })
+      .catch(e => {
+        setLawyers([])
+        setError(e instanceof Error ? e.message : 'فشل تحميل المحامين')
+      })
+      .finally(() => setLoadingLawyers(false))
+  }, [open, branchId])
+
+  const selectedLawyer = useMemo(
+    () => lawyers.find(l => l.id === lawyerId) ?? null,
+    [lawyers, lawyerId],
+  )
+
+  const lawyerOptions = useMemo(
+    () => lawyers.map(l => ({
+      value: l.id,
+      label: l.full_name,
+      hint: `محفظة الصرفيات: ${formatMoney(l.savings)}`,
+    })),
+    [lawyers],
+  )
 
   if (!open) return null
 
@@ -51,6 +95,14 @@ function DebtorExpenseModal({
     e.preventDefault()
     if (saving) return
     const parsed = parseMoneyInput(amount)
+    if (!lawyerId) {
+      setError('اختر محفظة صرفيات المحامي')
+      return
+    }
+    if (!note.trim()) {
+      setError('اكتب ملاحظة عن سبب هذه الصرفية')
+      return
+    }
     if (!parsed || parsed <= 0) {
       setError('يرجى إدخال مبلغ أكبر من صفر')
       return
@@ -68,6 +120,8 @@ function DebtorExpenseModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           debtorId,
+          lawyerId,
+          note: note.trim(),
           amount: parsed,
           expenseDate,
         }),
@@ -112,6 +166,31 @@ function DebtorExpenseModal({
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
+              <label className="block text-xs font-semibold text-[#767676] mb-1">
+                من محفظة صرفيات أي محامي تريد تنزيل الصرفية *
+              </label>
+              <PremiumSelect
+                value={lawyerId}
+                onChange={setLawyerId}
+                options={lawyerOptions}
+                placeholder={loadingLawyers ? 'جارٍ التحميل...' : lawyers.length ? '— اختر المحامي —' : 'لا يوجد محامون'}
+                headerTitle="محفظة الصرفيات"
+                searchPlaceholder="بحث بالاسم..."
+                searchable
+                disabled={loadingLawyers || saving || !lawyers.length}
+                menuPortal
+              />
+              {selectedLawyer && (
+                <p className="text-[11px] text-[#767676] mt-1">
+                  الرصيد المتاح: {formatMoney(selectedLawyer.savings)}
+                </p>
+              )}
+              {!loadingLawyers && !lawyers.length && !error && (
+                <p className="text-[11px] text-[#767676] mt-1">لا يوجد محامون نشطون في هذا الفرع</p>
+              )}
+            </div>
+
+            <div>
               <label className="block text-xs font-semibold text-[#767676] mb-1">المبلغ (د.ع) *</label>
               <MoneyInput value={amount} onChange={setAmount} className={INP} placeholder="0" />
             </div>
@@ -119,6 +198,17 @@ function DebtorExpenseModal({
             <div>
               <label className="block text-xs font-semibold text-[#767676] mb-1">التاريخ *</label>
               <DatePicker value={expenseDate} onChange={setExpenseDate} />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#767676] mb-1">ملاحظة *</label>
+              <textarea
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                rows={3}
+                className={`${INP} resize-none`}
+                placeholder="اكتب سبب هذه الصرفية — تظهر في عمود الوصف"
+              />
             </div>
 
             {error && (
@@ -136,7 +226,7 @@ function DebtorExpenseModal({
               </button>
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || loadingLawyers || !lawyers.length}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50"
                 style={{ background: 'linear-gradient(135deg, #2C8780, #1D6365)' }}
               >
