@@ -30,8 +30,15 @@ export type DashboardStageSnapshot = {
   recentActivity: { action: string; created_at: string }[]
 }
 
-const opsByKey = new Map<string, OpsCardCounts>()
-const dashByKey = new Map<string, DashboardStageSnapshot>()
+const opsByKey = new Map<string, { value: OpsCardCounts; at: number }>()
+const dashByKey = new Map<string, { value: DashboardStageSnapshot; at: number }>()
+
+/** لا نعيد الجلب إن كانت الأرقام أحدث من هذا. */
+export const DASHBOARD_COUNTS_FRESH_MS = 25_000
+
+function isFresh(at: number): boolean {
+  return Date.now() - at < DASHBOARD_COUNTS_FRESH_MS
+}
 
 function purgeLegacySessionKeys(): void {
   if (typeof sessionStorage === 'undefined') return
@@ -71,19 +78,29 @@ export function dashboardCountsKey(
 }
 
 export function peekOpsCardCounts(key: string): OpsCardCounts | null {
-  return opsByKey.get(key) ?? null
+  return opsByKey.get(key)?.value ?? null
+}
+
+export function isOpsCardCountsFresh(key: string): boolean {
+  const entry = opsByKey.get(key)
+  return Boolean(entry && isFresh(entry.at))
 }
 
 export function writeOpsCardCounts(key: string, value: OpsCardCounts): void {
-  opsByKey.set(key, value)
+  opsByKey.set(key, { value, at: Date.now() })
 }
 
 export function peekDashboardStageCounts(key: string): DashboardStageSnapshot | null {
-  return dashByKey.get(key) ?? null
+  return dashByKey.get(key)?.value ?? null
+}
+
+export function isDashboardStageCountsFresh(key: string): boolean {
+  const entry = dashByKey.get(key)
+  return Boolean(entry && isFresh(entry.at))
 }
 
 export function writeDashboardStageCounts(key: string, value: DashboardStageSnapshot): void {
-  dashByKey.set(key, value)
+  dashByKey.set(key, { value, at: Date.now() })
 }
 
 /**

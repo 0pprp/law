@@ -1,8 +1,7 @@
 import { resolveDebtorCourtName, resolveExecutionOffice } from '@/lib/awaiting-assignment'
-import { isPleadingDefinition } from '@/lib/default-next-task'
+import { isFileLawsuitTask } from '@/lib/default-next-task'
 import { extractHearingDateFromCompletion } from '@/lib/hearing-date-from-completion'
 import { OVERDUE_TERMINAL_STATUSES } from '@/lib/local-date'
-import { promoteStandaloneNotificationsToPleadingDual } from '@/lib/pleading-notification-twin'
 import { storedFileUrl } from '@/lib/stored-file-url'
 import type { ReceiptType } from '@/lib/types'
 
@@ -27,6 +26,8 @@ export type ReceiptsPrepRow = {
   phone: string | null
   receiptType: ReceiptType | null
   receiptNumber: string | null
+  transactionNumber: string | null
+  saleDate: string | null
   remaining: number
   firstHearingDate: string | null
   courtName: string | null
@@ -35,6 +36,7 @@ export type ReceiptsPrepRow = {
   branchName: string | null
   branchListName: string | null
   caseType: 'civil' | 'criminal'
+  currentTaskLabel: string
   receiptsPrepared: boolean
   files: ReceiptsPrepFile[]
 }
@@ -63,10 +65,12 @@ function pgErrorMessage(err: { message?: string; details?: string; hint?: string
   return err?.message || err?.details || err?.hint || err?.code || 'فشل الاستعلام'
 }
 
-async function pleadingDefinitionIds(
+type ReceiptsPrepDefIds = { lawsuitIds: string[] }
+
+async function receiptsPrepDefinitionIds(
   admin: AdminClient,
   params: FetchReceiptsPrepParams,
-): Promise<string[]> {
+): Promise<ReceiptsPrepDefIds> {
   let q = admin
     .from('task_definitions')
     .select('id, task_type, label, case_type, branch_id')
@@ -74,14 +78,11 @@ async function pleadingDefinitionIds(
   if (params.caseType) q = q.eq('case_type', params.caseType)
   const { data, error } = await q
   if (error) throw new Error(pgErrorMessage(error))
-  let rows = (data ?? []).filter((d: { task_type?: string | null; label?: string | null }) =>
-    isPleadingDefinition(d),
-  )
-  if (params.branchId) {
-    const sameBranch = rows.filter((d: { branch_id?: string | null }) => d.branch_id === params.branchId)
-    if (sameBranch.length) rows = sameBranch
+  return {
+    lawsuitIds: (data ?? [])
+      .filter((d: { task_type?: string | null; label?: string | null }) => isFileLawsuitTask(d))
+      .map((d: { id: string }) => d.id),
   }
-  return rows.map((d: { id: string }) => d.id)
 }
 
 const DEBTOR_COLS =
@@ -91,13 +92,18 @@ const DEBTOR_COLS =
 
 const IN_CHUNK = 120
 
-function applyPleadingCurrentFilters(q: any, params: FetchReceiptsPrepParams, defIds: string[]): any {
+function applyReceiptsPrepFilters(
+  q: any,
+  params: FetchReceiptsPrepParams,
+  defIds: string[],
+): any {
   let next = q
     .not('case_status', 'eq', 'closed')
     .not('current_task_id', 'is', null)
     .is('special_status_id', null)
     .in('current_task.task_definition_id', defIds)
     .not('current_task.task_status', 'in', TERMINAL_FILTER)
+    .not('current_task.assigned_to', 'is', null)
   if (params.branchId) next = next.eq('branch_id', params.branchId)
   if (params.caseType) next = next.eq('case_type', params.caseType)
   const listId = params.branchListId?.trim() || null
@@ -171,6 +177,29 @@ async function attachFiles(
   }
 }
 
+async function attachTransactionSale(admin: AdminClient, rows: ReceiptsPrepRow[]): Promise<void> {
+  if (!rows.length) return
+  const { data, error } = await admin
+    .from('debtors')
+    .select('id, transaction_number, sale_date')
+    .in('id', rows.map(r => r.debtorId))
+  if (error) return
+  const map = new Map<string, { transactionNumber: string | null; saleDate: string | null }>(
+    (data ?? []).map((d: { id: string; transaction_number?: string | null; sale_date?: string | null }) => [
+      d.id,
+      {
+        transactionNumber: d.transaction_number ?? null,
+        saleDate: d.sale_date ? String(d.sale_date).slice(0, 10) : null,
+      },
+    ]),
+  )
+  for (const row of rows) {
+    const extra = map.get(row.debtorId)
+    row.transactionNumber = extra?.transactionNumber ?? row.transactionNumber ?? null
+    row.saleDate = extra?.saleDate ?? row.saleDate ?? null
+  }
+}
+
 function mapRow(
   d: any,
   branchNames: Map<string, string>,
@@ -185,6 +214,8 @@ function mapRow(
     phone: d.phone ?? null,
     receiptType: d.receipt_type ?? null,
     receiptNumber: d.receipt_number ?? null,
+    transactionNumber: d.transaction_number ?? null,
+    saleDate: d.sale_date ? String(d.sale_date).slice(0, 10) : null,
     remaining: Number(d.remaining_amount ?? 0),
     firstHearingDate: d.first_hearing_date ? String(d.first_hearing_date).slice(0, 10) : null,
     courtName: resolveDebtorCourtName(d),
@@ -193,39 +224,34 @@ function mapRow(
     branchName: bId ? branchNames.get(bId) ?? 'فرع' : 'بدون فرع',
     branchListName: bl?.name?.trim() ?? null,
     caseType: d.case_type === 'criminal' ? 'criminal' : 'civil',
+    currentTaskLabel: 'إقامة دعوى',
     receiptsPrepared: includePrepared ? Boolean(d.receipts_prepared) : false,
     files: [],
   }
 }
 
 /**
- * أسماء كارد «تجهيز الوصولات»: المهمة الحالية مرافعات (غير منتهية).
- * طلب واحد من العميل — التجميع هنا على السيرفر.
+ * أسماء كارد «تجهيز الوصولات»: إقامة دعوى مكلفة فقط.
+ * يغادر القائمة عند انتقال المهمة الحالية عن إقامة دعوى المكلفة.
  */
 export async function fetchReceiptsPrep(
   admin: AdminClient,
   params: FetchReceiptsPrepParams,
 ): Promise<FetchReceiptsPrepResult> {
-  await promoteStandaloneNotificationsToPleadingDual(admin, {
-    branchId: params.branchId,
-    caseType: params.caseType ?? null,
-    branchListId: params.branchListId ?? null,
-  }).catch((e) => console.warn('[receipts-prep:promote]', e))
-
-  const defIds = await pleadingDefinitionIds(admin, params)
-  if (!defIds.length) return { rows: [], total: 0, columnMissing: false }
+  const { lawsuitIds } = await receiptsPrepDefinitionIds(admin, params)
+  if (!lawsuitIds.length) return { rows: [], total: 0, columnMissing: false }
 
   const withFlag = `${DEBTOR_COLS}, receipts_prepared`
-  const inner = ', current_task:tasks!current_task_id!inner(id, task_status, task_definition_id)'
+  const inner = ', current_task:tasks!current_task_id!inner(id, task_status, task_definition_id, assigned_to, task_type)'
 
   if (params.countOnly) {
     let total = 0
-    for (let i = 0; i < defIds.length; i += IN_CHUNK) {
-      const chunk = defIds.slice(i, i + IN_CHUNK)
+    for (let i = 0; i < lawsuitIds.length; i += IN_CHUNK) {
+      const chunk = lawsuitIds.slice(i, i + IN_CHUNK)
       let q = admin
         .from('debtors')
-        .select('id, current_task:tasks!current_task_id!inner(id)', { count: 'exact', head: true })
-      q = applyPleadingCurrentFilters(q, params, chunk)
+        .select('id, current_task:tasks!current_task_id!inner(id, assigned_to)', { count: 'exact', head: true })
+      q = applyReceiptsPrepFilters(q, params, chunk)
       const { count, error } = await q
       if (error) throw new Error(pgErrorMessage(error))
       total += count ?? 0
@@ -235,11 +261,11 @@ export async function fetchReceiptsPrep(
 
   const raw: any[] = []
   let includePrepared = true
-  for (let i = 0; i < defIds.length; i += IN_CHUNK) {
-    const chunk = defIds.slice(i, i + IN_CHUNK)
+  for (let i = 0; i < lawsuitIds.length; i += IN_CHUNK) {
+    const chunk = lawsuitIds.slice(i, i + IN_CHUNK)
     const run = async (cols: string) => {
       let q = admin.from('debtors').select(cols + inner)
-      q = applyPleadingCurrentFilters(q, params, chunk)
+      q = applyReceiptsPrepFilters(q, params, chunk)
       return q.order('full_name').order('id').limit(LIST_LIMIT)
     }
     let res = await run(includePrepared ? withFlag : DEBTOR_COLS)
@@ -271,6 +297,7 @@ export async function fetchReceiptsPrep(
   await Promise.all([
     fillMissingHearingDates(admin, rows),
     attachFiles(admin, rows),
+    attachTransactionSale(admin, rows),
   ])
 
   rows.sort((a, b) => a.debtorName.localeCompare(b.debtorName, 'ar'))

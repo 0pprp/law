@@ -250,7 +250,7 @@ export default function LawyerWorkspacePage() {
           {
             'المحامي': lawyer.full_name,
             'الهاتف': lawyer.phone ?? '—',
-            'النوع': lawyerTypeLabel(lawyer.lawyer_type),
+            'النوع': lawyerTypeLabel(lawyer.lawyer_type, lawyer.branch_name),
             'القسم': caseTypeLabel(lawyer.case_type) ?? '—',
             'من': from || 'الكل',
             'إلى': to || 'الكل',
@@ -314,7 +314,7 @@ export default function LawyerWorkspacePage() {
       <PageHeader
         title={lawyer?.full_name ?? 'صفحة المحامي'}
         subtitle={lawyer
-          ? `${lawyerTypeLabel(lawyer.lawyer_type)}${section ? ` · ${section}` : ''}${lawyer.phone ? ` · ${lawyer.phone}` : ''}`
+          ? `${lawyerTypeLabel(lawyer.lawyer_type, lawyer.branch_name)}${section ? ` · ${section}` : ''}${lawyer.phone ? ` · ${lawyer.phone}` : ''}`
           : 'المكلف بهم والسجلات'}
         breadcrumb={[
           { label: 'المحامين', href: '/admin/lawyer-stats' },
@@ -352,7 +352,7 @@ export default function LawyerWorkspacePage() {
             {lawyerInitials(lawyer.full_name)}
           </div>
           <div className="flex flex-wrap gap-1.5">
-            <Badge variant="gray">{lawyerTypeLabel(lawyer.lawyer_type)}</Badge>
+            <Badge variant="gray">{lawyerTypeLabel(lawyer.lawyer_type, lawyer.branch_name)}</Badge>
             {section ? <Badge variant="info">{section}</Badge> : null}
             {lawyer.is_active === false ? <Badge variant="danger">موقوف</Badge> : null}
             <Badge variant="info">{fmtNum(assigned.length)} مكلف بها</Badge>

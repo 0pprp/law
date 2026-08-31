@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { useRouter, useParams } from 'next/navigation'
+import { useState, useEffect, useRef, useMemo, Suspense } from 'react'
+import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
@@ -26,8 +26,9 @@ import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import type { ReceiptType } from '@/lib/types'
 import { createClient } from '@/lib/supabase/client'
 import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
-import { RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL, TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL } from '@/lib/ui-labels'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { DatePicker } from '@/components/ui/date-picker'
 import MoneyInput from '@/components/ui/money-input'
 import BranchListSelect from '@/components/BranchListSelect'
 import { fetchBranchLists, fetchBranchCourtNames } from '@/lib/branch-lists'
@@ -35,6 +36,9 @@ import type { BranchList } from '@/lib/branch-lists'
 import { resolveCourtName } from '@/lib/awaiting-assignment'
 import { canDelete } from '@/lib/permissions'
 import { appConfirm } from '@/lib/app-dialog'
+import { safeAdminReturnPath } from '@/lib/safe-return-to'
+import { cacheInvalidatePrefix } from '@/lib/query-cache'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import {
   isReceiptNumberMissing,
   normalizeReceiptNumberInput,
@@ -45,12 +49,24 @@ const FORM_RECEIPT_TYPES: ReceiptType[] = ['check', 'bill_of_exchange', 'trust']
 
 interface Attachment { id: string; file_name: string; file_path: string; file_size: number | null }
 
-export default function EditDebtorPage() {
+function EditDebtorPageInner() {
   const router = useRouter()
   const params = useParams()
+  const searchParams = useSearchParams()
   const id = params.id as string
   const { role, canAccessCivil, canAccessCriminal } = useAdminRoleState()
   const submitLock = useRef(false)
+  const returnTo = useMemo(
+    () => safeAdminReturnPath(searchParams.get('returnTo')),
+    [searchParams],
+  )
+
+  function leaveAfterSave() {
+    cacheInvalidatePrefix('exp-queue:')
+    invalidateDashboardCounts()
+    router.push(returnTo ?? (isCriminal ? `/admin/debtors/${id}/account` : '/admin/debtors'))
+    router.refresh()
+  }
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -71,7 +87,7 @@ export default function EditDebtorPage() {
   const [form, setForm] = useState({
     full_name: '', phone: '', address: '', id_number: '',
     receipt_type: 'check' as ReceiptType,
-    receipt_number: '', receipt_amount: '', remaining_amount: '', lawyer_fees: '',
+    receipt_number: '', transaction_number: '', sale_date: '', receipt_amount: '', remaining_amount: '', lawyer_fees: '',
     penalty_amount: '', has_contract: false, receipt_signed_legal_costs: false, notes: '',
     branch_list_id: '',
     court_name: '',
@@ -109,6 +125,8 @@ export default function EditDebtorPage() {
           id_number: data.id_number ?? '',
           receipt_type: data.receipt_type ?? 'check',
           receipt_number: data.receipt_number ?? '',
+          transaction_number: data.transaction_number ?? '',
+          sale_date: data.sale_date ? String(data.sale_date).slice(0, 10) : '',
           receipt_amount: data.receipt_amount?.toString() ?? '',
           remaining_amount: data.remaining_amount?.toString() ?? '',
           lawyer_fees: data.lawyer_fees?.toString() ?? '',
@@ -213,6 +231,8 @@ export default function EditDebtorPage() {
           branch_list_id: null,
           // نص حر — الـ API يزامن الأعمدة الرقمية فقط إن كانت القيمة رقماً صالحاً
           receipt_amount: criminalPayload.amount_owed,
+          transaction_number: form.transaction_number.trim() || null,
+          sale_date: form.sale_date || null,
           criminal_details: criminalPayload,
         }),
       })
@@ -234,7 +254,7 @@ export default function EditDebtorPage() {
         }
       }
       setSuccess('تم حفظ التعديلات')
-      router.push(`/admin/debtors/${id}/account`)
+      leaveAfterSave()
       return
     }
 
@@ -249,6 +269,8 @@ export default function EditDebtorPage() {
       full_name: form.full_name, phone: form.phone || null, address: form.address || null,
       id_number: form.id_number || null,
       receipt_type: form.receipt_type, receipt_number: receiptNumber,
+      transaction_number: form.transaction_number.trim() || null,
+      sale_date: form.sale_date || null,
       receipt_amount: parseMoneyInput(form.receipt_amount),
       remaining_amount: parseMoneyInput(form.remaining_amount),
       lawyer_fees: parseMoneyInput(form.lawyer_fees),
@@ -282,7 +304,7 @@ export default function EditDebtorPage() {
         return
       }
     }
-    router.push('/admin/debtors')
+    leaveAfterSave()
   }
 
   if (loading) return (
@@ -304,7 +326,7 @@ export default function EditDebtorPage() {
     return (
       <div className="max-w-3xl space-y-5">
         <div>
-          <BackButton fallback={`/admin/debtors/${id}/account`} />
+          <BackButton href={returnTo} fallback={`/admin/debtors/${id}/account`} />
         </div>
         <PageHeader
           title="تعديل مدين جزائي"
@@ -323,6 +345,20 @@ export default function EditDebtorPage() {
                 <FormField label="الاسم الكامل" required>
                   <input type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)} required className={formInputClass} />
                 </FormField>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                  <FormField label={TRANSACTION_NUMBER_LABEL} hint="اختياري">
+                    <input type="text" value={form.transaction_number} onChange={e => set('transaction_number', e.target.value)} className={formInputClass} dir="ltr" />
+                  </FormField>
+                  <FormField label={SALE_DATE_LABEL} hint="اختياري">
+                    <DatePicker
+                      value={form.sale_date}
+                      onChange={v => set('sale_date', v)}
+                      disabled={readOnly}
+                      headerTitle={SALE_DATE_LABEL}
+                      placeholder="اختياري — اختر التاريخ"
+                    />
+                  </FormField>
+                </div>
                 <p className="text-xs text-[#767676]">نوع الدعوى: جزائي (لا يمكن تغييره) — القائمة غير متاحة للجزائي</p>
               </FormFlowStep>
               <FormFlowStep step={2} title="تفاصيل القضية">
@@ -374,7 +410,7 @@ export default function EditDebtorPage() {
           {success && <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm rounded-xl px-4 py-3">{success}</div>}
           <div className="flex gap-3 pb-6">
             <Button type="submit" variant="primary" loading={saving} disabled={readOnly || saving}>حفظ التعديلات</Button>
-            <Link href={`/admin/debtors/${id}/account`}><Button type="button" variant="outline">إلغاء</Button></Link>
+            <Link href={returnTo ?? `/admin/debtors/${id}/account`}><Button type="button" variant="outline">إلغاء</Button></Link>
           </div>
         </form>
       </div>
@@ -384,7 +420,7 @@ export default function EditDebtorPage() {
   return (
     <div className="max-w-3xl space-y-5">
       <div>
-        <BackButton fallback="/admin/debtors" />
+        <BackButton href={returnTo} fallback="/admin/debtors" />
       </div>
       <PageHeader
         title="تعديل بيانات المدين"
@@ -504,6 +540,18 @@ export default function EditDebtorPage() {
               <FormField label={RECEIPT_NUMBER_LABEL} required>
                 <input type="text" value={form.receipt_number} onChange={e => set('receipt_number', e.target.value)} className={formInputClass} dir="ltr" />
               </FormField>
+              <FormField label={TRANSACTION_NUMBER_LABEL} hint="اختياري">
+                <input type="text" value={form.transaction_number} onChange={e => set('transaction_number', e.target.value)} className={formInputClass} dir="ltr" />
+              </FormField>
+              <FormField label={SALE_DATE_LABEL} hint="اختياري">
+                <DatePicker
+                  value={form.sale_date}
+                  onChange={v => set('sale_date', v)}
+                  disabled={readOnly}
+                  headerTitle={SALE_DATE_LABEL}
+                  placeholder="اختياري — اختر التاريخ"
+                />
+              </FormField>
               <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`}>
                 <MoneyInput value={form.receipt_amount} onChange={v => set('receipt_amount', v)} className={formInputClass} />
               </FormField>
@@ -587,9 +635,22 @@ export default function EditDebtorPage() {
 
         <div className="flex gap-3 pb-6">
           <Button type="submit" variant="primary" loading={saving} disabled={readOnly}>حفظ التعديلات</Button>
-          <Link href="/admin/debtors"><Button type="button" variant="outline">إلغاء</Button></Link>
+          <Link href={returnTo ?? '/admin/debtors'}><Button type="button" variant="outline">إلغاء</Button></Link>
         </div>
       </form>
     </div>
+  )
+}
+
+export default function EditDebtorPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex flex-col items-center gap-3 py-20">
+        <svg className="w-6 h-6 animate-spin text-[#2C8780]" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+        <p className="text-sm text-[#767676]">جارٍ التحميل...</p>
+      </div>
+    }>
+      <EditDebtorPageInner />
+    </Suspense>
   )
 }

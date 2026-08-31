@@ -5,6 +5,7 @@ import type { LawyerWalletRow } from '@/lib/lawyer-wallet'
 import type { StationeryTxRow } from '@/lib/lawyer-stationery-wallet'
 import type { LawyerWalletKind, WalletTransactionType } from '@/lib/types'
 import { walletTransactionLabel } from '@/lib/wallet-transaction-display'
+import { lawyerTypeDisplayLabel } from '@/lib/lawyer-type'
 
 export const EXPORT_LIMIT = 5000
 
@@ -41,9 +42,8 @@ export function safeExcelName(name: string, max = 31) {
   return name.replace(/[:\\/?*[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) || 'ورقة'
 }
 
-export function lawyerTypeLabel(t: string | null | undefined) {
-  if (t === 'general') return 'محامي عام'
-  return 'محامي فرع'
+export function lawyerTypeLabel(t: string | null | undefined, branchName?: string | null) {
+  return lawyerTypeDisplayLabel(t, branchName)
 }
 
 export function caseTypeLabel(t: string | null | undefined) {

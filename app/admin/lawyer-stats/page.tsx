@@ -120,7 +120,7 @@ export default function LawyerStatsPage() {
           summaries.map(s => ({
             'المحامي': s.lawyer.full_name,
             'الهاتف': s.lawyer.phone ?? '—',
-            'النوع': lawyerTypeLabel(s.lawyer.lawyer_type),
+            'النوع': lawyerTypeLabel(s.lawyer.lawyer_type, s.lawyer.branch_name),
             'القسم': caseTypeLabel(s.lawyer.case_type) ?? '—',
             'من': from || 'الكل',
             'إلى': to || 'الكل',
@@ -267,7 +267,7 @@ export default function LawyerStatsPage() {
                   <div className="min-w-0 flex-1">
                     <p className="font-black text-[#231F20] truncate">{s.lawyer.full_name}</p>
                     <div className="flex flex-wrap gap-1.5 mt-1.5">
-                      <Badge variant="gray">{lawyerTypeLabel(s.lawyer.lawyer_type)}</Badge>
+                      <Badge variant="gray">{lawyerTypeLabel(s.lawyer.lawyer_type, s.lawyer.branch_name)}</Badge>
                       {section ? <Badge variant="info">{section}</Badge> : null}
                       {s.lawyer.is_active === false ? <Badge variant="danger">موقوف</Badge> : null}
                     </div>

@@ -26,6 +26,8 @@ export type StageDebtorRow = {
   phone: string | null
   receiptType: ReceiptType | null
   receiptNumber: string | null
+  transactionNumber: string | null
+  saleDate: string | null
   remaining: number
   taskCreatedAt: string | null
   dueDate: string | null
@@ -118,6 +120,8 @@ function mapDebtorRow(
     phone: d.phone ?? null,
     receiptType: d.receipt_type ?? null,
     receiptNumber: d.receipt_number ?? null,
+    transactionNumber: d.transaction_number ?? null,
+    saleDate: d.sale_date ? String(d.sale_date).slice(0, 10) : null,
     remaining: Number(d.remaining_amount ?? 0),
     taskCreatedAt: task.created_at ?? null,
     dueDate: task.due_date ? String(task.due_date).slice(0, 10) : null,
@@ -191,6 +195,29 @@ async function attachNotesAndHearing(
       admin.from('debtors').update({ first_hearing_date: ymd } as any).eq('id', debtorId),
     ),
   )
+}
+
+async function attachTransactionSale(admin: AdminClient, rows: StageDebtorRow[]): Promise<void> {
+  if (!rows.length) return
+  const { data, error } = await admin
+    .from('debtors')
+    .select('id, transaction_number, sale_date')
+    .in('id', rows.map(r => r.debtorId))
+  if (error) return
+  const map = new Map<string, { transactionNumber: string | null; saleDate: string | null }>(
+    (data ?? []).map((d: { id: string; transaction_number?: string | null; sale_date?: string | null }) => [
+      d.id,
+      {
+        transactionNumber: d.transaction_number ?? null,
+        saleDate: d.sale_date ? String(d.sale_date).slice(0, 10) : null,
+      },
+    ]),
+  )
+  for (const row of rows) {
+    const extra = map.get(row.debtorId)
+    row.transactionNumber = extra?.transactionNumber ?? row.transactionNumber ?? null
+    row.saleDate = extra?.saleDate ?? row.saleDate ?? null
+  }
 }
 
 async function fetchTwinOverlayRows(
@@ -498,6 +525,7 @@ export async function fetchStageDebtors(
 
   const rows = params.offset === 0 ? [...overlay, ...mapped] : mapped
   await attachNotesAndHearing(admin, rows, isPleadingStage)
+  await attachTransactionSale(admin, rows)
 
   const currentTotal = typeof rawCount === 'number' ? rawCount : mapped.length
   const overlayTotal = overlay.length

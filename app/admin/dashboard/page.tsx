@@ -1,7 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import { useBranch, useBranchId } from '@/context/branch'
 import Link from 'next/link'
 import { useAdminRole } from '@/context/admin-role'
@@ -15,26 +14,31 @@ import { scheduleBranchMaintenance } from '@/lib/branch-maintenance'
 import {
   DASHBOARD_COUNTS_CHANGED,
   dashboardCountsKey,
+  isDashboardStageCountsFresh,
+  opsCountsKey,
   peekDashboardStageCounts,
+  peekOpsCardCounts,
   writeDashboardStageCounts,
+  writeOpsCardCounts,
   type DashboardStageSnapshot,
+  type OpsCardCounts,
 } from '@/lib/dashboard-counts-cache'
 import PaymentOpsCards from '@/components/PaymentOpsCards'
-import {
-  fetchPendingReviewCount,
-  fetchPleadingHearingBadgeCounts,
-  type UnassignedStageCount,
-  type PleadingHearingBadgeCounts,
-} from '@/lib/task-assignment'
+import { fetchDeduped } from '@/lib/inflight-fetch'
+import { createClient } from '@/lib/supabase/client'
+import type { UnassignedStageCount, PleadingHearingBadgeCounts } from '@/lib/task-assignment'
 
 const EMPTY_HEARING_BADGES: PleadingHearingBadgeCounts = { yellow: 0, red: 0, gray: 0 }
 
-const EMPTY_DASH = {
-  stages: [] as UnassignedStageCount[],
-  assignedStages: [] as UnassignedStageCount[],
-  overdueStages: [] as UnassignedStageCount[],
-  unassigned: 0,
-  assigned: 0,
+const EMPTY_OPS: OpsCardCounts = {
+  awaiting: null,
+  prep: null,
+  receiptsPrep: null,
+  payment: null,
+  pending: null,
+  instant: null,
+  recentNames: null,
+  legalArchive: null,
 }
 
 function TaskStageIcon() {
@@ -42,6 +46,42 @@ function TaskStageIcon() {
     <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
     </svg>
+  )
+}
+
+function assignedFileLawsuitCount(stages: UnassignedStageCount[]): number {
+  return stages
+    .filter(s => s.taskType === 'file_lawsuit' || (s.label ?? '').includes('إقامة دعوى'))
+    .reduce((n, s) => n + s.count, 0)
+}
+
+function ReceiptsPrepStageCard({
+  count,
+  href,
+  loading,
+}: {
+  count: number
+  href: string
+  loading: boolean
+}) {
+  return (
+    <StatCard
+      label="تجهيز الوصولات"
+      value={loading ? '—' : count}
+      sub="إقامة دعوى مكلفة"
+      accent="green"
+      icon={<TaskStageIcon />}
+      iconBg="bg-gradient-to-br from-emerald-600 to-emerald-800"
+      footer={
+        <Link
+          href={href}
+          className="block w-full py-1.5 text-center text-[11px] font-bold text-white rounded-lg hover:opacity-90 transition-opacity"
+          style={{ background: 'linear-gradient(135deg,#047857,#065f46)' }}
+        >
+          عرض الأسماء
+        </Link>
+      }
+    />
   )
 }
 
@@ -64,6 +104,7 @@ function StageGrid({
   hrefForStage,
   barClassName = 'bg-yellow-400',
   hearingBadges = null,
+  extra = null,
 }: {
   stages: UnassignedStageCount[]
   loading: boolean
@@ -75,6 +116,7 @@ function StageGrid({
   hrefForStage?: (s: UnassignedStageCount) => string
   barClassName?: string
   hearingBadges?: PleadingHearingBadgeCounts | null
+  extra?: ReactNode
 }) {
   const stageTotal = stages.reduce((sum, s) => sum + s.count, 0)
   if (loading) {
@@ -86,7 +128,7 @@ function StageGrid({
       </div>
     )
   }
-  if (stages.length === 0) {
+  if (stages.length === 0 && !extra) {
     return (
       <div className="bg-white rounded-2xl border p-10 text-center">
         <p className="text-sm font-semibold text-[#231F20]">{emptyMessage}</p>
@@ -100,6 +142,7 @@ function StageGrid({
   }
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 pt-2">
+      {extra}
       {stages.map((s, i) => {
         const pct = stageTotal > 0 ? Math.round((s.count / stageTotal) * 100) : 0
         const href = hrefForStage?.(s) ?? `/admin/dashboard/stages/${s.id}`
@@ -198,6 +241,7 @@ export default function DashboardPage() {
   const [totalAssigned, setTotalAssigned] = useState(0)
   const [loading, setLoading] = useState(true)
   const [recentActivity, setRecentActivity] = useState<{ action: string; created_at: string }[]>([])
+  const [opsRemote, setOpsRemote] = useState<OpsCardCounts | null>(null)
   const loadGenRef = useRef(0)
 
   const applyDashboardSnapshot = useCallback((snap: DashboardStageSnapshot) => {
@@ -214,8 +258,7 @@ export default function DashboardPage() {
     setRecentActivity(snap.recentActivity)
   }, [])
 
-  const loadData = useCallback(async () => {
-    const supabase = createClient()
+  const loadData = useCallback(async (opts?: { force?: boolean }) => {
     const gen = ++loadGenRef.current
     const isStale = () => gen !== loadGenRef.current
 
@@ -231,6 +274,7 @@ export default function DashboardPage() {
       setTotalAssigned(0)
       setTotalPendingReview(0)
       setRecentActivity([])
+      setOpsRemote({ ...EMPTY_OPS, awaiting: 0, prep: 0, receiptsPrep: 0, instant: 0, recentNames: 0, legalArchive: 0 })
       setLoading(false)
       return
     }
@@ -244,84 +288,68 @@ export default function DashboardPage() {
       setLoading(true)
     }
 
-    scheduleBranchMaintenance(supabase, branchId)
+    const awaitingOpsKey = opsCountsKey(branchId, listId, ct, 'awaiting')
+    const cachedOps = peekOpsCardCounts(awaitingOpsKey)
+    if (cachedOps) setOpsRemote(cachedOps)
+
+    if (!opts?.force && cached && isDashboardStageCountsFresh(cacheKey)) {
+      return
+    }
+
+    scheduleBranchMaintenance(createClient(), branchId)
 
     try {
-      let aq = supabase
-        .from('activity_logs')
-        .select('action, created_at')
-        .order('created_at', { ascending: false })
-        .limit(5)
-      if (branchId) aq = (aq as any).eq('branch_id', branchId)
+      const p = new URLSearchParams()
+      if (viewAllBranches) p.set('viewAll', '1')
+      else if (branchId) p.set('branchId', branchId)
+      if (ct === 'civil' && !viewAllBranches && listId) p.set('branchListId', listId)
+      if (ct === 'civil' || ct === 'criminal') p.set('caseType', ct)
 
-      const branchListForCivil = viewAllBranches ? null : listId
-      const qs = (caseType: 'civil' | 'criminal') => {
-        const p = new URLSearchParams({ caseType })
-        if (branchId) p.set('branchId', branchId)
-        if (caseType === 'civil' && branchListForCivil) p.set('branchListId', branchListForCivil)
-        return p
-      }
-      const fetchCivil = showCivilStages
-        ? fetch(`/api/admin/dashboard-stages?${qs('civil')}`).then(async (res) => {
-            const data = await res.json().catch(() => ({}))
-            if (!res.ok) throw new Error(data.error || 'فشل تحميل المراحل')
-            return data as typeof EMPTY_DASH
-          })
-        : Promise.resolve(EMPTY_DASH)
-      const fetchCriminal = showCriminalStages
-        ? fetch(`/api/admin/dashboard-stages?${qs('criminal')}`).then(async (res) => {
-            const data = await res.json().catch(() => ({}))
-            if (!res.ok) throw new Error(data.error || 'فشل تحميل المراحل')
-            return data as typeof EMPTY_DASH
-          })
-        : Promise.resolve(EMPTY_DASH)
-
-      const fetchHearingBadges = showCivilStages && (role === 'admin' || role === 'viewer')
-        ? fetchPleadingHearingBadgeCounts(supabase, branchId, {
-            branchListId: branchListForCivil,
-          })
-        : Promise.resolve(EMPTY_HEARING_BADGES)
-
-      const [civilData, criminalData, pendingReview, activityRes, hearingBadges] = await Promise.all([
-        fetchCivil,
-        fetchCriminal,
-        fetchPendingReviewCount(
-          supabase,
-          branchId,
-          ct === 'criminal' || viewAllBranches ? null : listId,
-          ct,
-        ),
-        aq,
-        fetchHearingBadges,
-      ])
-
+      const res = await fetchDeduped(`/api/admin/dashboard-bootstrap?${p}`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'فشل تحميل اللوحة')
       if (isStale()) return
 
       const next: DashboardStageSnapshot = {
-        civilStages: showCivilStages ? civilData.stages : [],
-        criminalStages: showCriminalStages ? criminalData.stages : [],
-        civilAssignedStages: showCivilStages ? civilData.assignedStages : [],
-        criminalAssignedStages: showCriminalStages ? criminalData.assignedStages : [],
-        civilOverdueStages: showCivilStages ? civilData.overdueStages : [],
-        criminalOverdueStages: showCriminalStages ? criminalData.overdueStages : [],
-        pleadingHearingBadges: showCivilStages ? hearingBadges : EMPTY_HEARING_BADGES,
-        unassigned: (showCivilStages ? civilData.unassigned : 0) + (showCriminalStages ? criminalData.unassigned : 0),
-        assigned: (showCivilStages ? civilData.assigned : 0) + (showCriminalStages ? criminalData.assigned : 0),
-        pendingReview,
-        recentActivity: activityRes.data ?? [],
+        civilStages: showCivilStages ? (data.civil?.stages ?? []) : [],
+        criminalStages: showCriminalStages ? (data.criminal?.stages ?? []) : [],
+        civilAssignedStages: showCivilStages ? (data.civil?.assignedStages ?? []) : [],
+        criminalAssignedStages: showCriminalStages ? (data.criminal?.assignedStages ?? []) : [],
+        civilOverdueStages: showCivilStages ? (data.civil?.overdueStages ?? []) : [],
+        criminalOverdueStages: showCriminalStages ? (data.criminal?.overdueStages ?? []) : [],
+        pleadingHearingBadges: showCivilStages ? (data.pleadingHearingBadges ?? EMPTY_HEARING_BADGES) : EMPTY_HEARING_BADGES,
+        unassigned: (showCivilStages ? Number(data.civil?.unassigned ?? 0) : 0)
+          + (showCriminalStages ? Number(data.criminal?.unassigned ?? 0) : 0),
+        assigned: (showCivilStages ? Number(data.civil?.assigned ?? 0) : 0)
+          + (showCriminalStages ? Number(data.criminal?.assigned ?? 0) : 0),
+        pendingReview: Number(data.pendingReview ?? 0) || 0,
+        recentActivity: Array.isArray(data.recentActivity) ? data.recentActivity : [],
       }
       writeDashboardStageCounts(cacheKey, next)
       applyDashboardSnapshot(next)
+
+      const ops: OpsCardCounts = {
+        awaiting: Number(data.ops?.awaiting ?? 0) || 0,
+        prep: Number(data.ops?.prep ?? 0) || 0,
+        receiptsPrep: Number(data.ops?.receiptsPrep ?? 0) || 0,
+        payment: cachedOps?.payment ?? null,
+        pending: cachedOps?.pending ?? null,
+        instant: Number(data.ops?.instant ?? 0) || 0,
+        recentNames: Number(data.ops?.recentNames ?? data.ops?.awaiting ?? 0) || 0,
+        legalArchive: Number(data.ops?.legalArchive ?? 0) || 0,
+      }
+      writeOpsCardCounts(awaitingOpsKey, ops)
+      setOpsRemote(ops)
     } catch (e: unknown) {
       console.error('[admin/dashboard] load error:', e)
     }
     if (!isStale()) setLoading(false)
-  }, [branchId, viewAllBranches, listId, ct, showCivilStages, showCriminalStages, role, applyDashboardSnapshot])
+  }, [branchId, viewAllBranches, listId, ct, showCivilStages, showCriminalStages, applyDashboardSnapshot])
 
-  useEffect(() => { loadData() }, [loadData])
+  useEffect(() => { void loadData() }, [loadData])
 
   useEffect(() => {
-    const onRefresh = () => { void loadData() }
+    const onRefresh = () => { void loadData({ force: true }) }
     window.addEventListener(DASHBOARD_COUNTS_CHANGED, onRefresh)
     return () => window.removeEventListener(DASHBOARD_COUNTS_CHANGED, onRefresh)
   }, [loadData])
@@ -424,6 +452,7 @@ export default function DashboardPage() {
         listId={listId}
         section="awaiting"
         caseType={ct}
+        parentOps={opsRemote}
       />
 
       {showReviewCard && (branchId || viewAllBranches) && (
@@ -502,6 +531,13 @@ export default function DashboardPage() {
             linkLabel="عرض المكلفة"
             barClassName="bg-[#2C8780]"
             hrefForStage={(s) => `/admin/dashboard/stages/${encodeURIComponent(s.id)}?view=assigned`}
+            extra={
+              <ReceiptsPrepStageCard
+                count={assignedFileLawsuitCount(civilAssignedStages)}
+                href="/admin/dashboard/receipts-prep?ct=civil"
+                loading={loading}
+              />
+            }
           />
         </div>
       )}
@@ -558,6 +594,13 @@ export default function DashboardPage() {
             linkLabel="عرض المكلفة"
             barClassName="bg-[#2C8780]"
             hrefForStage={(s) => `/admin/dashboard/stages/${encodeURIComponent(s.id)}?view=assigned`}
+            extra={
+              <ReceiptsPrepStageCard
+                count={assignedFileLawsuitCount(criminalAssignedStages)}
+                href="/admin/dashboard/receipts-prep?ct=criminal"
+                loading={loading}
+              />
+            }
           />
         </div>
       )}
@@ -589,6 +632,7 @@ export default function DashboardPage() {
           listId={listId}
           section="payment"
           caseType={ct === 'civil' ? 'civil' : ct === 'criminal' ? 'criminal' : null}
+          parentOps={opsRemote}
         />
       )}
 

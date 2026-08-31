@@ -14,7 +14,7 @@ import { isIncompleteCompletionRequest } from '@/lib/incomplete-completion'
 import { cacheInvalidatePrefix } from '@/lib/query-cache'
 import { resolveDebtorCourtName } from '@/lib/awaiting-assignment'
 import { fetchLastNotePreviewsByDebtorIds } from '@/lib/debtor-last-notes'
-import { mergePleadingNotificationTwinCounts, promoteStandaloneNotificationsToPleadingDual, recreateTwinsAfterUnassign } from '@/lib/pleading-notification-twin'
+import { mergePleadingNotificationTwinCounts, recreateTwinsAfterUnassign, schedulePromoteStandaloneNotifications } from '@/lib/pleading-notification-twin'
 
 const LAWYER_TASK_LIST_COLS =
   'id, task_type, task_definition_id, task_status, due_date, court_name, governorate, created_at, debtor_id, assignment_expires_at, admin_notes, assigned_to, reward_amount, branch_id'
@@ -879,11 +879,11 @@ async function scanCurrentTaskMeta(
   caseType?: 'civil' | 'criminal' | null,
   branchListId?: string | null,
 ): Promise<CurrentTaskMeta> {
-  await promoteStandaloneNotificationsToPleadingDual(supabase, {
+  schedulePromoteStandaloneNotifications(supabase, {
     branchId,
     caseType: caseType ?? null,
     branchListId: branchListId ?? null,
-  }).catch((e) => console.warn('[scanCurrentTaskMeta:promote]', e))
+  })
 
   // p_case_type يُمرَّر دائماً (civil|criminal|null) — يجب أن يطابق فلتر الدالة في SQL
   const { data, error } = await supabase.rpc('get_stage_counts', {
@@ -900,6 +900,7 @@ async function scanCurrentTaskMeta(
       branchId,
       caseType: caseType ?? null,
       branchListId: branchListId ?? null,
+      sideEffects: false,
     })
     return legacy
   }
@@ -928,6 +929,7 @@ async function scanCurrentTaskMeta(
     branchId,
     caseType: caseType ?? null,
     branchListId: branchListId ?? null,
+    sideEffects: false,
   })
   return meta
 }

@@ -24,6 +24,11 @@ import {
 import { upsertCriminalDebtorDetails, optionalNumericAmountOrNull } from '@/lib/criminal-debtor-details'
 import { cleanupFailedDebtorCreate } from '@/lib/debtor-hard-delete'
 import { attachLastNotes } from '@/lib/debtor-last-notes'
+import {
+  normalizeTransactionNumber,
+  parseOptionalYmdDate,
+  isMissingTxnSaleColumn,
+} from '@/lib/debtor-transaction-sale'
 
 function isValidOptionalDate(value: unknown): boolean {
   if (value == null || value === '') return true
@@ -34,6 +39,9 @@ function isValidOptionalDate(value: unknown): boolean {
 }
 
 const DEFAULT_COLS =
+  'id, full_name, phone, id_number, receipt_type, receipt_number, transaction_number, sale_date, required_amount, remaining_amount, created_at, case_status, case_type, branch_list_id, branch_id, notes, special_status_id, branch_list:branch_lists(name, court_name, execution_office), special_status:special_statuses(id, name, color)'
+
+const DEFAULT_COLS_NO_TXN =
   'id, full_name, phone, id_number, receipt_type, receipt_number, required_amount, remaining_amount, created_at, case_status, case_type, branch_list_id, branch_id, notes, special_status_id, branch_list:branch_lists(name, court_name, execution_office), special_status:special_statuses(id, name, color)'
 
 export async function GET(request: NextRequest) {
@@ -49,7 +57,8 @@ export async function GET(request: NextRequest) {
   const specialStatusId = searchParams.get('specialStatusId')?.trim() || ''
   const offset = Math.max(0, Number(searchParams.get('offset') ?? 0) || 0)
   const limit = Math.min(5000, Math.max(1, Number(searchParams.get('limit') ?? 50) || 50))
-  const cols = searchParams.get('cols')?.trim() || DEFAULT_COLS
+  const requestedCols = searchParams.get('cols')?.trim()
+  let cols = requestedCols || DEFAULT_COLS
 
   if (viewAll) {
     if (!canUseViewAllBranchesFilter(auth.profile?.role, auth.profile?.accountant_type)) {
@@ -100,7 +109,7 @@ export async function GET(request: NextRequest) {
   }
   if (search) {
     const s = search.replace(/[%_,]/g, '')
-    q = q.or(`full_name.ilike.%${s}%,phone.ilike.%${s}%,receipt_number.ilike.%${s}%`)
+    q = q.or(`full_name.ilike.%${s}%,phone.ilike.%${s}%,receipt_number.ilike.%${s}%,transaction_number.ilike.%${s}%`)
   }
   if (specialStatusId === '__none__') {
     q = q.is('special_status_id', null)
@@ -110,7 +119,33 @@ export async function GET(request: NextRequest) {
     q = ids.length > 1 ? q.in('special_status_id', ids) : q.eq('special_status_id', ids[0])
   }
 
-  const { data, count, error } = await q
+  let { data, count, error } = await q
+  if (error && isMissingTxnSaleColumn(error) && !requestedCols) {
+    let retry = admin
+      .from('debtors')
+      .select(DEFAULT_COLS_NO_TXN, { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1)
+    if (!viewAll && branchId) retry = retry.eq('branch_id', branchId)
+    if (listId && scopeCaseType !== 'criminal') {
+      retry = retry.eq('branch_list_id', listId)
+    }
+    if (scopeCaseType) retry = retry.eq('case_type', scopeCaseType)
+    else if (caseType === 'civil' || caseType === 'criminal') retry = retry.eq('case_type', caseType)
+    if (search) {
+      const s = search.replace(/[%_,]/g, '')
+      retry = retry.or(`full_name.ilike.%${s}%,phone.ilike.%${s}%,receipt_number.ilike.%${s}%`)
+    }
+    if (specialStatusId === '__none__') retry = retry.is('special_status_id', null)
+    else if (specialStatusId) {
+      const ids = specialStatusId.split(',').map(s => s.trim()).filter(Boolean)
+      retry = ids.length > 1 ? retry.in('special_status_id', ids) : retry.eq('special_status_id', ids[0])
+    }
+    const fallback = await retry
+    data = fallback.data as typeof data
+    count = fallback.count
+    error = fallback.error
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   let debtors = (data ?? []) as unknown as Array<Record<string, unknown> & { id?: string; branch_id?: string | null; notes?: string | null }>
@@ -257,10 +292,13 @@ export async function POST(request: NextRequest) {
     ? remaining
     : computeRemainingFromRequired(required, 0)
   const today = new Date().toISOString().split('T')[0]
+  const transactionNumber = normalizeTransactionNumber(body.transaction_number)
+  const saleDateParsed = parseOptionalYmdDate(body.sale_date)
+  if (saleDateParsed === false) {
+    return NextResponse.json({ error: 'تاريخ البيع غير صالح' }, { status: 400 })
+  }
 
-  const { data: newDebtor, error: dbError } = await admin
-    .from('debtors')
-    .insert({
+  const insertPayload: Record<string, unknown> = {
       full_name: fullName,
       phone: isCriminal ? null : (String(body.phone ?? '').trim() || null),
       governorate: branch.name,
@@ -282,9 +320,23 @@ export async function POST(request: NextRequest) {
       branch_id: branchId,
       branch_list_id: isCriminal ? null : branchListId,
       case_type: caseType,
-    })
+      transaction_number: transactionNumber,
+      sale_date: saleDateParsed,
+    }
+
+  let { data: newDebtor, error: dbError } = await admin
+    .from('debtors')
+    .insert(insertPayload)
     .select('id')
     .single()
+
+  if (dbError && isMissingTxnSaleColumn(dbError)) {
+    delete insertPayload.transaction_number
+    delete insertPayload.sale_date
+    const retry = await admin.from('debtors').insert(insertPayload).select('id').single()
+    newDebtor = retry.data
+    dbError = retry.error
+  }
 
   if (dbError || !newDebtor) {
     return NextResponse.json({ error: dbError?.message ?? 'فشل إنشاء المدين' }, { status: 500 })

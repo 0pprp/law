@@ -9,8 +9,9 @@ import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Table, THead, TBody, TR, TH, TD, SortableTH } from '@/components/ui/data-table'
 import { useTableSort } from '@/hooks/use-table-sort'
-import { fmtMoney } from '@/lib/utils'
+import { fmtMoney, fmtDate } from '@/lib/utils'
 import { debtorSearchOrFilter, DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
+import { TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL } from '@/lib/ui-labels'
 import { PremiumSelect } from '@/components/ui/premium-select'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import { CASE_TYPE_FILTER_OPTIONS } from '@/lib/case-type'
@@ -18,7 +19,7 @@ import { useAdminRole } from '@/context/admin-role'
 import { visibleTaskFeeAmount } from '@/lib/visible-task-fee'
 
 const SEL = 'border border-[rgba(118,118,118,0.2)] rounded-lg px-3 py-2 text-sm text-[#231F20] focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] bg-white transition-all'
-const ACCOUNT_COLS = 'id, full_name, governorate, phone, receipt_number, remaining_amount, penalty_amount, total_expenses, lawyer_fees, total_payments, required_amount, case_type'
+const ACCOUNT_COLS = 'id, full_name, governorate, phone, receipt_number, transaction_number, sale_date, remaining_amount, penalty_amount, total_expenses, lawyer_fees, total_payments, required_amount, case_type'
 
 export default function AccountsPage() {
   const branchId = useBranchId()
@@ -60,8 +61,22 @@ export default function AccountsPage() {
     if (scopeListId) q = (q as any).eq('branch_list_id', scopeListId)
     if (effectiveCaseType) q = (q as any).eq('case_type', effectiveCaseType)
 
-    const { data } = await q
-    setDebtors(data ?? [])
+    const { data, error } = await q
+    if (error) {
+      let retry = supabase
+        .from('debtors')
+        .select('id, full_name, governorate, phone, receipt_number, remaining_amount, penalty_amount, total_expenses, lawyer_fees, total_payments, required_amount, case_type')
+        .or(`full_name.ilike.%${term.trim()}%,phone.ilike.%${term.trim()}%,receipt_number.ilike.%${term.trim()}%`)
+        .order('full_name')
+        .limit(100)
+      if (branchId) retry = (retry as any).eq('branch_id', branchId)
+      if (scopeListId) retry = (retry as any).eq('branch_list_id', scopeListId)
+      if (effectiveCaseType) retry = (retry as any).eq('case_type', effectiveCaseType)
+      const fb = await retry
+      setDebtors(fb.data ?? [])
+    } else {
+      setDebtors(data ?? [])
+    }
     setLoading(false)
   }, [branchId, viewAllBranches, listId, effectiveCaseType])
 
@@ -85,6 +100,8 @@ export default function AccountsPage() {
     cycleSort,
   } = useTableSort(filtered, {
     debtor: d => d.full_name,
+    transactionNumber: d => d.transaction_number,
+    saleDate: d => d.sale_date,
     governorate: d => d.governorate,
     remaining: d => Number(d.remaining_amount ?? 0),
     penalty: d => Number(d.penalty_amount ?? 0),
@@ -183,6 +200,8 @@ export default function AccountsPage() {
             <THead>
               <tr>
                 <SortableTH sortKey="debtor" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المدين</SortableTH>
+                <SortableTH sortKey="transactionNumber" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{TRANSACTION_NUMBER_LABEL}</SortableTH>
+                <SortableTH sortKey="saleDate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{SALE_DATE_LABEL}</SortableTH>
                 <SortableTH sortKey="governorate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المحافظة</SortableTH>
                 <SortableTH sortKey="remaining" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المتبقي</SortableTH>
                 <SortableTH sortKey="penalty" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الشرط الجزائي</SortableTH>
@@ -207,6 +226,8 @@ export default function AccountsPage() {
                         <div className="h-1 bg-emerald-500 rounded-full" style={{ width: `${Math.min(pct, 100)}%` }} />
                       </div>
                     </TD>
+                    <TD className="text-[#454042] text-xs font-mono" dir="ltr">{d.transaction_number ?? '—'}</TD>
+                    <TD className="text-[#454042] text-xs">{d.sale_date ? fmtDate(d.sale_date) : '—'}</TD>
                     <TD className="text-[#767676] text-xs">{d.governorate ?? '—'}</TD>
                     <TD>
                       <span className={`font-semibold tabular-nums text-xs ${remaining > 0 ? 'text-red-600' : 'text-emerald-600'}`} dir="ltr">

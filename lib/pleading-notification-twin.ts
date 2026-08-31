@@ -416,6 +416,26 @@ type PromoteOpts = {
 }
 
 const promoteMutex = new Map<string, Promise<unknown>>()
+const lastPromoteAt = new Map<string, number>()
+const PROMOTE_TTL_MS = 5 * 60_000
+
+function promoteKey(opts: PromoteOpts): string {
+  return `${opts.branchId ?? 'all'}:${opts.branchListId ?? 'all'}:${opts.caseType ?? 'both'}`
+}
+
+/** تحويل خلفي مرة كل بضع دقائق — لا يُنتظر في طلبات القراءة. */
+export function schedulePromoteStandaloneNotifications(
+  admin: AdminClient,
+  opts: PromoteOpts,
+): void {
+  const key = promoteKey(opts)
+  const now = Date.now()
+  if ((lastPromoteAt.get(key) ?? 0) + PROMOTE_TTL_MS > now) return
+  lastPromoteAt.set(key, now)
+  void promoteStandaloneNotificationsToPleadingDual(admin, opts).catch((e) =>
+    console.warn('[pleading-twin:schedule-promote]', e),
+  )
+}
 
 /**
  * أسماء كارد التبليغ القديمة (المهمة الحالية تبليغ وليست توأماً):
@@ -855,11 +875,19 @@ export async function mergePleadingNotificationTwinCounts(
     assignedStageCounts: Map<string, number>
     overdueStageCounts: Map<string, number>
   },
-  opts: { branchId: string | null; caseType?: 'civil' | 'criminal' | null; branchListId?: string | null },
+  opts: {
+    branchId: string | null
+    caseType?: 'civil' | 'criminal' | null
+    branchListId?: string | null
+    /** كتابة توأم/ترقية — افتراضي true. لوحة التحكم تمرّر false حتى لا تبطئ القراءة. */
+    sideEffects?: boolean
+  },
 ): Promise<void> {
-  await promoteStandaloneNotificationsToPleadingDual(supabase, opts).catch((e) =>
-    console.warn('[pleading-twin:promote]', e),
-  )
+  if (opts.sideEffects !== false) {
+    await promoteStandaloneNotificationsToPleadingDual(supabase, opts).catch((e) =>
+      console.warn('[pleading-twin:promote]', e),
+    )
+  }
 
   let defsQ = supabase
     .from('task_definitions')
@@ -871,7 +899,7 @@ export async function mergePleadingNotificationTwinCounts(
   const notificationDefs = (defs ?? []).filter(d => isNotificationDefinition(d))
 
   const pleadings = await fetchCurrentPleadingRows(supabase, { ...opts, unassignedOnly: true })
-  if (pleadings.length) {
+  if (opts.sideEffects !== false && pleadings.length) {
     await ensureTwinsForPleadingTasks(supabase, pleadings, { caseType: opts.caseType ?? null }).catch((e) =>
       console.warn('[pleading-twin:ensure]', e),
     )

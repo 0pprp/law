@@ -5,8 +5,9 @@ import LawyerActions from '@/components/LawyerActions'
 import { Badge } from '@/components/ui/badge'
 import { Table, THead, TBody, TR, TH, TD, SortableTH } from '@/components/ui/data-table'
 import { fmtDate } from '@/lib/utils'
-import { LAWYER_TYPE_LABELS, ACCOUNTANT_TYPE_LABELS, displayRoleLabel } from '@/lib/types'
-import type { UserRole, LawyerType, AccountantType } from '@/lib/types'
+import { ACCOUNTANT_TYPE_LABELS, displayRoleLabel } from '@/lib/types'
+import { lawyerTypeDisplayLabel } from '@/lib/lawyer-type'
+import type { UserRole, AccountantType } from '@/lib/types'
 import { useTableSort } from '@/hooks/use-table-sort'
 
 const ROLE_BADGE: Partial<Record<UserRole, 'navy' | 'info' | 'success' | 'orange' | 'purple' | 'gray'>> = {
@@ -57,7 +58,7 @@ export default function LawyersTable({
       lawyer_type: u.lawyer_type,
     }),
     type: u => {
-      if (u.role === 'lawyer') return LAWYER_TYPE_LABELS[(u.lawyer_type as LawyerType) ?? 'normal']
+      if (u.role === 'lawyer') return lawyerTypeDisplayLabel(u.lawyer_type, u.branch_name)
       if (u.role === 'accountant') return ACCOUNTANT_TYPE_LABELS[(u.accountant_type as AccountantType) ?? 'branch']
       return null
     },
@@ -127,7 +128,7 @@ export default function LawyersTable({
                 <TD>
                   {user.role === 'lawyer' ? (
                     <Badge variant={user.lawyer_type === 'general' ? 'purple' : 'info'}>
-                      {LAWYER_TYPE_LABELS[(user.lawyer_type as LawyerType) ?? 'normal']}
+                      {lawyerTypeDisplayLabel(user.lawyer_type, user.branch_name)}
                     </Badge>
                   ) : user.role === 'accountant' ? (
                     <Badge variant={user.accountant_type === 'general' ? 'purple' : 'info'}>
@@ -198,7 +199,7 @@ export default function LawyersTable({
               </Badge>
               {user.role === 'lawyer' && (
                 <Badge variant={user.lawyer_type === 'general' ? 'purple' : 'info'}>
-                  {LAWYER_TYPE_LABELS[(user.lawyer_type as LawyerType) ?? 'normal']}
+                  {lawyerTypeDisplayLabel(user.lawyer_type, user.branch_name)}
                 </Badge>
               )}
               {user.role === 'accountant' && (

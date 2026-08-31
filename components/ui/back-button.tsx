@@ -5,14 +5,20 @@ import { useRouter } from 'next/navigation'
 interface BackButtonProps {
   /** الوجهة عند فتح الصفحة مباشرة بلا سجل تنقّل */
   fallback: string
+  /** إن وُجد يُستخدم دائماً بدل history.back — للرجوع إلى الكارد المصدر */
+  href?: string | null
   className?: string
 }
 
 /** زر «رجوع» — يعود في History إن وُجد، وإلا ينتقل للصفحة الرئيسية للقسم. */
-export function BackButton({ fallback, className }: BackButtonProps) {
+export function BackButton({ fallback, href, className }: BackButtonProps) {
   const router = useRouter()
 
   function goBack() {
+    if (href) {
+      router.push(href)
+      return
+    }
     if (typeof window !== 'undefined' && window.history.length > 1) {
       router.back()
     } else {

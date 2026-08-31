@@ -14,8 +14,9 @@ import {
   OPERATION_BRANCH_REQUIRED_MSG,
   useOperationBranch,
 } from '@/components/OperationBranchSelect'
-import { LEGAL_ISSUE_DATE_LABEL, RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { LEGAL_ISSUE_DATE_LABEL, RECEIPT_NUMBER_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL, TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL } from '@/lib/ui-labels'
 import { PremiumSelect } from '@/components/ui/premium-select'
+import { DatePicker } from '@/components/ui/date-picker'
 import { FormFlow, FormFlowHero, FormFlowStep, FormField, formInputClass } from '@/components/ui/form-flow'
 import { cn } from '@/lib/utils'
 import { parseMoneyInput } from '@/lib/money-input'
@@ -84,6 +85,8 @@ export default function NewDebtorPage() {
     id_number: '',
     receipt_type: RECEIPT_TYPE_NONE,
     receipt_number: '',
+    transaction_number: '',
+    sale_date: '',
     receipt_amount: '',
     remaining_amount: '',
     penalty_amount: '',
@@ -227,6 +230,8 @@ export default function NewDebtorPage() {
           id_number: form.id_number.trim(),
           receipt_type: resolveReceiptType(form.receipt_type),
           receipt_number: form.receipt_number,
+          transaction_number: form.transaction_number.trim() || null,
+          sale_date: form.sale_date || null,
           receipt_amount: receiptAmount,
           remaining_amount: remaining,
           penalty_amount: penalty,
@@ -439,6 +444,23 @@ export default function NewDebtorPage() {
                   onChange={e => set('receipt_number', e.target.value)}
                   className={inputClass(!!fieldErrors.receipt_number)}
                   dir="ltr"
+                />
+              </FormField>
+              <FormField label={TRANSACTION_NUMBER_LABEL} hint="اختياري">
+                <input
+                  type="text"
+                  value={form.transaction_number}
+                  onChange={e => set('transaction_number', e.target.value)}
+                  className={inputClass()}
+                  dir="ltr"
+                />
+              </FormField>
+              <FormField label={SALE_DATE_LABEL} hint="اختياري">
+                <DatePicker
+                  value={form.sale_date}
+                  onChange={v => set('sale_date', v)}
+                  headerTitle={SALE_DATE_LABEL}
+                  placeholder="اختياري — اختر التاريخ"
                 />
               </FormField>
               <FormField label={`${RECEIPT_AMOUNT_LABEL} (د.ع)`} hint="اختياري — يُنسّق تلقائياً كل 3 أرقام">

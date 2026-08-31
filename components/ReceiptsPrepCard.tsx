@@ -5,9 +5,11 @@ import Link from 'next/link'
 import { fmtDate, fmtMoney } from '@/lib/utils'
 import { RECEIPT_TYPE_LABELS } from '@/lib/types'
 import { DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
+import { TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL } from '@/lib/ui-labels'
 import { getDaysUntilHearing, getHearingDateStatus } from '@/lib/hearing-date-utils'
 import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import type { ReceiptsPrepRow } from '@/lib/receipts-prep'
+import { Table, THead, TBody, TH, TD } from '@/components/ui/data-table'
 
 function HearingMeta({ date }: { date: string | null }) {
   const status = getHearingDateStatus(date)
@@ -93,8 +95,11 @@ export default function ReceiptsPrepCard({
         r.debtorName,
         r.phone,
         r.receiptNumber,
+        r.transactionNumber,
+        r.saleDate,
         r.courtName,
         r.branchListName,
+        r.currentTaskLabel,
       ].filter(Boolean).join(' ').toLowerCase()
       return hay.includes(q)
     })
@@ -164,108 +169,129 @@ export default function ReceiptsPrepCard({
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-xl border border-[rgba(118,118,118,0.15)] bg-white px-4 py-8 text-center text-sm text-[#767676]">
-          لا توجد أسماء في مرحلة المرافعات لتجهيز الوصولات
+          لا توجد أسماء مكلفة بإقامة دعوى لتجهيز الوصولات
         </div>
       ) : (
-        <div className="divide-y divide-[rgba(118,118,118,0.1)] rounded-2xl border border-[rgba(118,118,118,0.15)] bg-white overflow-hidden">
-          {filtered.map(row => {
-            const primary =
-              row.files.find(f => f.url && f.mimeType === 'application/pdf')
-              ?? row.files.find(f => f.url)
-              ?? row.files[0]
-              ?? null
-            const saving = savingId === row.debtorId
-            return (
-              <div
-                key={row.debtorId}
-                className={`flex flex-wrap items-center gap-3 px-4 py-4 transition-colors ${
-                  row.receiptsPrepared
-                    ? 'bg-emerald-50 hover:bg-emerald-100/70'
-                    : 'hover:bg-[#F8F7F8]'
-                }`}
-              >
-                <label className="flex items-center gap-2 shrink-0 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={row.receiptsPrepared}
-                    disabled={saving}
-                    onChange={e => void togglePrepared(row, e.target.checked)}
-                    className="w-4 h-4 accent-emerald-600"
-                  />
-                  <span className={`text-[11px] font-bold ${row.receiptsPrepared ? 'text-emerald-800' : 'text-[#767676]'}`}>
-                    {row.receiptsPrepared ? 'تم التجهيز' : 'تجهيز الوصل'}
-                  </span>
-                </label>
-
-                <div className="w-9 h-9 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
-                  <span className="text-emerald-800 font-black text-sm">{row.debtorName.charAt(0)}</span>
-                </div>
-
-                <div className="flex-1 min-w-[12rem]">
-                  <Link
-                    href={`/admin/debtors/${row.debtorId}/account`}
-                    className="text-sm font-bold text-[#231F20] hover:text-[#2C8780] transition-colors"
+        <div className="bg-white rounded-2xl border border-[rgba(118,118,118,0.15)] overflow-hidden">
+          <Table minWidthClassName="min-w-[1080px]">
+            <THead>
+              <tr>
+                <TH className="w-28">تجهيز الوصل</TH>
+                <TH>الاسم</TH>
+                <TH>{TRANSACTION_NUMBER_LABEL}</TH>
+                <TH>{SALE_DATE_LABEL}</TH>
+                <TH>الهاتف</TH>
+                <TH>المهمة</TH>
+                <TH>تاريخ المرافعة</TH>
+                <TH>المتبقي</TH>
+                <TH>الملف</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {filtered.map(row => {
+                const primary =
+                  row.files.find(f => f.url && f.mimeType === 'application/pdf')
+                  ?? row.files.find(f => f.url)
+                  ?? row.files[0]
+                  ?? null
+                const saving = savingId === row.debtorId
+                return (
+                  <tr
+                    key={row.debtorId}
+                    className={`border-t border-[rgba(118,118,118,0.08)] ${
+                      row.receiptsPrepared ? 'bg-emerald-50 hover:bg-emerald-100/70' : 'hover:bg-[#FAFAF8]'
+                    }`}
                   >
-                    {row.debtorName}
-                  </Link>
-                  {(row.courtName || row.executionOffice) && (
-                    <div className="mt-1 text-sm font-semibold text-[#1D6365]">
-                      {[
-                        row.courtName ? `🏛 المحكمة: ${row.courtName}` : null,
-                        row.executionOffice ? `⚖️ التنفيذ: ${row.executionOffice}` : null,
-                      ].filter(Boolean).join('   |   ')}
-                    </div>
-                  )}
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-                    {row.phone && <span className="text-[11px] text-[#767676]" dir="ltr">{row.phone}</span>}
-                    {row.branchListName && (
-                      <span className="text-[11px] text-[#767676]">القائمة: {row.branchListName}</span>
-                    )}
-                    {row.receiptType && (
-                      <span className="text-[11px] text-[#767676]">
-                        {RECEIPT_TYPE_LABELS[row.receiptType] ?? row.receiptType}
-                      </span>
-                    )}
-                    {row.receiptNumber && (
-                      <span className="text-[11px] text-[#767676]" dir="ltr">{row.receiptNumber}</span>
-                    )}
-                    {viewAllBranches && row.branchName && (
-                      <span className="text-[11px] text-[#767676]">{row.branchName}</span>
-                    )}
-                  </div>
-                </div>
-
-                {row.remaining > 0 && (
-                  <span className="text-xs font-bold text-[#2C8780] tabular-nums shrink-0" dir="ltr">
-                    {fmtMoney(row.remaining)}
-                  </span>
-                )}
-
-                <div className="min-w-[7.5rem] shrink-0 text-center">
-                  <p className="text-[10px] font-bold text-[#767676]">تاريخ المرافعة</p>
-                  <HearingMeta date={row.firstHearingDate} />
-                </div>
-
-                <div className="min-w-[7rem] shrink-0 text-left">
-                  {primary?.url ? (
-                    <a
-                      href={primary.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs font-bold text-[#2C8780] hover:underline"
-                    >
-                      فتح الملف
-                    </a>
-                  ) : (
-                    <span className="text-[11px] text-[#767676]">لا يوجد ملف</span>
-                  )}
-                  {row.files.length > 1 && (
-                    <p className="text-[10px] text-[#767676] mt-0.5">{row.files.length} ملفات</p>
-                  )}
-                </div>
-              </div>
-            )
-          })}
+                    <TD>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={row.receiptsPrepared}
+                          disabled={saving}
+                          onChange={e => void togglePrepared(row, e.target.checked)}
+                          className="w-4 h-4 accent-emerald-600"
+                        />
+                        <span className={`text-[11px] font-bold ${row.receiptsPrepared ? 'text-emerald-800' : 'text-[#767676]'}`}>
+                          {row.receiptsPrepared ? 'تم التجهيز' : 'تجهيز الوصل'}
+                        </span>
+                      </label>
+                    </TD>
+                    <TD className="text-right">
+                      <Link
+                        href={`/admin/debtors/${row.debtorId}/account`}
+                        className="font-bold text-[#231F20] hover:text-[#2C8780] hover:underline"
+                      >
+                        {row.debtorName}
+                      </Link>
+                      {(row.courtName || row.executionOffice) && (
+                        <p className="mt-0.5 text-[11px] font-semibold text-[#1D6365]">
+                          {[
+                            row.courtName ? `المحكمة: ${row.courtName}` : null,
+                            row.executionOffice ? `التنفيذ: ${row.executionOffice}` : null,
+                          ].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-x-2 mt-0.5">
+                        {row.branchListName && (
+                          <span className="text-[11px] text-[#767676]">{row.branchListName}</span>
+                        )}
+                        {row.receiptType && (
+                          <span className="text-[11px] text-[#767676]">
+                            {RECEIPT_TYPE_LABELS[row.receiptType] ?? row.receiptType}
+                          </span>
+                        )}
+                        {row.receiptNumber && (
+                          <span className="text-[11px] text-[#767676]" dir="ltr">{row.receiptNumber}</span>
+                        )}
+                        {viewAllBranches && row.branchName && (
+                          <span className="text-[11px] text-[#767676]">{row.branchName}</span>
+                        )}
+                      </div>
+                    </TD>
+                    <TD className="text-right">
+                      <span className="font-mono text-xs" dir="ltr">{row.transactionNumber || '—'}</span>
+                    </TD>
+                    <TD className="text-right text-xs">
+                      {row.saleDate ? fmtDate(row.saleDate) : '—'}
+                    </TD>
+                    <TD className="text-right">
+                      <span className="text-xs" dir="ltr">{row.phone || '—'}</span>
+                    </TD>
+                    <TD className="text-right text-xs">{row.currentTaskLabel}</TD>
+                    <TD className="text-right">
+                      <HearingMeta date={row.firstHearingDate} />
+                    </TD>
+                    <TD className="text-right">
+                      {row.remaining > 0 ? (
+                        <span className="text-xs font-bold text-[#2C8780] tabular-nums" dir="ltr">
+                          {fmtMoney(row.remaining)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-[#767676]">—</span>
+                      )}
+                    </TD>
+                    <TD>
+                      {primary?.url ? (
+                        <a
+                          href={primary.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-bold text-[#2C8780] hover:underline whitespace-nowrap"
+                        >
+                          فتح الملف
+                        </a>
+                      ) : (
+                        <span className="text-xs text-[#767676]">لا يوجد ملف</span>
+                      )}
+                      {row.files.length > 1 && (
+                        <p className="text-[10px] text-[#767676] mt-0.5">{row.files.length} ملفات</p>
+                      )}
+                    </TD>
+                  </tr>
+                )
+              })}
+            </TBody>
+          </Table>
         </div>
       )}
     </div>

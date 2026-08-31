@@ -174,6 +174,10 @@ export interface Debtor {
   case_type?: 'civil' | 'criminal'
   receipt_type: ReceiptType
   receipt_number: string | null
+  /** رقم المعاملة — يظهر في جداول المدينين */
+  transaction_number?: string | null
+  /** تاريخ البيع — يُدخل عند الإضافة */
+  sale_date?: string | null
   receipt_amount: number
   remaining_amount: number
   total_expenses: number
@@ -195,7 +199,7 @@ export interface Debtor {
   payment_location?: PaymentLocation | null
   /** تجهيز الملف لدى المحاسب الرئيسي */
   file_preparation_status?: FilePreparationStatus | null
-  /** تم تجهيز الوصل من كارد تجهيز الوصولات — يبقى بعد مغادرة المرافعات */
+  /** تم تجهيز الوصل من كارد تجهيز الوصولات — يبقى بعد مغادرة الكارد */
   receipts_prepared?: boolean
   receipts_prepared_at?: string | null
   receipts_prepared_by?: string | null
@@ -422,7 +426,7 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
 }
 
 export const LAWYER_TYPE_LABELS: Record<LawyerType, string> = {
-  normal: 'محامي عادي',
+  normal: 'محامي فرع',
   general: 'محامي عام',
 }
 

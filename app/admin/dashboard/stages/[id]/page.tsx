@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/ui/page-header'
 import { BackButton } from '@/components/ui/back-button'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { RECEIPT_TYPE_LABELS, assigneePersonLabel } from '@/lib/types'
+import { TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL } from '@/lib/ui-labels'
 import { fetchAssignmentLawyers, fetchBranchDelegates } from '@/lib/branch-profiles'
 import { isFindAddressTaskType } from '@/lib/delegate'
 import { DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
@@ -191,6 +192,14 @@ function DebtorStageRow({
             </span>
           )}
         </div>
+      </div>
+      <div className="min-w-[6.5rem] shrink-0">
+        <p className="text-[10px] font-bold text-[#767676]">{TRANSACTION_NUMBER_LABEL}</p>
+        <p className="text-xs font-mono text-[#231F20]" dir="ltr">{d.transactionNumber || '—'}</p>
+      </div>
+      <div className="min-w-[6.5rem] shrink-0">
+        <p className="text-[10px] font-bold text-[#767676]">{SALE_DATE_LABEL}</p>
+        <p className="text-xs text-[#231F20]">{d.saleDate ? fmtDate(d.saleDate) : '—'}</p>
       </div>
       {isWaiting && (
         <div className="min-w-[9rem] max-w-[14rem] shrink-0 hidden sm:block">

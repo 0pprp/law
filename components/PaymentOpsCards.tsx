@@ -56,14 +56,6 @@ function FolderPrepIcon() {
   )
 }
 
-function ReceiptsPrepIcon() {
-  return (
-    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-    </svg>
-  )
-}
-
 function InstantCaseIcon() {
   return (
     <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -149,6 +141,8 @@ interface Props {
   section?: 'awaiting' | 'payment' | 'all'
   /** تجاوز فلتر القسم من الدور (تبويب المدير: مدني/جزائي) */
   caseType?: 'civil' | 'criminal' | null
+  /** أرقام من طلب اللوحة الواحد — عند وجودها لا نرسل endpoints إضافية */
+  parentOps?: OpsCardCounts | null
 }
 
 /**
@@ -161,6 +155,7 @@ export default function PaymentOpsCards({
   listId = null,
   section = 'all',
   caseType,
+  parentOps,
 }: Props) {
   const role = useAdminRole()
   const { caseTypeFilter: roleCaseType } = useCaseScope()
@@ -192,10 +187,22 @@ export default function PaymentOpsCards({
     setPaymentCount(next.payment)
     setPendingCount(next.pending)
     setInstantCount(next.instant)
-    setRecentNamesCount(next.recentNames ?? null)
+    setRecentNamesCount(next.recentNames ?? next.awaiting ?? null)
     setLegalArchiveCount(next.legalArchive ?? null)
     writeOpsCardCounts(cacheKey, next)
   }, [cacheKey])
+
+  useEffect(() => {
+    if (!parentOps) return
+    setAwaitingCount(parentOps.awaiting)
+    setPrepCount(parentOps.prep)
+    setReceiptsPrepCount(parentOps.receiptsPrep ?? null)
+    setInstantCount(parentOps.instant)
+    setRecentNamesCount(parentOps.recentNames ?? parentOps.awaiting ?? null)
+    setLegalArchiveCount(parentOps.legalArchive ?? null)
+    if (parentOps.payment != null) setPaymentCount(parentOps.payment)
+    if (parentOps.pending != null) setPendingCount(parentOps.pending)
+  }, [parentOps])
 
   const load = useCallback(async () => {
     if (!branchId && !viewAllBranches) {
@@ -239,9 +246,10 @@ export default function PaymentOpsCards({
     let nextRecent: number | null = showExperimentalQueues ? (cached?.awaiting ?? cached?.recentNames ?? null) : null
     let nextArchive: number | null = showExperimentalQueues ? (cached?.legalArchive ?? null) : null
 
+    const skipRemoteCounts = parentOps !== undefined
     const tasks: Promise<void>[] = []
 
-    if (showAwaiting) {
+    if (showAwaiting && !skipRemoteCounts) {
       tasks.push((async () => {
         const receiptsParams = new URLSearchParams({ countOnly: '1' })
         if (viewAllBranches) receiptsParams.set('viewAll', '1')
@@ -306,7 +314,7 @@ export default function PaymentOpsCards({
         setRecentNamesCount(nextAwaiting)
       })())
     }
-    if (showInstant) {
+    if (showInstant && !skipRemoteCounts) {
       tasks.push((async () => {
         const params = new URLSearchParams({ countOnly: '1' })
         if (viewAllBranches) params.set('viewAll', '1')
@@ -371,7 +379,7 @@ export default function PaymentOpsCards({
       })())
     }
 
-    if (showExperimentalQueues) {
+    if (showExperimentalQueues && !skipRemoteCounts) {
       tasks.push((async () => {
         const archiveParams = new URLSearchParams({ queue: 'archive', countOnly: '1' })
         if (viewAllBranches) archiveParams.set('viewAll', '1')
@@ -386,15 +394,19 @@ export default function PaymentOpsCards({
     }
 
     await Promise.all(tasks)
+    if (skipRemoteCounts && !showPayment && !showNoncompliance) return
+    const prev = skipRemoteCounts
+      ? (parentOps ?? peekOpsCardCounts(cacheKey) ?? cached)
+      : null
     writeOpsCardCounts(cacheKey, {
-      awaiting: nextAwaiting,
-      prep: nextPrep,
-      receiptsPrep: nextReceiptsPrep,
+      awaiting: prev?.awaiting ?? nextAwaiting,
+      prep: prev?.prep ?? nextPrep,
+      receiptsPrep: prev?.receiptsPrep ?? nextReceiptsPrep,
       payment: nextPayment,
       pending: nextPending,
-      instant: nextInstant,
-      recentNames: nextRecent,
-      legalArchive: nextArchive,
+      instant: prev?.instant ?? nextInstant,
+      recentNames: prev?.recentNames ?? nextRecent,
+      legalArchive: prev?.legalArchive ?? nextArchive,
     })
   }, [
     branchId,
@@ -408,6 +420,7 @@ export default function PaymentOpsCards({
     showExperimentalQueues,
     cacheKey,
     applyCounts,
+    parentOps,
   ])
 
   useEffect(() => { void load() }, [load])
@@ -433,7 +446,7 @@ export default function PaymentOpsCards({
               <ColorCard
                 label="الأسماء المضافة مؤخراً"
                 value={recentNamesCount ?? awaitingCount ?? '—'}
-                sub="أسماء بانتظار إسناد المهمة"
+                sub="أرشيف · دعاوى فورية"
                 href={
                   caseTypeFilter === 'civil'
                     ? '/admin/dashboard/recent-names?ct=civil'
@@ -452,7 +465,7 @@ export default function PaymentOpsCards({
               <ColorCard
                 label="أرشيف القانونية"
                 value={legalArchiveCount ?? '—'}
-                sub="إسناد مهمة · ملاحظة · دعاوى فورية"
+                sub="إسناد مهمة · ملاحظة"
                 href="/admin/dashboard/legal-archive"
                 buttonLabel="فتح الأرشيف"
                 gradient="linear-gradient(135deg,#1d4ed8,#1e3a8a)"
@@ -519,23 +532,6 @@ export default function PaymentOpsCards({
                   softBg="linear-gradient(135deg,rgba(3,105,161,0.08),rgba(255,255,255,0.9))"
                   border="rgba(3,105,161,0.35)"
                   icon={<FolderPrepIcon />}
-                />
-              <ColorCard
-                  label="تجهيز الوصولات"
-                  value={receiptsPrepCount ?? '—'}
-                  sub="أسماء المرافعات الحالية — نفس منطق كارد المرافعات"
-                  href={
-                    caseTypeFilter === 'civil'
-                      ? '/admin/dashboard/receipts-prep?ct=civil'
-                      : caseTypeFilter === 'criminal'
-                        ? '/admin/dashboard/receipts-prep?ct=criminal'
-                        : '/admin/dashboard/receipts-prep'
-                  }
-                  buttonLabel="عرض الأسماء"
-                  gradient="linear-gradient(135deg,#047857,#065f46)"
-                  softBg="linear-gradient(135deg,rgba(4,120,87,0.08),rgba(255,255,255,0.9))"
-                  border="rgba(4,120,87,0.35)"
-                  icon={<ReceiptsPrepIcon />}
                 />
             </div>
           </div>

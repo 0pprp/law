@@ -25,6 +25,7 @@ export type LawyerProfileBrief = {
   phone: string | null
   governorate: string | null
   branch_id: string | null
+  branch_name?: string | null
   lawyer_type: string | null
   case_type: string | null
   is_active: boolean | null
@@ -137,7 +138,16 @@ export async function fetchBranchLawyerProfiles(
     console.error('[fetchBranchLawyerProfiles]', error.message)
     return []
   }
-  return (data ?? []) as LawyerProfileBrief[]
+  const rows = (data ?? []) as LawyerProfileBrief[]
+  const branchIds = [...new Set(rows.map(r => r.branch_id).filter(Boolean))] as string[]
+  if (branchIds.length) {
+    const { data: branches } = await supabase.from('branches').select('id, name').in('id', branchIds)
+    const names = new Map((branches ?? []).map((b: { id: string; name: string }) => [b.id, b.name]))
+    for (const row of rows) {
+      row.branch_name = row.branch_id ? names.get(row.branch_id) ?? null : null
+    }
+  }
+  return rows
 }
 
 export async function fetchLawyerAssignedTasks(

@@ -12,7 +12,7 @@ import { Table, THead, TBody, TR, TH, TD, SortableTH } from '@/components/ui/dat
 import { useTableSort } from '@/hooks/use-table-sort'
 import { fmtMoney, fmtDate } from '@/lib/utils'
 import { DEBTOR_SEARCH_PLACEHOLDER } from '@/lib/debtor-search'
-import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL } from '@/lib/ui-labels'
+import { RECEIPT_TYPE_LABEL, RECEIPT_NUMBER_LABEL, TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL } from '@/lib/ui-labels'
 import DebtorImportModal from '@/components/DebtorImportModal'
 import CriminalDebtorImportModal from '@/components/CriminalDebtorImportModal'
 import { useAdminRole } from '@/context/admin-role'
@@ -295,6 +295,8 @@ export default function DebtorsPage() {
     court: d => debtorCourtName(d),
     execution: d => debtorExecutionOffice(d),
     idNumber: d => d.id_number,
+    transactionNumber: d => d.transaction_number,
+    saleDate: d => d.sale_date,
     receiptNumber: d => d.receipt_number,
     receiptType: d => RECEIPT_TYPE_LABELS[d.receipt_type as keyof typeof RECEIPT_TYPE_LABELS] ?? d.receipt_type,
     required: d => Number(d.required_amount ?? 0),
@@ -495,7 +497,7 @@ export default function DebtorsPage() {
                     <TH>الأسماء التي تحتاج مراقبة</TH>
                     <TH>🏛 المحكمة</TH>
                     <TH>⚖️ دائرة التنفيذ</TH>
-                    <TH>رقم الهوية</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
+                    <TH>رقم الهوية</TH><TH>{TRANSACTION_NUMBER_LABEL}</TH><TH>{SALE_DATE_LABEL}</TH><TH>{RECEIPT_NUMBER_LABEL}</TH><TH>{RECEIPT_TYPE_LABEL}</TH>
                     <TH>المبلغ المطلوب</TH><TH>المتبقي</TH><TH>الملاحظة</TH><TH>تاريخ الإضافة</TH>
                     <TH className="text-center">الإجراءات</TH>
                   </tr>
@@ -548,6 +550,8 @@ export default function DebtorsPage() {
                     <SortableTH sortKey="court" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>🏛 المحكمة</SortableTH>
                     <SortableTH sortKey="execution" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>⚖️ دائرة التنفيذ</SortableTH>
                     <SortableTH sortKey="idNumber" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>رقم الهوية</SortableTH>
+                    <SortableTH sortKey="transactionNumber" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{TRANSACTION_NUMBER_LABEL}</SortableTH>
+                    <SortableTH sortKey="saleDate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{SALE_DATE_LABEL}</SortableTH>
                     <SortableTH sortKey="receiptNumber" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{RECEIPT_NUMBER_LABEL}</SortableTH>
                     <SortableTH sortKey="receiptType" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{RECEIPT_TYPE_LABEL}</SortableTH>
                     <SortableTH sortKey="required" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>المبلغ المطلوب</SortableTH>
@@ -605,6 +609,8 @@ export default function DebtorsPage() {
                       <TD><span className="text-xs text-[#767676]">{debtorCourtName(debtor)}</span></TD>
                       <TD><span className="text-xs text-[#767676]">{debtorExecutionOffice(debtor)}</span></TD>
                       <TD><span className="font-mono text-xs" dir="ltr">{debtor.id_number ?? '—'}</span></TD>
+                      <TD><span className="font-mono text-xs" dir="ltr">{debtor.transaction_number ?? '—'}</span></TD>
+                      <TD><span className="text-xs">{debtor.sale_date ? fmtDate(debtor.sale_date) : '—'}</span></TD>
                       <TD><span className="font-mono text-xs" dir="ltr">{debtor.receipt_number ?? '—'}</span></TD>
                       <TD>
                         <Badge variant="default">{RECEIPT_TYPE_LABELS[debtor.receipt_type as keyof typeof RECEIPT_TYPE_LABELS] ?? debtor.receipt_type}</Badge>
@@ -699,6 +705,8 @@ export default function DebtorsPage() {
                   <p className="text-xs text-[#454042] whitespace-pre-wrap break-words mb-2">
                     الملاحظة: {debtor.last_note || '—'}
                   </p>
+                  {debtor.transaction_number && <p className="text-xs text-[#767676] font-mono mb-1" dir="ltr">{TRANSACTION_NUMBER_LABEL}: {debtor.transaction_number}</p>}
+                  {debtor.sale_date && <p className="text-xs text-[#767676] mb-1">{SALE_DATE_LABEL}: {fmtDate(debtor.sale_date)}</p>}
                   {debtor.receipt_number && <p className="text-xs text-[#767676] font-mono mb-2" dir="ltr">{RECEIPT_NUMBER_LABEL}: {debtor.receipt_number}</p>}
                   <div className="grid grid-cols-2 gap-2 text-sm mb-3">
                     <div>

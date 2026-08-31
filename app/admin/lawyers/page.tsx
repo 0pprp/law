@@ -33,9 +33,7 @@ export default async function LawyersPage() {
     const result = await Promise.all([
       profilesQ,
       supabase.from('lawyer_attachments').select('lawyer_id'),
-      showBranchCol
-        ? supabase.from('branches').select('id, name')
-        : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+      supabase.from('branches').select('id, name'),
       supabase.from('chief_accountant_branches').select('profile_id'),
     ])
     profiles = (result[0].data as any[]) ?? []

@@ -17,6 +17,7 @@ import {
 import { appConfirm } from '@/lib/app-dialog'
 import { SortableTH } from '@/components/ui/data-table'
 import { useTableSort } from '@/hooks/use-table-sort'
+import { fmtDate } from '@/lib/utils'
 
 interface SpecialStatusDebtor {
   id: string
@@ -32,6 +33,8 @@ interface SpecialStatusDebtor {
   return_task_id?: string | null
   return_task_label?: string | null
   last_note: string
+  transaction_number?: string | null
+  sale_date?: string | null
 }
 
 function StatusModal({
@@ -211,6 +214,8 @@ function DebtorTable({
     cycleSort,
   } = useTableSort(rows, {
     name: r => r.full_name,
+    transactionNumber: r => r.transaction_number,
+    saleDate: r => r.sale_date,
     phone: r => r.phone,
     branch: r => r.branch_name,
     list: r => r.branch_list_name,
@@ -231,6 +236,8 @@ function DebtorTable({
               <input type="checkbox" checked={allOn} onChange={onToggleAll} className="w-4 h-4 accent-[#2C8780]" />
             </th>
             <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">الاسم</SortableTH>
+            <SortableTH variant="plain" sortKey="transactionNumber" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">رقم المعاملة</SortableTH>
+            <SortableTH variant="plain" sortKey="saleDate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">تاريخ البيع</SortableTH>
             <SortableTH variant="plain" sortKey="phone" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">الهاتف</SortableTH>
             {showBranch && (
               <SortableTH variant="plain" sortKey="branch" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort} className="px-3 py-2.5 text-right">الفرع</SortableTH>
@@ -258,6 +265,8 @@ function DebtorTable({
                   {r.full_name}
                 </Link>
               </td>
+              <td className="px-3 py-3 text-xs font-mono text-[#454042]" dir="ltr">{r.transaction_number ?? '—'}</td>
+              <td className="px-3 py-3 text-xs text-[#454042]">{r.sale_date ? fmtDate(r.sale_date) : '—'}</td>
               <td className="px-3 py-3 text-xs text-[#767676]" dir="ltr">{r.phone ?? '—'}</td>
               {showBranch && <td className="px-3 py-3 text-xs text-[#767676]">{r.branch_name ?? '—'}</td>}
               <td className="px-3 py-3 text-xs text-[#767676]">{r.branch_list_name ?? '—'}</td>

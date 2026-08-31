@@ -33,6 +33,12 @@ export async function GET(
       return NextResponse.json({ error: 'المستخدم ليس محامياً' }, { status: 404 })
     }
 
+    let branchName: string | null = null
+    if (lawyer.branch_id) {
+      const { data: branch } = await admin.from('branches').select('name').eq('id', lawyer.branch_id).maybeSingle()
+      branchName = (branch?.name as string | undefined)?.trim() || null
+    }
+
     const profile = auth.profile!
     const branchScoped =
       (isAccountant(profile.role) && !isGeneralAccountant(profile.role, profile.accountant_type))
@@ -63,6 +69,7 @@ export async function GET(
         phone: lawyer.phone ?? null,
         governorate: lawyer.governorate ?? null,
         branch_id: lawyer.branch_id ?? null,
+        branch_name: branchName,
         lawyer_type: lawyer.lawyer_type ?? null,
         case_type: lawyer.case_type ?? null,
         is_active: lawyer.is_active ?? true,

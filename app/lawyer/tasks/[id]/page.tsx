@@ -101,7 +101,7 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
 
   const { data: debtor } = await supabase
     .from('debtors')
-    .select('full_name, phone, address, governorate, receipt_type, receipt_amount, remaining_amount, latitude, longitude, location_captured_at, case_type, branch_list:branch_lists(name, court_name)')
+    .select('full_name, phone, address, governorate, receipt_type, receipt_amount, remaining_amount, latitude, longitude, location_captured_at, case_type, transaction_number, sale_date, branch_list:branch_lists(name, court_name)')
     .eq('id', task.debtor_id)
     .single()
 
@@ -179,6 +179,8 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
     latitude?: number | null
     longitude?: number | null
     location_captured_at?: string | null
+    transaction_number?: string | null
+    sale_date?: string | null
     court_name?: string | null
     branch_list?: { name?: string; court_name?: string | null } | { name?: string; court_name?: string | null }[] | null
   } | null
@@ -256,6 +258,8 @@ export default async function LawyerTaskDetailPage({ params }: { params: Promise
         </div>
         <div className="px-4 py-0.5">
           <InfoRow label="الاسم" value={d?.full_name} />
+          {d?.transaction_number && <InfoRow label="رقم المعاملة" value={d.transaction_number} dir="ltr" />}
+          {d?.sale_date && <InfoRow label="تاريخ البيع" value={fmtDate(d.sale_date)} />}
           {d?.phone && <InfoRow label="الهاتف" value={d.phone} href={`tel:${d.phone}`} dir="ltr" />}
           <InfoRow
             label={RECEIPT_TYPE_LABEL}

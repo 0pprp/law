@@ -10,6 +10,8 @@ import {
   RECEIPT_NUMBER_LABEL,
   RECEIPT_TYPE_LABEL,
   RECEIPT_AMOUNT_LABEL,
+  TRANSACTION_NUMBER_LABEL,
+  SALE_DATE_LABEL,
 } from '@/lib/ui-labels'
 import DebtorNotesPanel from '@/components/DebtorNotesPanel'
 import DebtorAttachmentsList from '@/components/DebtorAttachmentsList'
@@ -145,6 +147,8 @@ export default async function ChiefAccountantDebtorPage({
             <InfoRow label="رقم الهوية" value={debtor.id_number} mono />
             <InfoRow label={RECEIPT_TYPE_LABEL} value={RECEIPT_TYPE_LABELS[debtor.receipt_type as ReceiptType] ?? debtor.receipt_type} />
             <InfoRow label={RECEIPT_NUMBER_LABEL} value={debtor.receipt_number} mono />
+            <InfoRow label={TRANSACTION_NUMBER_LABEL} value={debtor.transaction_number} mono />
+            {debtor.sale_date && <InfoRow label={SALE_DATE_LABEL} value={fmtDate(debtor.sale_date)} />}
             <InfoRow label={RECEIPT_AMOUNT_LABEL} value={fmtMoney(Number(debtor.receipt_amount ?? 0))} />
             <InfoRow label="المتبقي" value={fmtMoney(Number(debtor.remaining_amount ?? 0))} />
             <InfoRow label="المطلوب" value={fmtMoney(Number(debtor.required_amount ?? 0))} />
@@ -154,6 +158,8 @@ export default async function ChiefAccountantDebtorPage({
         ) : (
           <>
             <InfoRow label="العنوان الحالي" value={criminalDetails?.current_address ?? debtor.address} />
+            <InfoRow label={TRANSACTION_NUMBER_LABEL} value={debtor.transaction_number} mono />
+            {debtor.sale_date && <InfoRow label={SALE_DATE_LABEL} value={fmtDate(debtor.sale_date)} />}
             <InfoRow label="المبلغ" value={displayCriminalAmountText(criminalDetails?.amount_owed, debtor.remaining_amount, debtor.receipt_amount)} />
             <InfoRow label="المحكمة" value={courtName} />
             <InfoRow label="تاريخ الإضافة" value={fmtDate(debtor.created_at)} />

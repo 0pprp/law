@@ -25,6 +25,11 @@ import {
   sectionForbiddenResponse,
 } from '@/lib/case-scope'
 import { fetchCriminalDebtorDetails, upsertCriminalDebtorDetails, optionalNumericAmountOrNull } from '@/lib/criminal-debtor-details'
+import {
+  normalizeTransactionNumber,
+  parseOptionalYmdDate,
+  isMissingTxnSaleColumn,
+} from '@/lib/debtor-transaction-sale'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -145,6 +150,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       branch_list_id: null,
       phone: null,
       governorate: branchGovernorate,
+      transaction_number: normalizeTransactionNumber(body.transaction_number),
+    }
+    if (body.sale_date !== undefined) {
+      const saleDateParsed = parseOptionalYmdDate(body.sale_date)
+      if (saleDateParsed === false) {
+        return NextResponse.json({ error: 'تاريخ البيع غير صالح' }, { status: 400 })
+      }
+      updatePayload.sale_date = saleDateParsed
     }
 
     // المبلغ الجزائي نص حر في criminal_details.amount_owed.
@@ -172,8 +185,20 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       .select('id')
       .maybeSingle()
 
-    if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 })
-    if (!updated) return NextResponse.json({ error: 'لم يتم تحديث المدين' }, { status: 409 })
+    if (updateError && isMissingTxnSaleColumn(updateError)) {
+      delete updatePayload.transaction_number
+      delete updatePayload.sale_date
+      const retry = await admin
+        .from('debtors')
+        .update(updatePayload)
+        .eq('id', id)
+        .eq('branch_id', debtor.branch_id)
+        .select('id')
+        .maybeSingle()
+      if (retry.error) return NextResponse.json({ error: retry.error.message }, { status: 500 })
+      if (!retry.data) return NextResponse.json({ error: 'لم يتم تحديث المدين' }, { status: 409 })
+    } else if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 })
+    else if (!updated) return NextResponse.json({ error: 'لم يتم تحديث المدين' }, { status: 409 })
 
     if (body.criminal_details && typeof body.criminal_details === 'object') {
       const detailsInput = { ...(body.criminal_details as Record<string, string | null>) }
@@ -254,6 +279,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     branch_list_id: branchListId,
     court_name: String(body.court_name ?? '').trim() || null,
     governorate: branchGovernorate,
+    transaction_number: normalizeTransactionNumber(body.transaction_number),
+  }
+  if (body.sale_date !== undefined) {
+    const saleDateParsed = parseOptionalYmdDate(body.sale_date)
+    if (saleDateParsed === false) {
+      return NextResponse.json({ error: 'تاريخ البيع غير صالح' }, { status: 400 })
+    }
+    updatePayload.sale_date = saleDateParsed
   }
 
   if (Number(debtor.total_payments ?? 0) === 0) {
@@ -275,8 +308,23 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     .select('id')
     .maybeSingle()
 
-  if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 })
-  if (!updated) return NextResponse.json({ error: 'لم يتم تحديث المدين' }, { status: 409 })
+  if (updateError && isMissingTxnSaleColumn(updateError)) {
+    delete updatePayload.transaction_number
+    delete updatePayload.sale_date
+    const retry = await admin
+      .from('debtors')
+      .update(updatePayload)
+      .eq('id', id)
+      .eq('branch_id', debtor.branch_id)
+      .select('id')
+      .maybeSingle()
+    if (retry.error) return NextResponse.json({ error: retry.error.message }, { status: 500 })
+    if (!retry.data) return NextResponse.json({ error: 'لم يتم تحديث المدين' }, { status: 409 })
+  } else if (updateError) {
+    return NextResponse.json({ error: updateError.message }, { status: 500 })
+  } else if (!updated) {
+    return NextResponse.json({ error: 'لم يتم تحديث المدين' }, { status: 409 })
+  }
 
   await logActivity({
     action: 'update_debtor',

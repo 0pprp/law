@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader } from '@/components/ui/card'
 import { StatCard } from '@/components/ui/stat-card'
 import { fmtMoney, fmtDate } from '@/lib/utils'
-import { RECEIPT_NUMBER_LABEL, LEGAL_ISSUE_DATE_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
+import { RECEIPT_NUMBER_LABEL, LEGAL_ISSUE_DATE_LABEL, RECEIPT_TYPE_LABEL, RECEIPT_AMOUNT_LABEL, TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL } from '@/lib/ui-labels'
 import DebtorTasksHistory from '@/components/DebtorTasksHistory'
 import DebtorNotesPanel from '@/components/DebtorNotesPanel'
 import DebtorGPSCard from '@/components/DebtorGPSCard'
@@ -177,6 +177,8 @@ export default async function DebtorAccountArchive({
           <CardHeader title="معلومات المدين الجزائي" />
           <div className="p-4">
             <InfoRow label="الاسم" value={debtor.full_name} />
+            <InfoRow label={TRANSACTION_NUMBER_LABEL} value={debtor.transaction_number} mono />
+            {debtor.sale_date && <InfoRow label={SALE_DATE_LABEL} value={fmtDate(debtor.sale_date)} mono />}
             <InfoRow label="العنوان الوظيفي" value={criminalDetails?.job_title} />
             <InfoRow label="عنوان السكن الحالي" value={criminalDetails?.current_address} />
             <InfoRow label="تاريخ الواقعة" value={criminalDetails?.incident_date ? fmtDate(criminalDetails.incident_date) : null} mono />
@@ -226,6 +228,8 @@ export default async function DebtorAccountArchive({
             <InfoRow label="رقم الهوية" value={debtor.id_number} mono />
             <InfoRow label={RECEIPT_TYPE_LABEL} value={RECEIPT_TYPE_LABELS[debtor.receipt_type as ReceiptType]} />
             <InfoRow label={RECEIPT_NUMBER_LABEL} value={debtor.receipt_number} mono />
+            <InfoRow label={TRANSACTION_NUMBER_LABEL} value={debtor.transaction_number} mono />
+            {debtor.sale_date && <InfoRow label={SALE_DATE_LABEL} value={fmtDate(debtor.sale_date)} mono />}
             <InfoRow label={RECEIPT_AMOUNT_LABEL} value={fmtMoney(debtor.receipt_amount)} />
             <InfoRow label="الشرط الجزائي" value={fmtMoney(debtor.penalty_amount)} />
             <InfoRow

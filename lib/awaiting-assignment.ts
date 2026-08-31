@@ -18,6 +18,10 @@ export interface AwaitingAssignmentDebtor {
   court_name: string | null
   execution_office: string | null
   created_at: string
+  /** رقم المعاملة */
+  transaction_number?: string | null
+  /** تاريخ البيع */
+  sale_date?: string | null
   assignment_note: string | null
   /** عرض آخر ملاحظة بروفايل: «الكاتب: النص...» */
   last_note: string
@@ -43,6 +47,8 @@ export interface FetchAwaitingAssignmentOptions {
    * preparing: قيد تجهيز الملفات فقط
    */
   mode?: 'awaiting' | 'preparing'
+  /** استثناء معرّفات (مثلاً المحوّلون للدعاوى الفورية) */
+  excludeDebtorIds?: string[]
 }
 
 export interface FetchAwaitingAssignmentResult {
@@ -94,6 +100,12 @@ function isMissingPrepColumnError(message: string | undefined | null): boolean {
 function applyNotDuplicateFilter(q: any, columnReady: boolean): any {
   if (!columnReady) return q
   return q.is('duplicate_flagged_at', null)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyExcludeDebtorIds(q: any, ids?: string[] | null): any {
+  if (!ids?.length) return q
+  return q.not('id', 'in', `(${ids.join(',')})`)
 }
 
 /**
@@ -210,6 +222,8 @@ async function mapRowsWithLastNotes(
     court_name: resolveDebtorCourtName(r),
     execution_office: resolveExecutionOffice(r.branch_list),
     created_at: r.created_at,
+    transaction_number: (r as { transaction_number?: string | null }).transaction_number ?? null,
+    sale_date: (r as { sale_date?: string | null }).sale_date ? String((r as { sale_date?: string | null }).sale_date).slice(0, 10) : null,
     assignment_note: r.assignment_note ?? null,
     last_note: '—' as string,
     notes: r.notes ?? null,
@@ -276,6 +290,7 @@ async function fetchUntypedUnassignedDebtorsPage(
     if (search) q = q.ilike('full_name', `%${search}%`)
     q = applyNotDuplicateFilter(q, duplicateColumnReady)
     q = applyFilePreparationModeFilter(q, mode, prepColumnReady)
+    q = applyExcludeDebtorIds(q, options?.excludeDebtorIds)
     return q
   }
 
@@ -335,6 +350,7 @@ async function countUntypedAwaitingScoped(
     if (search) q = q.ilike('full_name', `%${search}%`)
     q = applyNotDuplicateFilter(q, duplicateColumnReady)
     q = applyFilePreparationModeFilter(q, mode, prepColumnReady)
+    q = applyExcludeDebtorIds(q, options?.excludeDebtorIds)
     return q
   }
 
@@ -378,6 +394,7 @@ async function countNoTaskAwaitingScoped(
     if (search) q = q.ilike('full_name', `%${search}%`)
     q = applyNotDuplicateFilter(q, duplicateColumnReady)
     q = applyFilePreparationModeFilter(q, mode, prepColumnReady)
+    q = applyExcludeDebtorIds(q, options?.excludeDebtorIds)
     return q
   }
 
@@ -482,6 +499,7 @@ export async function fetchAwaitingAssignmentDebtors(
       if (search) q = q.ilike('full_name', `%${search}%`)
       q = applyNotDuplicateFilter(q, duplicateColumnReady)
       q = applyFilePreparationModeFilter(q, mode, prepColumnReady)
+      q = applyExcludeDebtorIds(q, options?.excludeDebtorIds)
       return q
     }
 
@@ -528,11 +546,39 @@ export async function fetchAwaitingAssignmentDebtors(
   }
 
   const branchNames = await loadBranchNames(supabase, uniquePage)
+  const rows = await mapRowsWithLastNotes(supabase, uniquePage, branchNames)
+  await attachTransactionSale(supabase, rows)
   return {
-    rows: await mapRowsWithLastNotes(supabase, uniquePage, branchNames),
+    rows,
     total,
     noteColumnMissing,
     error: null,
+  }
+}
+
+async function attachTransactionSale(
+  supabase: SupabaseClient,
+  rows: AwaitingAssignmentDebtor[],
+): Promise<void> {
+  if (!rows.length) return
+  const { data, error } = await supabase
+    .from('debtors')
+    .select('id, transaction_number, sale_date')
+    .in('id', rows.map(r => r.id))
+  if (error) return
+  const map = new Map(
+    (data ?? []).map(d => [
+      d.id,
+      {
+        transaction_number: d.transaction_number ?? null,
+        sale_date: d.sale_date ? String(d.sale_date).slice(0, 10) : null,
+      },
+    ]),
+  )
+  for (const row of rows) {
+    const extra = map.get(row.id)
+    row.transaction_number = extra?.transaction_number ?? null
+    row.sale_date = extra?.sale_date ?? null
   }
 }
 

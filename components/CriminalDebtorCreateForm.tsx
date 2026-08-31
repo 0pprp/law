@@ -21,6 +21,8 @@ import {
   type CriminalDetailsFormState,
 } from '@/components/CriminalDebtorFields'
 import { BackButton } from '@/components/ui/back-button'
+import { TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL } from '@/lib/ui-labels'
+import { DatePicker } from '@/components/ui/date-picker'
 import { uploadDebtorPdfFile } from '@/lib/debtor-file-upload'
 import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 
@@ -48,6 +50,8 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
   const [fullName, setFullName] = useState('')
   const [criminal, setCriminal] = useState<CriminalDetailsFormState>(EMPTY_CRIMINAL_DETAILS)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [transactionNumber, setTransactionNumber] = useState('')
+  const [saleDate, setSaleDate] = useState('')
   const submitLock = useRef(false)
 
   const branchOk = Boolean(branchId && branchName && !isMainBranchName(branchName))
@@ -109,6 +113,8 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
           full_name: fullName.trim(),
           remaining_amount: null,
           receipt_amount: criminalDetailsPayload(criminal).amount_owed,
+          transaction_number: transactionNumber.trim() || null,
+          sale_date: saleDate || null,
           branch_list_id: null,
           criminal_details: criminalDetailsPayload(criminal),
         }),
@@ -195,6 +201,27 @@ export default function CriminalDebtorCreateForm({ readOnly, lockCaseType }: Pro
                 required
               />
             </FormField>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <FormField label={TRANSACTION_NUMBER_LABEL} hint="اختياري">
+                <input
+                  type="text"
+                  value={transactionNumber}
+                  disabled={readOnly}
+                  onChange={e => setTransactionNumber(e.target.value)}
+                  className={formInputClass}
+                  dir="ltr"
+                />
+              </FormField>
+              <FormField label={SALE_DATE_LABEL} hint="اختياري">
+                <DatePicker
+                  value={saleDate}
+                  onChange={setSaleDate}
+                  disabled={readOnly}
+                  headerTitle={SALE_DATE_LABEL}
+                  placeholder="اختياري — اختر التاريخ"
+                />
+              </FormField>
+            </div>
           </FormFlowStep>
 
           <FormFlowStep step={2} title="تفاصيل القضية الجزائية" subtitle="جميع الحقول اختيارية">

@@ -5,7 +5,7 @@ import { apiForbiddenResponse, canAssignTasks, canViewInstantCases, isAdmin, isA
 import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { safeClientError, apiServerError } from '@/lib/safe-api-error'
 import { logActivity } from '@/lib/activity-log'
-import { ensureLegalArchiveStatusId, LEGAL_ARCHIVE_STATUS_NAME } from '@/lib/experimental-queues'
+import { LEGAL_ARCHIVE_STATUS_NAME } from '@/lib/experimental-queues'
 
 const MAX_IDS = 200
 
@@ -22,8 +22,8 @@ function parseIds(body: unknown): string[] | null {
 }
 
 /**
- * من أرشيف القانونية → الدعاوى الفورية:
- * إنشاء ترشيح معتمد مربوط بالمدين الحالي + إزالة صفة الأرشيف.
+ * من الأسماء المضافة مؤخراً → الدعاوى الفورية:
+ * إنشاء ترشيح معتمد مربوط بالمدين الحالي.
  */
 export async function POST(request: NextRequest) {
   const auth = await requireStaffProfile()
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   try {
     const { data: targets, error } = await admin
       .from('debtors')
-      .select('id, full_name, branch_id, branch_list_id, required_amount, governorate, special_status_id, special_status:special_statuses(id, name)')
+      .select('id, full_name, branch_id, branch_list_id, required_amount, governorate, case_type, special_status_id, special_status:special_statuses(id, name)')
       .in('id', debtorIds)
     if (error) return apiServerError('move-to-instant:targets', error)
     if (!targets?.length) return safeClientError('لا توجد أسماء مطابقة', 404)
@@ -54,22 +54,17 @@ export async function POST(request: NextRequest) {
     const denied = targets.find(d => d.branch_id && !canStaffWriteBranch(auth.profile, d.branch_id))
     if (denied) return apiForbiddenResponse()
 
-    const archiveIds = new Set<string>()
-    const branchIds = [...new Set(targets.map(t => t.branch_id).filter(Boolean))] as string[]
-    for (const bId of branchIds) {
-      archiveIds.add(await ensureLegalArchiveStatusId(admin, bId))
-    }
-
     const failed: { id: string; name: string; reason: string }[] = []
     let created = 0
 
     for (const d of targets) {
       const ss = Array.isArray(d.special_status) ? d.special_status[0] : d.special_status
-      const isArchive =
-        (d.special_status_id && archiveIds.has(d.special_status_id))
-        || ss?.name === LEGAL_ARCHIVE_STATUS_NAME
-      if (!isArchive) {
-        failed.push({ id: d.id, name: d.full_name, reason: 'الاسم ليس في أرشيف القانونية' })
+      if (d.special_status_id || ss?.name === LEGAL_ARCHIVE_STATUS_NAME) {
+        failed.push({ id: d.id, name: d.full_name, reason: 'حوّل من الأسماء المضافة مؤخراً — الاسم في الأرشيف أو صفة خاصة' })
+        continue
+      }
+      if (d.case_type === 'criminal') {
+        failed.push({ id: d.id, name: d.full_name, reason: 'الدعاوى الفورية للدعاوى المدنية فقط' })
         continue
       }
       if (!d.branch_id) {
@@ -87,10 +82,10 @@ export async function POST(request: NextRequest) {
         .from('instant_case_nominations')
         .select('id')
         .eq('debtor_id', d.id)
-        .eq('status', 'approved')
-        .maybeSingle()
+        .in('status', ['pending', 'approved'])
+        .limit(1)
 
-      if (!existing) {
+      if (!existing?.length) {
         const { error: insErr } = await admin.from('instant_case_nominations').insert({
           branch_id: d.branch_id,
           branch_list_id: d.branch_list_id,
@@ -110,21 +105,13 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const { error: clrErr } = await admin
-        .from('debtors')
-        .update({ special_status_id: null, special_status_return_task_id: null })
-        .eq('id', d.id)
-      if (clrErr) {
-        failed.push({ id: d.id, name: d.full_name, reason: clrErr.message })
-        continue
-      }
       created += 1
     }
 
     await logActivity({
       action: 'set_debtor_special_status',
       entity_type: 'debtor',
-      description: `تحويل ${created} اسم من أرشيف القانونية إلى الدعاوى الفورية`,
+      description: `تحويل ${created} اسم من الأسماء المضافة مؤخراً إلى الدعاوى الفورية`,
       metadata: { created, failed: failed.length },
     }, auth.supabase)
 

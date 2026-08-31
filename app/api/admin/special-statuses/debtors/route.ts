@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
   }
 
   const selectCols =
-    'id, full_name, phone, branch_id, special_status_id, notes, case_status, current_task_id, special_status_return_task_id, branch_list:branch_lists(name, court_name), special_status:special_statuses(id, name, color)'
+    'id, full_name, phone, branch_id, special_status_id, notes, case_status, current_task_id, special_status_return_task_id, transaction_number, sale_date, branch_list:branch_lists(name, court_name), special_status:special_statuses(id, name, color)'
 
   let q = admin
     .from('debtors')
@@ -146,6 +146,10 @@ export async function GET(request: NextRequest) {
       return_task_id: linkedTaskId,
       return_task_label: linkedTaskId ? (taskLabelById.get(linkedTaskId) ?? 'مهمة محفوظة') : null,
       last_note: legacy ? formatLastNotePreview(LEGACY_NOTE_AUTHOR, legacy) : '—',
+      transaction_number: (d as { transaction_number?: string | null }).transaction_number ?? null,
+      sale_date: (d as { sale_date?: string | null }).sale_date
+        ? String((d as { sale_date?: string | null }).sale_date).slice(0, 10)
+        : null,
     }
   })
 
