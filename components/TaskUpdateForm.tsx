@@ -68,6 +68,9 @@ export function LawyerTaskCompletionModal({
   expenseStepDone = false,
   hybridParentDefinitionId = null,
   hybridSelectedLinked = [],
+  adminAutoApprove = false,
+  onAdminApproved,
+  onRequestIncomplete,
 }: {
   task: Task & Record<string, any>
   reqFields: ReqField[]
@@ -81,6 +84,14 @@ export function LawyerTaskCompletionModal({
   /** إن وُجدت مهام مرتبطة محددة — وضع هجين */
   hybridParentDefinitionId?: string | null
   hybridSelectedLinked?: HybridLinkInfo[]
+  /** إنجاز من الإدارة نيابة عن المحامي — اعتماد تلقائي عبر API */
+  adminAutoApprove?: boolean
+  onAdminApproved?: (result: {
+    autoNext?: { ok: boolean; nextLabel?: string; error?: string } | null
+    needsNextTask?: boolean
+    completionData?: Record<string, string>
+  }) => void
+  onRequestIncomplete?: () => void
 }) {
   const router = useRouter()
   const isHybridSubmit = Boolean(hybridParentDefinitionId && hybridSelectedLinked.length > 0)
@@ -232,6 +243,53 @@ export function LawyerTaskCompletionModal({
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setError('يرجى تسجيل الدخول'); setSaving(false); return }
 
+    // للوضع الهجين: completion_data للأساسية = حقولها فقط
+    let parentCompletion = completionData
+    if (isHybridSubmit && hybridParentDefinitionId) {
+      const defIds = [
+        hybridParentDefinitionId,
+        ...hybridSelectedLinked.map(l => l.linked_definition_id),
+      ]
+      const partitioned = partitionCompletionDataByDefinition(completionData, defIds)
+      parentCompletion = partitioned[hybridParentDefinitionId] ?? {}
+      if (generalNotes.trim()) parentCompletion.general_notes = generalNotes.trim()
+    }
+
+    if (adminAutoApprove) {
+      try {
+        const res = await fetch('/api/admin/complete-as-lawyer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            taskId: task.id,
+            completionData: parentCompletion,
+            rawCompletion: completionData,
+            pendingExpenses: expenseStepDone ? pendingExpenses : [],
+            hybridParentDefinitionId: isHybridSubmit ? hybridParentDefinitionId : null,
+            hybridSelectedLinked: isHybridSubmit ? hybridSelectedLinked : [],
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || !data.ok) {
+          setError(typeof data.error === 'string' ? data.error : 'فشل إنجاز المهمة')
+          setSaving(false)
+          return
+        }
+        onAdminApproved?.({
+          autoNext: data.autoNext ?? null,
+          needsNextTask: Boolean(data.needsNextTask),
+          completionData,
+        })
+        onSubmitted()
+        if (!skipRouterRefresh) router.refresh()
+        setSaving(false)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'فشل الاتصال بالخادم')
+        setSaving(false)
+      }
+      return
+    }
+
     if (expenseStepDone) {
       const expenseResult = await persistTaskExpenses(supabase, {
         taskId: task.id,
@@ -246,18 +304,6 @@ export function LawyerTaskCompletionModal({
         setSaving(false)
         return
       }
-    }
-
-    // للوضع الهجين: completion_data للأساسية = حقولها فقط
-    let parentCompletion = completionData
-    if (isHybridSubmit && hybridParentDefinitionId) {
-      const defIds = [
-        hybridParentDefinitionId,
-        ...hybridSelectedLinked.map(l => l.linked_definition_id),
-      ]
-      const partitioned = partitionCompletionDataByDefinition(completionData, defIds)
-      parentCompletion = partitioned[hybridParentDefinitionId] ?? {}
-      if (generalNotes.trim()) parentCompletion.general_notes = generalNotes.trim()
     }
 
     const submitPayloads = [
@@ -533,7 +579,12 @@ export function LawyerTaskCompletionModal({
         {/* Header */}
         <div className="px-5 py-4 border-b border-[rgba(118,118,118,0.1)] flex items-start justify-between shrink-0">
           <div className="min-w-0 pr-2">
-            <h2 id="task-completion-modal-title" className="font-black text-[#231F20] text-base">تأكيد الإنجاز{taskLabel ? `: ${taskLabel}` : ''}</h2>
+            <h2 id="task-completion-modal-title" className="font-black text-[#231F20] text-base">
+              {adminAutoApprove ? 'إنجاز كمدير' : 'تأكيد الإنجاز'}{taskLabel ? `: ${taskLabel}` : ''}
+            </h2>
+            {adminAutoApprove && (
+              <p className="text-[11px] text-[#2C8780] font-semibold mt-1">سيُعتمد الإنجاز تلقائياً بعد الحفظ</p>
+            )}
           </div>
           <button type="button" onClick={onClose}
             className="w-8 h-8 rounded-xl bg-[#F3F1F2] text-[#767676] flex items-center justify-center text-xl leading-none hover:bg-slate-200 transition-colors shrink-0"
@@ -575,11 +626,23 @@ export function LawyerTaskCompletionModal({
             <button onClick={submit} disabled={saving}
               className="flex-1 py-3.5 rounded-xl text-white font-black text-sm disabled:opacity-60 transition-opacity"
               style={{ background: saving ? '#767676' : 'linear-gradient(135deg,#2C8780,#1D6365)' }}>
-              {uploading ? 'جارٍ رفع الملفات...' : saving ? 'جارٍ الإرسال...' : 'إرسال للاعتماد'}
+              {uploading ? 'جارٍ رفع الملفات...' : saving ? (adminAutoApprove ? 'جارٍ الإنجاز والاعتماد...' : 'جارٍ الإرسال...') : (adminAutoApprove ? 'حفظ واعتماد تلقائي' : 'إرسال للاعتماد')}
             </button>
+            {adminAutoApprove && onRequestIncomplete && (
+              <button
+                type="button"
+                onClick={onRequestIncomplete}
+                disabled={saving}
+                className="flex-1 sm:flex-none sm:min-w-[10.5rem] py-3.5 rounded-xl text-white font-black text-sm disabled:opacity-60 bg-amber-600 hover:bg-amber-700"
+              >
+                إرسال بدون إنجاز
+              </button>
+            )}
           </div>
           <p className="text-center text-[10px] text-[#767676]">
-            ستظهر المهمة بحالة &quot;بانتظار الاعتماد&quot; حتى تراجعها الإدارة
+            {adminAutoApprove
+              ? 'بعد الحفظ تُعتمد المهمة مباشرة ويُطلب منك اختيار المهمة التالية'
+              : 'ستظهر المهمة بحالة "بانتظار الاعتماد" حتى تراجعها الإدارة'}
           </p>
         </div>
       </div>
@@ -594,12 +657,14 @@ export function IncompleteWithoutCompletionModal({
   onClose,
   onSubmitted,
   skipRouterRefresh,
+  adminAutoApprove = false,
 }: {
   task: Task & Record<string, any>
   taskLabel?: string
   onClose: () => void
   onSubmitted: () => void
   skipRouterRefresh?: boolean
+  adminAutoApprove?: boolean
 }) {
   const router = useRouter()
   const [reason, setReason] = useState('')
@@ -620,6 +685,33 @@ export function IncompleteWithoutCompletionModal({
     if (!user) {
       setError('يرجى تسجيل الدخول')
       setSaving(false)
+      return
+    }
+
+    if (adminAutoApprove) {
+      try {
+        const res = await fetch('/api/admin/complete-as-lawyer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            taskId: task.id,
+            incomplete: true,
+            incompleteReason: trimmed,
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || !data.ok) {
+          setError(typeof data.error === 'string' ? data.error : 'فشل الإرسال بدون إنجاز')
+          setSaving(false)
+          return
+        }
+        onSubmitted()
+        onClose()
+        if (!skipRouterRefresh) router.refresh()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'فشل الاتصال بالخادم')
+        setSaving(false)
+      }
       return
     }
 
@@ -692,7 +784,9 @@ export function IncompleteWithoutCompletionModal({
               إرسال بدون إنجاز{taskLabel ? `: ${taskLabel}` : ''}
             </h2>
             <p className="text-[11px] text-[#767676] mt-1">
-              سيُراجع الطلب في تبويب «غير منجزة» — لن تُحسب أتعاب ولن يُعتبر إنجازاً
+              {adminAutoApprove
+                ? 'سيُلغى التكليف مباشرة وتعود المهمة لبانتظار التكليف — بلا أتعاب'
+                : 'سيُراجع الطلب في تبويب «غير منجزة» — لن تُحسب أتعاب ولن يُعتبر إنجازاً'}
             </p>
           </div>
           <button type="button" onClick={onClose}

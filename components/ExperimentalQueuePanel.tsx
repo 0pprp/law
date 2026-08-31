@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useBranch } from '@/context/branch'
-import { isExperimentalBranch } from '@/lib/branch-constants'
 import { fmtDate } from '@/lib/utils'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import { cacheGet, cacheSet, CACHE_TTL, cacheInvalidatePrefix } from '@/lib/query-cache'
+import { useSearchParams } from 'next/navigation'
+import { useCaseScope } from '@/hooks/use-case-scope'
 import type { ExperimentalDebtorRow, ExperimentalQueue } from '@/lib/experimental-queues'
 
 type Props = {
@@ -88,9 +89,14 @@ function NoteModal({
 }
 
 export default function ExperimentalQueuePanel({ queue }: Props) {
-  const { branchName, branchId } = useBranch()
-  const allowed = isExperimentalBranch(branchName)
-  const cacheKey = `exp-queue:${queue}:v1`
+  const { branchName, branchId, viewAllBranches, listId } = useBranch()
+  const { caseTypeFilter } = useCaseScope()
+  const searchParams = useSearchParams()
+  const ctParam = searchParams.get('ct')
+  const caseType =
+    ctParam === 'civil' || ctParam === 'criminal' ? ctParam : caseTypeFilter
+  const allowed = Boolean(branchId || viewAllBranches)
+  const cacheKey = `exp-queue:${queue}:${branchId ?? 'all'}:${listId ?? 'all'}:${caseType ?? 'both'}:v2`
 
   const cached = cacheGet<{ rows: ExperimentalDebtorRow[]; total: number }>(cacheKey, { allowStale: true })
   const [rows, setRows] = useState<ExperimentalDebtorRow[]>(cached?.rows ?? [])
@@ -109,6 +115,10 @@ export default function ExperimentalQueuePanel({ queue }: Props) {
     if (!opts?.soft) setLoading(true)
     try {
       const params = new URLSearchParams({ queue, limit: '120' })
+      if (viewAllBranches) params.set('viewAll', '1')
+      else if (branchId) params.set('branchId', branchId)
+      if (listId && caseType !== 'criminal') params.set('listId', listId)
+      if (caseType) params.set('caseType', caseType)
       if (q.trim()) params.set('q', q.trim())
       const res = await fetch(`/api/admin/experimental-queues?${params}`)
       const json = await res.json().catch(() => ({}))
@@ -124,7 +134,7 @@ export default function ExperimentalQueuePanel({ queue }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [allowed, queue, q, cacheKey])
+  }, [allowed, queue, q, cacheKey, branchId, viewAllBranches, listId, caseType])
 
   useEffect(() => {
     void load({ soft: Boolean(cached) })
@@ -205,7 +215,7 @@ export default function ExperimentalQueuePanel({ queue }: Props) {
   if (!allowed) {
     return (
       <div className="bg-white rounded-2xl border p-8 text-center">
-        <p className="text-sm font-semibold text-[#231F20]">هذه الصفحة لفرع «تجريبي» فقط</p>
+        <p className="text-sm font-semibold text-[#231F20]">اختر فرعاً من القائمة العلوية أو اختر «الكل».</p>
         <Link href="/admin/dashboard" className="inline-flex mt-3 text-xs font-semibold text-[#2C8780] hover:underline">
           العودة للوحة التحكم ←
         </Link>
@@ -218,7 +228,7 @@ export default function ExperimentalQueuePanel({ queue }: Props) {
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
         <div>
           <h2 className="font-black text-[#231F20] text-lg">{title}</h2>
-          <p className="text-xs text-[#767676] mt-1">{total.toLocaleString('en-US')} اسم · فرع تجريبي</p>
+          <p className="text-xs text-[#767676] mt-1">{total.toLocaleString('en-US')} اسم{branchName ? ` · ${branchName}` : ''}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <input

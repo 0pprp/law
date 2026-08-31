@@ -14,6 +14,7 @@ import { isIncompleteCompletionRequest } from '@/lib/incomplete-completion'
 import { cacheInvalidatePrefix } from '@/lib/query-cache'
 import { resolveDebtorCourtName } from '@/lib/awaiting-assignment'
 import { fetchLastNotePreviewsByDebtorIds } from '@/lib/debtor-last-notes'
+import { mergePleadingNotificationTwinCounts, promoteStandaloneNotificationsToPleadingDual, recreateTwinsAfterUnassign } from '@/lib/pleading-notification-twin'
 
 const LAWYER_TASK_LIST_COLS =
   'id, task_type, task_definition_id, task_status, due_date, court_name, governorate, created_at, debtor_id, assignment_expires_at, admin_notes, assigned_to, reward_amount, branch_id'
@@ -878,13 +879,11 @@ async function scanCurrentTaskMeta(
   caseType?: 'civil' | 'criminal' | null,
   branchListId?: string | null,
 ): Promise<CurrentTaskMeta> {
-  const empty: CurrentTaskMeta = {
-    unassigned: 0,
-    assigned: 0,
-    stageCounts: new Map(),
-    assignedStageCounts: new Map(),
-    overdueStageCounts: new Map(),
-  }
+  await promoteStandaloneNotificationsToPleadingDual(supabase, {
+    branchId,
+    caseType: caseType ?? null,
+    branchListId: branchListId ?? null,
+  }).catch((e) => console.warn('[scanCurrentTaskMeta:promote]', e))
 
   // p_case_type يُمرَّر دائماً (civil|criminal|null) — يجب أن يطابق فلتر الدالة في SQL
   const { data, error } = await supabase.rpc('get_stage_counts', {
@@ -896,7 +895,13 @@ async function scanCurrentTaskMeta(
 
   if (error) {
     console.warn('[scanCurrentTaskMeta] RPC unavailable, falling back to legacy scan:', error.message)
-    return scanCurrentTaskMetaLegacy(supabase, branchId, caseType, branchListId)
+    const legacy = await scanCurrentTaskMetaLegacy(supabase, branchId, caseType, branchListId)
+    await mergePleadingNotificationTwinCounts(supabase, legacy, {
+      branchId,
+      caseType: caseType ?? null,
+      branchListId: branchListId ?? null,
+    })
+    return legacy
   }
 
   const stageCounts = new Map<string, number>()
@@ -918,8 +923,13 @@ async function scanCurrentTaskMeta(
     assigned += a
   }
 
-  if (!data) return empty
-  return { unassigned, assigned, stageCounts, assignedStageCounts, overdueStageCounts }
+  const meta: CurrentTaskMeta = { unassigned, assigned, stageCounts, assignedStageCounts, overdueStageCounts }
+  await mergePleadingNotificationTwinCounts(supabase, meta, {
+    branchId,
+    caseType: caseType ?? null,
+    branchListId: branchListId ?? null,
+  })
+  return meta
 }
 
 async function countCurrentTasksByAssignment(
@@ -2196,6 +2206,9 @@ export async function unassignTasksToWaiting(
         updatedIds,
       }
     }
+    await recreateTwinsAfterUnassign(supabase, updatedIds).catch((e) =>
+      console.warn('[unassign:twin]', e),
+    )
     return { ok: true, error: null, updatedIds }
   }
 

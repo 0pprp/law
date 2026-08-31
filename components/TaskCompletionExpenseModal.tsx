@@ -58,7 +58,6 @@ export default function TaskCompletionExpenseModal({
 
     if (mode === 'draft') {
       onConfirmed(pending)
-      onClose()
       return
     }
 
@@ -85,7 +84,6 @@ export default function TaskCompletionExpenseModal({
 
     setSaving(false)
     onConfirmed(pending)
-    onClose()
   }
 
   return (

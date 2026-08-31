@@ -196,7 +196,7 @@ function DebtorRowsTable({
                   />
                 </th>
                 <th colSpan={8} className="px-4 py-2 text-right text-[11px] font-medium text-[#1D6365]">
-                  تحديد الكل المعروض — ثم التحويل إلى الأسماء التي تحتاج مراقبة
+                  تحديد الكل المعروض — ثم التحويل إلى متابعة القانونية
                 </th>
               </tr>
             )}
@@ -603,7 +603,7 @@ function BranchAwaitingBox({
                     className="text-xs font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-2 rounded-lg transition-colors"
                     style={{ background: 'linear-gradient(135deg,#2C8780,#1D6365)' }}
                   >
-                    تحويل إلى تبويب الأسماء التي تحتاج مراقبة
+                    تحويل إلى تبويب متابعة القانونية
                     {selectedIds.length ? ` (${selectedIds.length})` : ''}
                   </button>
                 )}

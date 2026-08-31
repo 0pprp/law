@@ -558,11 +558,11 @@ export default function SpecialStatusesPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="الأسماء التي تحتاج مراقبة"
+        title="متابعة القانونية"
         subtitle="تصنيف المدينين الذين يحتاجون متابعة خاصة لكل فرع"
         breadcrumb={[
           { label: 'لوحة التحكم', href: '/admin/dashboard' },
-          { label: 'الأسماء التي تحتاج مراقبة' },
+          { label: 'متابعة القانونية' },
         ]}
         actions={
           <button
@@ -579,7 +579,7 @@ export default function SpecialStatusesPage() {
 
       {!branchId && !viewAllBranches && (
         <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl px-4 py-3">
-          اختر فرعاً من القائمة العلوية أو «الكل» لعرض الأسماء التي تحتاج مراقبة.
+          اختر فرعاً من القائمة العلوية أو «الكل» لعرض متابعة القانونية.
         </div>
       )}
 
@@ -628,7 +628,7 @@ export default function SpecialStatusesPage() {
           {[1, 2, 3, 4].map(i => <div key={i} className="h-36 bg-white rounded-xl border animate-pulse" />)}
         </div>
       ) : !activeStatuses.length ? (
-        <EmptyState title="لا توجد صفات بعد" description="أضف أول تصنيف للأسماء التي تحتاج مراقبة للفرع المحدد" />
+        <EmptyState title="لا توجد صفات بعد" description="أضف أول تصنيف لمتابعة القانونية للفرع المحدد" />
       ) : (
         <div className="space-y-5">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">

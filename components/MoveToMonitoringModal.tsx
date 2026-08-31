@@ -86,7 +86,7 @@ export default function MoveToMonitoringModal({
       <div className="w-full max-w-md space-y-4 rounded-2xl bg-white p-5 shadow-xl">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-base font-black text-[#231F20]">تحويل إلى الأسماء التي تحتاج مراقبة</h2>
+            <h2 className="text-base font-black text-[#231F20]">تحويل إلى متابعة القانونية</h2>
             <p className="mt-1 text-xs text-[#767676]">
               سيتم تحويل {debtorIds.length} اسم وحفظ المهمة المرتبطة للرجوع إليها لاحقاً
             </p>
@@ -122,7 +122,7 @@ export default function MoveToMonitoringModal({
 
         {!loading && statuses.length === 0 && !error && (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            لا توجد صفات نشطة لهذا الفرع. أضف صفة أولاً من تبويب الأسماء التي تحتاج مراقبة.
+            لا توجد صفات نشطة لهذا الفرع. أضف صفة أولاً من تبويب متابعة القانونية.
           </p>
         )}
         {error && (

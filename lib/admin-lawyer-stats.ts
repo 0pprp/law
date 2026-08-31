@@ -34,6 +34,55 @@ export type LawyerCompletedTaskRow = AchievementTask & {
   debtors?: { full_name?: string | null; receipt_number?: string | null; governorate?: string | null } | null
 }
 
+export const LAWYER_ACTIVE_ASSIGNED_STATUSES = [
+  'assignment_pending_acceptance',
+  'assigned',
+  'in_progress',
+  'new',
+  'rejected',
+  'needs_info',
+  'needs_revision',
+  'submitted',
+  'pending_review',
+] as const
+
+export const LAWYER_ADMIN_COMPLETABLE_STATUSES = new Set([
+  'assignment_pending_acceptance',
+  'assigned',
+  'in_progress',
+  'new',
+  'rejected',
+  'needs_info',
+  'needs_revision',
+])
+
+export type LawyerAssignedTaskRow = {
+  id: string
+  task_type: string | null
+  task_status: string
+  due_date: string | null
+  assigned_at: string | null
+  created_at: string
+  debtor_id: string | null
+  task_definition_id: string | null
+  branch_id: string | null
+  reward_amount: number | null
+  court_name: string | null
+  assigned_to: string | null
+  case_id: string | null
+  completion_data: Record<string, string> | null
+  lawyer_notes: string | null
+  legal_result: string | null
+  debtors?: {
+    full_name?: string | null
+    receipt_number?: string | null
+    case_type?: string | null
+    court_name?: string | null
+    phone?: string | null
+  } | null
+  task_definitions?: { label?: string | null; fee_amount?: number | null; task_type?: string | null } | null
+}
+
 export type LawyerExpenseRow = {
   id: string
   amount: number | null
@@ -89,6 +138,35 @@ export async function fetchBranchLawyerProfiles(
     return []
   }
   return (data ?? []) as LawyerProfileBrief[]
+}
+
+export async function fetchLawyerAssignedTasks(
+  supabase: SupabaseClient,
+  opts: { lawyerId: string; branchId: string | null; limit?: number },
+): Promise<LawyerAssignedTaskRow[]> {
+  const { lawyerId, branchId, limit = 400 } = opts
+  if (!lawyerId) return []
+
+  let q = supabase
+    .from('tasks')
+    .select(
+      'id, task_type, task_status, due_date, assigned_at, created_at, debtor_id, task_definition_id, branch_id, reward_amount, court_name, assigned_to, case_id, completion_data, lawyer_notes, legal_result, ' +
+        'task_definitions(label, fee_amount, task_type), debtors!tasks_debtor_id_fkey(full_name, receipt_number, case_type, court_name, phone)',
+    )
+    .eq('assigned_to', lawyerId)
+    .in('task_status', [...LAWYER_ACTIVE_ASSIGNED_STATUSES])
+    .order('assigned_at', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (branchId) q = q.eq('branch_id', branchId)
+
+  const { data, error } = await q
+  if (error) {
+    console.error('[fetchLawyerAssignedTasks]', error.message)
+    return []
+  }
+  return (data ?? []) as unknown as LawyerAssignedTaskRow[]
 }
 
 export async function fetchLawyerCompletedTasks(

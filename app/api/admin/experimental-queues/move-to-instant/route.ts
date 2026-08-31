@@ -2,12 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireStaffProfile } from '@/lib/api-auth'
 import { apiForbiddenResponse, canAssignTasks, canViewInstantCases, isAdmin, isAnyLegalManager } from '@/lib/permissions'
+import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { safeClientError, apiServerError } from '@/lib/safe-api-error'
 import { logActivity } from '@/lib/activity-log'
-import {
-  ensureLegalArchiveStatusId,
-  resolveExperimentalBranchId,
-} from '@/lib/experimental-queues'
+import { ensureLegalArchiveStatusId, LEGAL_ARCHIVE_STATUS_NAME } from '@/lib/experimental-queues'
 
 const MAX_IDS = 200
 
@@ -43,26 +41,41 @@ export async function POST(request: NextRequest) {
   if (!debtorIds) return safeClientError('معرّفات المدينين مطلوبة', 400)
 
   const admin = createAdminClient()
-  const branchId = await resolveExperimentalBranchId(admin)
-  if (!branchId) return safeClientError('فرع تجريبي غير موجود', 404)
   const userId = auth.user!.id
 
   try {
-    const archiveStatusId = await ensureLegalArchiveStatusId(admin, branchId)
-
     const { data: targets, error } = await admin
       .from('debtors')
-      .select('id, full_name, branch_id, branch_list_id, required_amount, governorate, special_status_id')
+      .select('id, full_name, branch_id, branch_list_id, required_amount, governorate, special_status_id, special_status:special_statuses(id, name)')
       .in('id', debtorIds)
-      .eq('branch_id', branchId)
-      .eq('special_status_id', archiveStatusId)
     if (error) return apiServerError('move-to-instant:targets', error)
-    if (!targets?.length) return safeClientError('لا توجد أسماء مؤرشفة مطابقة', 404)
+    if (!targets?.length) return safeClientError('لا توجد أسماء مطابقة', 404)
+
+    const denied = targets.find(d => d.branch_id && !canStaffWriteBranch(auth.profile, d.branch_id))
+    if (denied) return apiForbiddenResponse()
+
+    const archiveIds = new Set<string>()
+    const branchIds = [...new Set(targets.map(t => t.branch_id).filter(Boolean))] as string[]
+    for (const bId of branchIds) {
+      archiveIds.add(await ensureLegalArchiveStatusId(admin, bId))
+    }
 
     const failed: { id: string; name: string; reason: string }[] = []
     let created = 0
 
     for (const d of targets) {
+      const ss = Array.isArray(d.special_status) ? d.special_status[0] : d.special_status
+      const isArchive =
+        (d.special_status_id && archiveIds.has(d.special_status_id))
+        || ss?.name === LEGAL_ARCHIVE_STATUS_NAME
+      if (!isArchive) {
+        failed.push({ id: d.id, name: d.full_name, reason: 'الاسم ليس في أرشيف القانونية' })
+        continue
+      }
+      if (!d.branch_id) {
+        failed.push({ id: d.id, name: d.full_name, reason: 'لا يوجد فرع للمدين' })
+        continue
+      }
       if (!d.branch_list_id) {
         failed.push({ id: d.id, name: d.full_name, reason: 'لا توجد قائمة فرع للمدين' })
         continue
@@ -79,7 +92,7 @@ export async function POST(request: NextRequest) {
 
       if (!existing) {
         const { error: insErr } = await admin.from('instant_case_nominations').insert({
-          branch_id: branchId,
+          branch_id: d.branch_id,
           branch_list_id: d.branch_list_id,
           debtor_name: d.full_name,
           sale_price: sale,
@@ -111,7 +124,7 @@ export async function POST(request: NextRequest) {
     await logActivity({
       action: 'set_debtor_special_status',
       entity_type: 'debtor',
-      description: `تحويل ${created} اسم من أرشيف القانونية إلى الدعاوى الفورية (تجريبي)`,
+      description: `تحويل ${created} اسم من أرشيف القانونية إلى الدعاوى الفورية`,
       metadata: { created, failed: failed.length },
     }, auth.supabase)
 

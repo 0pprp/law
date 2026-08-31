@@ -9,6 +9,11 @@ import {
 } from '@/lib/permissions'
 import { logActivity } from '@/lib/activity-log'
 import { requireDebtorInScope } from '@/lib/section-guard'
+import { isPleadingDefinition } from '@/lib/default-next-task'
+import {
+  endPleadingNotificationDual,
+  ensurePleadingNotificationTwin,
+} from '@/lib/pleading-notification-twin'
 
 /** حالات تسمح بتغيير تعريف المهمة قبل التكليف/الإنجاز */
 const EDITABLE_STATUSES = new Set([
@@ -113,6 +118,13 @@ export async function POST(request: NextRequest) {
     }
 
     await admin.from('debtors').update({ current_task_id: created.id }).eq('id', debtor.id)
+    if (isPleadingDefinition(def)) {
+      await ensurePleadingNotificationTwin(admin, {
+        id: created.id,
+        debtor_id: debtor.id,
+        branch_id: debtor.branch_id,
+      }, { caseType: debtorCaseType }).catch((e) => console.warn('[change-debtor-task:twin]', e))
+    }
     await logActivity({
       action: 'update_task',
       entity_type: 'debtor',
@@ -159,6 +171,18 @@ export async function POST(request: NextRequest) {
   if (updErr) {
     console.error('[change-debtor-task:update]', updErr.message)
     return NextResponse.json({ error: 'فشل تحديث المهمة' }, { status: 500 })
+  }
+
+  if (isPleadingDefinition(def)) {
+    await ensurePleadingNotificationTwin(admin, {
+      id: task.id,
+      debtor_id: debtor.id,
+      branch_id: debtor.branch_id ?? task.branch_id,
+    }, { caseType: debtorCaseType }).catch((e) => console.warn('[change-debtor-task:twin]', e))
+  } else {
+    await endPleadingNotificationDual(admin, task.id).catch((e) =>
+      console.warn('[change-debtor-task:end-twin]', e),
+    )
   }
 
   await logActivity({

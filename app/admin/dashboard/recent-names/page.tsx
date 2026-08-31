@@ -1,5 +1,6 @@
 'use client'
 
+import { Suspense } from 'react'
 import Link from 'next/link'
 import ExperimentalQueuePanel from '@/components/ExperimentalQueuePanel'
 
@@ -11,7 +12,9 @@ export default function RecentNamesPage() {
         <span>/</span>
         <span className="text-[#231F20] font-semibold">الأسماء المضافة مؤخراً</span>
       </div>
-      <ExperimentalQueuePanel queue="recent" />
+      <Suspense fallback={<div className="text-sm text-[#767676]">جارٍ التحميل...</div>}>
+        <ExperimentalQueuePanel queue="recent" />
+      </Suspense>
     </div>
   )
 }

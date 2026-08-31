@@ -8,6 +8,7 @@ export const DASHBOARD_COUNTS_CHANGED = 'dashboard-counts-changed'
 export type OpsCardCounts = {
   awaiting: number | null
   prep: number | null
+  receiptsPrep: number | null
   payment: number | null
   pending: number | null
   instant: number | null

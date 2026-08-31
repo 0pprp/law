@@ -37,7 +37,7 @@ export default function AdminRouteGuard({ children }: { children: React.ReactNod
   }
 
   if (pathname.startsWith('/admin/special-statuses') && !canManageSpecialStatuses(role)) {
-    return <PermissionDenied message="الأسماء التي تحتاج مراقبة: للمدير أو مسؤول الدعاوى المدنية فقط." />
+    return <PermissionDenied message="متابعة القانونية: للمدير أو مسؤول الدعاوى المدنية فقط." />
   }
 
   if (isPaymentFollowUp(role) && !isPaymentFollowUpPathAllowed(pathname)) {

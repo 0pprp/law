@@ -24,6 +24,46 @@ export function isPleadingDefinition(def: {
   return (def.label ?? '').includes('مرافع')
 }
 
+/** هل التعريف تبليغ؟ */
+export function isNotificationDefinition(def: {
+  task_type?: string | null
+  label?: string | null
+}): boolean {
+  if (def.task_type === 'notification') return true
+  const label = def.label ?? ''
+  return label.includes('تبليغ') || label.includes('التبليغ')
+}
+
+export function isPleadingTask(task: {
+  task_type?: string | null
+  task_definitions?: { task_type?: string | null; label?: string | null } | { task_type?: string | null; label?: string | null }[] | null
+  label?: string | null
+}): boolean {
+  if (task.task_type === 'pleading') return true
+  const def = Array.isArray(task.task_definitions)
+    ? task.task_definitions[0]
+    : task.task_definitions
+  return isPleadingDefinition({
+    task_type: def?.task_type ?? task.task_type,
+    label: def?.label ?? task.label,
+  })
+}
+
+export function isNotificationTask(task: {
+  task_type?: string | null
+  task_definitions?: { task_type?: string | null; label?: string | null } | { task_type?: string | null; label?: string | null }[] | null
+  label?: string | null
+}): boolean {
+  if (task.task_type === 'notification') return true
+  const def = Array.isArray(task.task_definitions)
+    ? task.task_definitions[0]
+    : task.task_definitions
+  return isNotificationDefinition({
+    task_type: def?.task_type ?? task.task_type,
+    label: def?.label ?? task.label,
+  })
+}
+
 /**
  * يجد تعريف «مرافعات» المناسب لنفس الفرع ونوع الدعوى.
  * يفضّل task_type=pleading ثم التسمية، ونفس branch_id.
@@ -57,6 +97,44 @@ export function pickPleadingDefinition<T extends {
   return (
     pool.find(d => d.task_type === 'pleading')
     ?? pool.find(d => (d.label ?? '').includes('مرافع'))
+    ?? pool[0]
+    ?? null
+  )
+}
+
+/**
+ * يجد تعريف «التبليغ» المناسب لنفس الفرع ونوع الدعوى.
+ */
+export function pickNotificationDefinition<T extends {
+  id: string
+  task_type?: string | null
+  label?: string | null
+  branch_id?: string | null
+  case_type?: string | null
+}>(
+  defs: T[],
+  opts: { branchId?: string | null; caseType?: string | null },
+): T | null {
+  const caseType = normalizeCaseType(opts.caseType)
+  const branchId = opts.branchId ?? null
+
+  const scoped = defs.filter(d => {
+    if (normalizeCaseType(d.case_type) !== caseType) return false
+    if (branchId && d.branch_id && d.branch_id !== branchId) return false
+    return isNotificationDefinition(d)
+  })
+
+  if (!scoped.length) return null
+
+  const sameBranch = branchId
+    ? scoped.filter(d => d.branch_id === branchId)
+    : scoped
+  const pool = sameBranch.length ? sameBranch : scoped
+
+  return (
+    pool.find(d => d.task_type === 'notification')
+    ?? pool.find(d => (d.label ?? '').includes('التبليغ'))
+    ?? pool.find(d => (d.label ?? '').includes('تبليغ'))
     ?? pool[0]
     ?? null
   )

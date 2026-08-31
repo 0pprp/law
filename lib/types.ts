@@ -195,6 +195,10 @@ export interface Debtor {
   payment_location?: PaymentLocation | null
   /** تجهيز الملف لدى المحاسب الرئيسي */
   file_preparation_status?: FilePreparationStatus | null
+  /** تم تجهيز الوصل من كارد تجهيز الوصولات — يبقى بعد مغادرة المرافعات */
+  receipts_prepared?: boolean
+  receipts_prepared_at?: string | null
+  receipts_prepared_by?: string | null
   /** المحاسب الرئيسي المعيَّن على المدين */
   assigned_chief_accountant_id?: string | null
   created_by: string

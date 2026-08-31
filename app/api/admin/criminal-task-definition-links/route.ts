@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getSessionProfile, requireStaffProfile } from '@/lib/api-auth'
 import {
   canManageTaskManagement,
+  canApproveCompletions,
   apiForbiddenResponse,
   isFieldWorkerRole,
 } from '@/lib/permissions'
@@ -54,6 +55,7 @@ export async function GET(request: NextRequest) {
   const canRead =
     canManageTaskManagement(ctx.profile.role)
     || isFieldWorkerRole(ctx.profile.role)
+    || canApproveCompletions(ctx.profile.role)
   if (!canRead) return apiForbiddenResponse()
 
   const parentId = request.nextUrl.searchParams.get('parent_id')?.trim()

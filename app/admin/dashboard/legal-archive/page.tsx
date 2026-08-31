@@ -1,5 +1,6 @@
 'use client'
 
+import { Suspense } from 'react'
 import Link from 'next/link'
 import ExperimentalQueuePanel from '@/components/ExperimentalQueuePanel'
 
@@ -11,7 +12,9 @@ export default function LegalArchivePage() {
         <span>/</span>
         <span className="text-[#231F20] font-semibold">أرشيف القانونية</span>
       </div>
-      <ExperimentalQueuePanel queue="archive" />
+      <Suspense fallback={<div className="text-sm text-[#767676]">جارٍ التحميل...</div>}>
+        <ExperimentalQueuePanel queue="archive" />
+      </Suspense>
     </div>
   )
 }

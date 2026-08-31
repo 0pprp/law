@@ -69,7 +69,7 @@ const sections = [
       { label: 'ترشيح اسم', href: '/admin/nominations/new', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg>
       )},
-      { label: 'الأسماء التي تحتاج مراقبة', href: '/admin/special-statuses', icon: (
+      { label: 'متابعة القانونية', href: '/admin/special-statuses', icon: (
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z"/></svg>
       )},
       { label: 'تكليف المهام', href: '/admin/tasks', exact: true, icon: (

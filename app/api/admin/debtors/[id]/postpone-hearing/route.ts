@@ -6,6 +6,7 @@ import { requireDebtorInScope } from '@/lib/section-guard'
 import { logActivity } from '@/lib/activity-log'
 import {
   isHearingPostponeAllowed,
+  listPostponeLinkedTasks,
   postponeHearingDate,
   type HearingPostponementRow,
 } from '@/lib/hearing-postpone'
@@ -81,6 +82,7 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
       new_date: String(r.new_date).slice(0, 10),
       created_by_name: r.created_by ? (nameById.get(r.created_by) ?? null) : null,
     })),
+    linkedTasks: await listPostponeLinkedTasks(admin, debtorId),
   })
 }
 
@@ -94,7 +96,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   }
 
   const { id: debtorId } = await params
-  let body: { newDate?: unknown; reason?: unknown }
+  let body: { newDate?: unknown; reason?: unknown; linkedTaskId?: unknown }
   try {
     body = await request.json()
   } catch {
@@ -117,6 +119,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     newDate: String(body.newDate ?? ''),
     reason: String(body.reason ?? ''),
     actorId: auth.user?.id ?? null,
+    linkedTaskId: body.linkedTaskId ? String(body.linkedTaskId) : null,
   })
 
   if (!result.ok) {

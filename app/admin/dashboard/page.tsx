@@ -21,7 +21,6 @@ import {
 } from '@/lib/dashboard-counts-cache'
 import PaymentOpsCards from '@/components/PaymentOpsCards'
 import {
-  fetchDashboardData,
   fetchPendingReviewCount,
   fetchPleadingHearingBadgeCounts,
   type UnassignedStageCount,
@@ -256,14 +255,25 @@ export default function DashboardPage() {
       if (branchId) aq = (aq as any).eq('branch_id', branchId)
 
       const branchListForCivil = viewAllBranches ? null : listId
+      const qs = (caseType: 'civil' | 'criminal') => {
+        const p = new URLSearchParams({ caseType })
+        if (branchId) p.set('branchId', branchId)
+        if (caseType === 'civil' && branchListForCivil) p.set('branchListId', branchListForCivil)
+        return p
+      }
       const fetchCivil = showCivilStages
-        ? fetchDashboardData(supabase, branchId, {
-            caseType: 'civil',
-            branchListId: branchListForCivil,
+        ? fetch(`/api/admin/dashboard-stages?${qs('civil')}`).then(async (res) => {
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(data.error || 'فشل تحميل المراحل')
+            return data as typeof EMPTY_DASH
           })
         : Promise.resolve(EMPTY_DASH)
       const fetchCriminal = showCriminalStages
-        ? fetchDashboardData(supabase, branchId, { caseType: 'criminal', branchListId: null })
+        ? fetch(`/api/admin/dashboard-stages?${qs('criminal')}`).then(async (res) => {
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(data.error || 'فشل تحميل المراحل')
+            return data as typeof EMPTY_DASH
+          })
         : Promise.resolve(EMPTY_DASH)
 
       const fetchHearingBadges = showCivilStages && (role === 'admin' || role === 'viewer')

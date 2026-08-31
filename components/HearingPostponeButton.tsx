@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react'
 import CenteredModalPortal from '@/components/ui/centered-modal-portal'
 import { DatePicker } from '@/components/ui/date-picker'
+import { PremiumSelect } from '@/components/ui/premium-select'
 import { fmtDate } from '@/lib/utils'
-import type { HearingPostponementRow } from '@/lib/hearing-postpone'
+import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
+import type { HearingPostponementRow, PostponeLinkedTaskOption } from '@/lib/hearing-postpone'
 
 const INP =
   'w-full px-3 py-2.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2C8780]/25 focus:border-[#2C8780] transition-all'
@@ -28,6 +30,10 @@ export function HearingPostponeModal({
   const [reason, setReason] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [hasLinked, setHasLinked] = useState(false)
+  const [linkedTaskId, setLinkedTaskId] = useState('')
+  const [linkedTasks, setLinkedTasks] = useState<PostponeLinkedTaskOption[]>([])
+  const [linkedLoading, setLinkedLoading] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -35,19 +41,52 @@ export function HearingPostponeModal({
     setReason('')
     setError('')
     setBusy(false)
+    setHasLinked(false)
+    setLinkedTaskId('')
+    setLinkedTasks([])
   }, [open, debtorId])
+
+  useEffect(() => {
+    if (!open || !hasLinked || !debtorId) return
+    let cancelled = false
+    setLinkedLoading(true)
+    fetch(`/api/admin/debtors/${debtorId}/postpone-hearing`)
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return
+        const rows = Array.isArray(data.linkedTasks) ? data.linkedTasks as PostponeLinkedTaskOption[] : []
+        setLinkedTasks(rows)
+      })
+      .catch(() => {
+        if (!cancelled) setLinkedTasks([])
+      })
+      .finally(() => {
+        if (!cancelled) setLinkedLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [open, hasLinked, debtorId])
 
   if (!open) return null
 
+  const canSubmit = Boolean(newDate && reason.trim() && (!hasLinked || linkedTaskId))
+
   async function submit() {
     if (busy) return
+    if (hasLinked && !linkedTaskId) {
+      setError('اختر المهمة المرتبطة')
+      return
+    }
     setBusy(true)
     setError('')
     try {
       const res = await fetch(`/api/admin/debtors/${debtorId}/postpone-hearing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newDate, reason }),
+        body: JSON.stringify({
+          newDate,
+          reason,
+          linkedTaskId: hasLinked ? linkedTaskId : null,
+        }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -56,6 +95,7 @@ export function HearingPostponeModal({
         return
       }
       onSuccess(String(data.newDate ?? newDate).slice(0, 10))
+      invalidateDashboardCounts()
       onClose()
     } catch {
       setError('خطأ في الاتصال')
@@ -91,6 +131,48 @@ export function HearingPostponeModal({
               maxLength={500}
             />
           </div>
+          <label className="flex items-start gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={hasLinked}
+              onChange={e => {
+                setHasLinked(e.target.checked)
+                if (!e.target.checked) setLinkedTaskId('')
+              }}
+              className="mt-0.5 w-4 h-4 accent-[#2C8780] shrink-0"
+            />
+            <span className="text-sm font-bold text-[#231F20]">
+              هل يوجد مهمة مرتبطة مع تأجيل المرافعة؟
+            </span>
+          </label>
+          {hasLinked && (
+            <div>
+              <label className="text-[11px] font-bold text-[#767676] mb-1 block">المهمة المرتبطة</label>
+              {linkedLoading ? (
+                <p className="text-xs text-[#767676]">جارٍ تحميل المهام…</p>
+              ) : linkedTasks.length === 0 ? (
+                <p className="text-xs text-amber-700 font-semibold">
+                  لا توجد مهام يمكن اختيارها غير إقامة الدعوى
+                </p>
+              ) : (
+                <PremiumSelect
+                  value={linkedTaskId}
+                  onChange={setLinkedTaskId}
+                  options={linkedTasks.map(t => ({
+                    value: t.id,
+                    label: t.label,
+                    hint: t.status_label,
+                  }))}
+                  placeholder="اختر المهمة المرتبطة"
+                  fieldLabel="المهمة المرتبطة"
+                  headerTitle="المهمة المرتبطة"
+                  searchPlaceholder="بحث بالمهمة..."
+                  searchable
+                  menuPortal
+                />
+              )}
+            </div>
+          )}
           {error && <p className="text-xs text-red-600 font-semibold">{error}</p>}
         </div>
         <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-end gap-2 shrink-0">
@@ -105,7 +187,7 @@ export function HearingPostponeModal({
           <button
             type="button"
             onClick={submit}
-            disabled={busy || !newDate || !reason.trim()}
+            disabled={busy || !canSubmit}
             className="text-xs font-bold text-white px-4 py-2 rounded-lg disabled:opacity-40"
             style={{ background: 'linear-gradient(135deg,#B45309,#92400E)' }}
           >

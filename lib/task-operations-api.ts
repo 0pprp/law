@@ -1,6 +1,8 @@
 import { rejectTaskExpenses } from '@/lib/expense-wallet'
 import { extractHearingDateFromCompletion } from '@/lib/hearing-date-from-completion'
 import { extractGpsFromCompletion, finalizeTaskApproval, FEE_STATUS_AWAITING_NEXT_TASK } from '@/lib/task-approval'
+import { isPleadingDefinition } from '@/lib/default-next-task'
+import { endPleadingNotificationDual, ensurePleadingNotificationTwin } from '@/lib/pleading-notification-twin'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /** خطأ التكرار من applyTaskTransition — يُعامل كنجاح idempotent في الواجهة */
@@ -283,6 +285,23 @@ export async function applyTaskTransition(
     return { ok: false, error: linkErr.message }
   }
 
+  if (nextDef && isPleadingDefinition(nextDef)) {
+    await ensurePleadingNotificationTwin(
+      supabase,
+      {
+        id: newTask.id,
+        debtor_id: task.debtor_id as string,
+        branch_id: branchId,
+        due_date: hearingDate,
+      },
+      {
+        caseType: debtorCase,
+        hearingDate,
+        createdBy: userId,
+      },
+    ).catch((e) => console.warn('[applyTaskTransition:twin]', e))
+  }
+
   // الاعتماد النهائي واحتساب الأتعاب — فقط بعد نجاح إنشاء المهمة التالية وربطها
   if (awaitingFinalization) {
     const finalizeResult = await finalizeTaskApproval(supabase, task.id, userId, {
@@ -300,6 +319,7 @@ export async function applyTaskTransition(
         } as any)
         .eq('id', task.debtor_id)
       await supabase.from('tasks').delete().eq('id', newTask.id)
+      await endPleadingNotificationDual(supabase, newTask.id).catch(() => {})
       return { ok: false, error: finalizeResult.error ?? 'فشل الاعتماد النهائي — لم تُنشأ المهمة التالية' }
     }
   }

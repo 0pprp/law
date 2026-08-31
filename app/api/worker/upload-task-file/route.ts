@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSessionProfile } from '@/lib/api-auth'
-import { canWriteData, isFieldWorkerRole, isViewer } from '@/lib/permissions'
+import { canApproveCompletions, canWriteData, isFieldWorkerRole, isViewer } from '@/lib/permissions'
 import { canStaffWriteBranch } from '@/lib/staff-branch-access'
 import { logActivity } from '@/lib/activity-log'
 import { isAllowedTaskFile, sanitizeStorageKey } from '@/lib/storage-path'
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   if (isViewer(profile.role)) {
     return safeClientError('صلاحية غير كافية', 403)
   }
-  if (!isFieldWorkerRole(profile.role) && !canWriteData(profile.role)) {
+  if (!isFieldWorkerRole(profile.role) && !canWriteData(profile.role) && !canApproveCompletions(profile.role)) {
     return safeClientError('صلاحية غير كافية', 403)
   }
 
