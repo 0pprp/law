@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
       branch:branches(id, name),
       branch_list:branch_lists(id, name),
       nominator:profiles!instant_case_nominations_nominated_by_fkey(id, full_name),
-      debtor:debtors!instant_case_nominations_debtor_id_fkey(id, file_preparation_status)
+      debtor:debtors!instant_case_nominations_debtor_id_fkey(id, file_preparation_status, receipt_amount)
     `, { count: 'exact' })
     .order('created_at', { ascending: false })
     .limit(500)

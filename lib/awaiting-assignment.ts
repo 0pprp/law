@@ -22,6 +22,8 @@ export interface AwaitingAssignmentDebtor {
   transaction_number?: string | null
   /** تاريخ البيع */
   sale_date?: string | null
+  /** مبلغ الوصل */
+  receipt_amount?: number | null
   assignment_note: string | null
   /** عرض آخر ملاحظة بروفايل: «الكاتب: النص...» */
   last_note: string
@@ -224,6 +226,9 @@ async function mapRowsWithLastNotes(
     created_at: r.created_at,
     transaction_number: (r as { transaction_number?: string | null }).transaction_number ?? null,
     sale_date: (r as { sale_date?: string | null }).sale_date ? String((r as { sale_date?: string | null }).sale_date).slice(0, 10) : null,
+    receipt_amount: (r as { receipt_amount?: number | null }).receipt_amount != null
+      ? Number((r as { receipt_amount?: number | null }).receipt_amount)
+      : null,
     assignment_note: r.assignment_note ?? null,
     last_note: '—' as string,
     notes: r.notes ?? null,
@@ -563,7 +568,7 @@ async function attachTransactionSale(
   if (!rows.length) return
   const { data, error } = await supabase
     .from('debtors')
-    .select('id, transaction_number, sale_date')
+    .select('id, transaction_number, sale_date, receipt_amount')
     .in('id', rows.map(r => r.id))
   if (error) return
   const map = new Map(
@@ -572,6 +577,7 @@ async function attachTransactionSale(
       {
         transaction_number: d.transaction_number ?? null,
         sale_date: d.sale_date ? String(d.sale_date).slice(0, 10) : null,
+        receipt_amount: d.receipt_amount != null ? Number(d.receipt_amount) : null,
       },
     ]),
   )
@@ -579,6 +585,7 @@ async function attachTransactionSale(
     const extra = map.get(row.id)
     row.transaction_number = extra?.transaction_number ?? null
     row.sale_date = extra?.sale_date ?? null
+    row.receipt_amount = extra?.receipt_amount ?? null
   }
 }
 

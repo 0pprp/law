@@ -8,7 +8,8 @@ import { canSendToFilePreparation, canViewInstantCases } from '@/lib/permissions
 import { PageHeader } from '@/components/ui/page-header'
 import { BackButton } from '@/components/ui/back-button'
 import { PremiumSelect } from '@/components/ui/premium-select'
-import { fmtDate, fmtDateTime } from '@/lib/utils'
+import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/utils'
+import { RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
@@ -26,7 +27,7 @@ type InstantNom = {
   branch?: { name: string } | null
   branch_list?: { name: string } | null
   nominator?: { full_name: string } | null
-  debtor?: { id: string; file_preparation_status: string | null } | null
+  debtor?: { id: string; file_preparation_status: string | null; receipt_amount?: number | null } | null
 }
 
 const STATUS_OPTS = [
@@ -35,11 +36,21 @@ const STATUS_OPTS = [
   { value: 'approved', label: 'تمت الموافقة' },
 ]
 
-function prepStatusOf(n: InstantNom): string | null {
+function debtorRowOf(n: InstantNom) {
   const d = n.debtor
   if (!d) return null
-  const row = Array.isArray(d) ? d[0] : d
-  return row?.file_preparation_status ?? null
+  return Array.isArray(d) ? d[0] : d
+}
+
+function prepStatusOf(n: InstantNom): string | null {
+  return debtorRowOf(n)?.file_preparation_status ?? null
+}
+
+function receiptAmountOf(n: InstantNom): number | null {
+  const fromDebtor = debtorRowOf(n)?.receipt_amount
+  if (fromDebtor != null && Number(fromDebtor) > 0) return Number(fromDebtor)
+  if (n.sale_price != null && Number(n.sale_price) > 0) return Number(n.sale_price)
+  return null
 }
 
 export default function InstantCasesPage() {
@@ -124,6 +135,7 @@ export default function InstantCasesPage() {
             debtor: {
               id: n.debtor_id!,
               file_preparation_status: 'preparing',
+              receipt_amount: debtorRowOf(n)?.receipt_amount,
             },
           }
         }))
@@ -205,7 +217,7 @@ export default function InstantCasesPage() {
                 <thead>
                   <tr className="bg-orange-50/80 text-slate-700 text-xs">
                     <th className="text-right px-4 py-3 font-bold">الاسم</th>
-                    <th className="text-right px-4 py-3 font-bold">سعر البيع</th>
+                    <th className="text-right px-4 py-3 font-bold">{RECEIPT_AMOUNT_LABEL}</th>
                     <th className="text-right px-4 py-3 font-bold">القائمة</th>
                     <th className="text-right px-4 py-3 font-bold">الفرع</th>
                     <th className="text-right px-4 py-3 font-bold">المرشِّح</th>
@@ -218,11 +230,12 @@ export default function InstantCasesPage() {
                   {rows.map(n => {
                     const prep = prepStatusOf(n)
                     const isPreparing = prep === 'preparing'
+                    const receiptAmount = receiptAmountOf(n)
                     return (
                       <tr key={n.id} className="hover:bg-slate-50/80">
                         <td className="px-4 py-3 font-semibold text-[#231F20]">{n.debtor_name}</td>
-                        <td className="px-4 py-3 tabular-nums font-medium" dir="ltr">
-                          {Number(n.sale_price).toLocaleString('en-US')}
+                        <td className="px-4 py-3 tabular-nums font-semibold" dir="ltr">
+                          {receiptAmount != null ? fmtMoney(receiptAmount) : '—'}
                         </td>
                         <td className="px-4 py-3 text-slate-600">
                           {(n.branch_list as { name?: string } | null)?.name ?? '—'}

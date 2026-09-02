@@ -28,6 +28,7 @@ export type ExperimentalDebtorRow = {
   receipt_number: string | null
   transaction_number: string | null
   sale_date: string | null
+  receipt_amount: number | null
   branch_id: string | null
   branch_list_id: string | null
   created_at: string | null
@@ -204,6 +205,7 @@ export async function listExperimentalQueue(
       receipt_number: string | null
       transaction_number: string | null
       sale_date: string | null
+      receipt_amount: number | null
       required_amount: number | null
       governorate: string | null
       current_task_id: string | null
@@ -211,12 +213,12 @@ export async function listExperimentalQueue(
     if (ids.length) {
       let extraRes: { data: any[] | null; error: { message?: string } | null } = await supabase
         .from('debtors')
-        .select('id, phone, receipt_number, transaction_number, sale_date, required_amount, governorate, current_task_id')
+        .select('id, phone, receipt_number, transaction_number, sale_date, receipt_amount, required_amount, governorate, current_task_id')
         .in('id', ids)
       if (extraRes.error) {
         extraRes = await supabase
           .from('debtors')
-          .select('id, phone, receipt_number, required_amount, governorate, current_task_id')
+          .select('id, phone, receipt_number, receipt_amount, required_amount, governorate, current_task_id')
           .in('id', ids)
       }
       for (const row of extraRes.data ?? []) {
@@ -225,6 +227,7 @@ export async function listExperimentalQueue(
           receipt_number: row.receipt_number ?? null,
           transaction_number: (row as { transaction_number?: string | null }).transaction_number ?? null,
           sale_date: (row as { sale_date?: string | null }).sale_date ? String((row as { sale_date?: string | null }).sale_date).slice(0, 10) : null,
+          receipt_amount: row.receipt_amount != null ? Number(row.receipt_amount) : null,
           required_amount: row.required_amount != null ? Number(row.required_amount) : null,
           governorate: row.governorate ?? null,
           current_task_id: row.current_task_id ?? null,
@@ -240,6 +243,7 @@ export async function listExperimentalQueue(
         receipt_number: extra?.receipt_number ?? null,
         transaction_number: extra?.transaction_number ?? null,
         sale_date: extra?.sale_date ?? null,
+        receipt_amount: extra?.receipt_amount ?? null,
         branch_id: r.branch_id,
         branch_list_id: r.branch_list_id,
         created_at: r.created_at,
@@ -265,7 +269,7 @@ export async function listExperimentalQueue(
   let q = supabase
     .from('debtors')
     .select(
-      'id, full_name, phone, receipt_number, transaction_number, sale_date, branch_id, branch_list_id, created_at, assignment_note, special_status_id, required_amount, governorate, current_task_id, current_task:tasks!current_task_id(id, task_definitions(label))',
+      'id, full_name, phone, receipt_number, transaction_number, sale_date, receipt_amount, branch_id, branch_list_id, created_at, assignment_note, special_status_id, required_amount, governorate, current_task_id, current_task:tasks!current_task_id(id, task_definitions(label))',
     )
     .in('special_status_id', statusIds)
     .order('created_at', { ascending: false })
@@ -283,7 +287,7 @@ export async function listExperimentalQueue(
     let fallback = supabase
       .from('debtors')
       .select(
-        'id, full_name, phone, receipt_number, branch_id, branch_list_id, created_at, assignment_note, special_status_id, required_amount, governorate, current_task_id, current_task:tasks!current_task_id(id, task_definitions(label))',
+        'id, full_name, phone, receipt_number, receipt_amount, branch_id, branch_list_id, created_at, assignment_note, special_status_id, required_amount, governorate, current_task_id, current_task:tasks!current_task_id(id, task_definitions(label))',
       )
       .in('special_status_id', statusIds)
       .order('created_at', { ascending: false })
@@ -309,6 +313,7 @@ export async function listExperimentalQueue(
       receipt_number: d.receipt_number ?? null,
       transaction_number: d.transaction_number ?? null,
       sale_date: d.sale_date ? String(d.sale_date).slice(0, 10) : null,
+      receipt_amount: d.receipt_amount != null ? Number(d.receipt_amount) : null,
       branch_id: d.branch_id ?? null,
       branch_list_id: d.branch_list_id ?? null,
       created_at: d.created_at ?? null,

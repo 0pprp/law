@@ -5,9 +5,9 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useAdminRole } from '@/context/admin-role'
 import { canAssignTasks, canManageSpecialStatuses, canSendToFilePreparation, isAdmin, isLegalManager } from '@/lib/permissions'
-import { fmtDate } from '@/lib/utils'
+import { fmtDate, fmtMoney } from '@/lib/utils'
 import { CASE_TYPE_LABELS } from '@/lib/case-type'
-import { TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL } from '@/lib/ui-labels'
+import { TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import BranchListBox from '@/components/BranchListBox'
 import SpecialStatusBadge from '@/components/SpecialStatusBadge'
@@ -156,6 +156,7 @@ function DebtorRowsTable({
     name: r => r.full_name,
     transactionNumber: r => r.transaction_number,
     saleDate: r => r.sale_date,
+    receiptAmount: r => Number(r.receipt_amount ?? 0),
     caseType: r => CASE_TYPE_LABELS[r.case_type] ?? r.case_type,
     list: r => r.branch_list_name,
     court: r => r.court_name,
@@ -178,6 +179,7 @@ function DebtorRowsTable({
               <SortableTH variant="plain" sortKey="name" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>الاسم</SortableTH>
               <SortableTH variant="plain" sortKey="transactionNumber" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{TRANSACTION_NUMBER_LABEL}</SortableTH>
               <SortableTH variant="plain" sortKey="saleDate" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{SALE_DATE_LABEL}</SortableTH>
+              <SortableTH variant="plain" sortKey="receiptAmount" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>{RECEIPT_AMOUNT_LABEL}</SortableTH>
               <SortableTH variant="plain" sortKey="caseType" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>نوع الدعوى</SortableTH>
               <SortableTH variant="plain" sortKey="list" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>القائمة</SortableTH>
               <SortableTH variant="plain" sortKey="court" activeKey={sortKey} direction={sortDirection} onCycle={cycleSort}>🏛 المحكمة</SortableTH>
@@ -200,7 +202,7 @@ function DebtorRowsTable({
                     className="accent-[#2C8780] w-5 h-5 cursor-pointer"
                   />
                 </th>
-                <th colSpan={10} className="px-4 py-2 text-right text-[11px] font-medium text-[#1D6365]">
+                <th colSpan={11} className="px-4 py-2 text-right text-[11px] font-medium text-[#1D6365]">
                   تحديد الكل المعروض — ثم التحويل إلى متابعة القانونية
                 </th>
               </tr>
@@ -244,6 +246,11 @@ function DebtorRowsTable({
                 </td>
                 <td className="px-4 py-3">
                   <span className="text-xs text-[#454042]">{r.sale_date ? fmtDate(r.sale_date) : '—'}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="text-xs font-semibold tabular-nums text-[#231F20]" dir="ltr">
+                    {r.receipt_amount != null && Number(r.receipt_amount) > 0 ? fmtMoney(r.receipt_amount) : '—'}
+                  </span>
                 </td>
                 <td className="px-4 py-3">
                   <span className="text-xs text-[#767676]">{CASE_TYPE_LABELS[r.case_type]}</span>
@@ -340,6 +347,11 @@ function DebtorRowsTable({
             )}
             {r.sale_date && (
               <p className="text-xs text-[#767676] mb-1">{SALE_DATE_LABEL}: {fmtDate(r.sale_date)}</p>
+            )}
+            {r.receipt_amount != null && Number(r.receipt_amount) > 0 && (
+              <p className="text-xs text-[#454042] font-semibold mb-1" dir="ltr">
+                {RECEIPT_AMOUNT_LABEL}: {fmtMoney(r.receipt_amount)}
+              </p>
             )}
             <p className="text-xs text-[#767676] mb-1 break-words">القائمة: {r.branch_list_name?.trim() || '—'}</p>
             {courtExecutionLine(r) && (

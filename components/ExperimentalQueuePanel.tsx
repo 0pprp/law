@@ -5,14 +5,14 @@ import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useBranch } from '@/context/branch'
 import { useAdminRole } from '@/context/admin-role'
-import { fmtDate } from '@/lib/utils'
+import { fmtDate, fmtMoney } from '@/lib/utils'
 import ChangeDebtorTaskButton from '@/components/ChangeDebtorTaskButton'
 import { appAlert, appConfirm } from '@/lib/app-dialog'
 import { invalidateDashboardCounts } from '@/lib/dashboard-counts-cache'
 import { cacheGet, cacheSWR, CACHE_TTL, cacheInvalidatePrefix } from '@/lib/query-cache'
 import { useCaseScope } from '@/hooks/use-case-scope'
 import type { ExperimentalDebtorRow, ExperimentalQueue } from '@/lib/experimental-queues'
-import { TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL } from '@/lib/ui-labels'
+import { TRANSACTION_NUMBER_LABEL, SALE_DATE_LABEL, RECEIPT_AMOUNT_LABEL } from '@/lib/ui-labels'
 import { canViewInstantCases } from '@/lib/permissions'
 import { fetchDeduped } from '@/lib/inflight-fetch'
 import { withReturnTo } from '@/lib/safe-return-to'
@@ -104,7 +104,7 @@ export default function ExperimentalQueuePanel({ queue }: Props) {
   const caseType =
     ctParam === 'civil' || ctParam === 'criminal' ? ctParam : caseTypeFilter
   const allowed = Boolean(branchId || viewAllBranches)
-  const cacheKey = `exp-queue:${queue}:${branchId ?? 'all'}:${listId ?? 'all'}:${caseType ?? 'both'}:v5`
+  const cacheKey = `exp-queue:${queue}:${branchId ?? 'all'}:${listId ?? 'all'}:${caseType ?? 'both'}:v6`
   const returnTo = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
   const showInstantMove = queue === 'recent' && canViewInstantCases(role) && caseType !== 'criminal'
 
@@ -397,7 +397,7 @@ export default function ExperimentalQueuePanel({ queue }: Props) {
         ) : rows.length === 0 ? (
           <div className="p-8 text-center text-sm text-[#767676]">لا توجد أسماء</div>
         ) : (
-          <Table minWidthClassName="min-w-[1080px]">
+          <Table minWidthClassName="min-w-[1180px]">
             <THead>
               <tr>
                 <TH className="w-12 text-center">
@@ -406,6 +406,7 @@ export default function ExperimentalQueuePanel({ queue }: Props) {
                 <TH>الاسم</TH>
                 <TH>{TRANSACTION_NUMBER_LABEL}</TH>
                 <TH>{SALE_DATE_LABEL}</TH>
+                <TH>{RECEIPT_AMOUNT_LABEL}</TH>
                 <TH>الهاتف</TH>
                 <TH>تاريخ الإضافة</TH>
                 <TH>المهمة</TH>
@@ -434,6 +435,11 @@ export default function ExperimentalQueuePanel({ queue }: Props) {
                   </TD>
                   <TD className="text-right text-xs">
                     {row.sale_date ? fmtDate(row.sale_date) : '—'}
+                  </TD>
+                  <TD className="text-right">
+                    <span className="text-xs font-semibold tabular-nums" dir="ltr">
+                      {row.receipt_amount != null && Number(row.receipt_amount) > 0 ? fmtMoney(row.receipt_amount) : '—'}
+                    </span>
                   </TD>
                   <TD className="text-right">
                     <span className="text-xs" dir="ltr">{row.phone || '—'}</span>
